@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f9fafb; /* gray-50 */
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* ✅ نحيّنا dark mode override باش الخلفية تبقى ديما بيضاء */
+
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+  min-height: 100%;
+}
