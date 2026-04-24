@@ -1,8 +1,0 @@
-{
-  "builds": [
-    { "src": "hems-web/package.json", "use": "@vercel/next" }
-  ],
-  "routes": [
-    { "src": "/(.*)", "dest": "hems-web/$1" }
-  ]
-}
