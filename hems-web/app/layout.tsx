@@ -6,8 +6,10 @@ export const metadata = {
   description: "Equipment Inventory",
 
   icons: {
-    icon: "/icon.png",
-  },
+  icon: "/icon.png",
+  shortcut: "/icon.png",
+  apple: "/icon.png",
+},
 
   openGraph: {
     title: "Hilights Equipment Management System",
