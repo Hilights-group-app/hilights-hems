@@ -4,6 +4,32 @@ import TopBar from "@/components/TopBar";
 export const metadata = {
   title: "Hilights Equipment Management System",
   description: "Equipment Inventory",
+
+  icons: {
+    icon: "/icon.png",
+  },
+
+  openGraph: {
+    title: "Hilights Equipment Management System",
+    description: "Equipment Inventory",
+    url: "https://hilights-hems.vercel.app",
+    siteName: "Hilights",
+    images: [
+      {
+        url: "/preview.png",
+        width: 1200,
+        height: 630,
+      },
+    ],
+    type: "website",
+  },
+
+  twitter: {
+    card: "summary_large_image",
+    title: "Hilights Equipment Management System",
+    description: "Equipment Inventory",
+    images: ["/preview.png"],
+  },
 };
 
 export default function RootLayout({
