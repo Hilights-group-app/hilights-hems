@@ -60,7 +60,7 @@ export default function LoginPage() {
       setUserName(profile.full_name ?? "");
       setUserDepartment(profile.department ?? "");
 
-      router.replace("/");
+      router.replace("/inventory");
       router.refresh();
     } catch (error: any) {
       setErr(error?.message || "Login failed.");

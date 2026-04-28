@@ -4,12 +4,13 @@ import TopBar from "@/components/TopBar";
 export const metadata = {
   title: "Hilights Equipment Management System",
   description: "Equipment Inventory",
+  manifest: "/manifest.json",
 
   icons: {
-  icon: "/favicon.png",
-  shortcut: "/favicon.png",
-  apple: "/favicon.png",
-},
+    icon: "/favicon.png",
+    shortcut: "/favicon.png",
+    apple: "/apple-touch-icon.png",
+  },
 
   openGraph: {
     title: "Hilights Equipment Management System",

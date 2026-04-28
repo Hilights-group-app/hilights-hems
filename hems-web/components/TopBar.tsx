@@ -69,7 +69,7 @@ export default function TopBar() {
         
         {/* Left */}
         <div className="flex min-w-0 items-center gap-1">
-          <Link href="/" className="flex shrink-0 items-center">
+          <Link href="/inventory" className="flex shrink-0 items-center">
             <img
               src="/logo.png"
               alt="Logo"
