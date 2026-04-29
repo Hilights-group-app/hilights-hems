@@ -64,7 +64,7 @@ export default function TopBar() {
   }, [userName]);
 
   return (
-    <header className="border-b border-black bg-white">
+    <header className="bg-white shadow-sm">
       <div className="mx-auto flex max-w-6xl flex-row items-center justify-between px-2.5 py-2 sm:px-6">
         
         {/* Left */}
@@ -85,29 +85,31 @@ export default function TopBar() {
         </div>
 
         {/* Right */}
-        <div className="flex items-center gap-1">
-          {loggedIn && userInitials && (
-            <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-gray-300 px-1 text-[9px] font-semibold text-gray-700 sm:h-6 sm:min-w-6 sm:px-1.5 sm:text-[10px]">
-              {userInitials}
-            </span>
-          )}
+        <div className="flex items-center gap-1.5 sm:gap-2">
+  {loggedIn && userInitials && (
+    <div className="flex items-center gap-1 rounded-full bg-gray-100 px-1.5 py-0.5 sm:px-2 sm:py-1 shadow-sm">
+      <span className="flex h-4 w-4 sm:h-5 sm:w-5 items-center justify-center rounded-full bg-gray-900 text-[8px] sm:text-[10px] font-semibold text-white shadow">
+        {userInitials}
+      </span>
+    </div>
+  )}
 
-          {loggedIn ? (
-            <button
-              onClick={onLogout}
-              className="rounded-full border border-gray-300 bg-white px-2 py-0.5 text-[10px] text-gray-900 transition hover:bg-gray-100 sm:px-3 sm:text-xs"
-            >
-              Logout
-            </button>
-          ) : (
-            <Link
-              href="/login"
-              className="rounded-full bg-black px-2 py-0.5 text-[10px] text-white transition hover:opacity-90 sm:px-3 sm:text-xs"
-            >
-              Login
-            </Link>
-          )}
-        </div>
+  {loggedIn ? (
+    <button
+      onClick={onLogout}
+      className="rounded-full border border-gray-200 bg-white px-2 py-0.5 text-[9px] sm:text-[10px] font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 hover:shadow active:scale-[0.96]"
+    >
+      Logout
+    </button>
+  ) : (
+    <Link
+      href="/login"
+      className="rounded-full bg-gray-900 px-2 py-0.5 text-[9px] sm:text-[10px] font-medium text-white shadow-sm transition hover:opacity-90 active:scale-[0.96]"
+    >
+      Login
+    </Link>
+  )}
+</div>
 
       </div>
     </header>

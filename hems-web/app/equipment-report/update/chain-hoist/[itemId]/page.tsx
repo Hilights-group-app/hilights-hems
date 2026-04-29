@@ -85,6 +85,7 @@ export function ChainHoistRowsBlock({
 }) {
   const supabase = createClient();
   const [units, setUnits] = useState<Unit[]>([]);
+const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
 
   useEffect(() => {
     void loadUnits();
@@ -253,38 +254,29 @@ export function ChainHoistRowsBlock({
   }
 
   function openPhoto(url: string) {
-    const win = window.open("", "_blank");
-    if (!win) return;
-
-    win.document.write(`
-      <html>
-        <head>
-          <title>Damage Photo</title>
-          <style>
-            body {
-              margin: 0;
-              background: #111;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              min-height: 100vh;
-            }
-            img {
-              max-width: 95vw;
-              max-height: 95vh;
-              object-fit: contain;
-            }
-          </style>
-        </head>
-        <body>
-          <img src="${url}" alt="Damage Photo" />
-        </body>
-      </html>
-    `);
-    win.document.close();
-  }
+  setPreviewPhoto(url);
+}
 
   return (
+  <>
+    {previewPhoto ? (
+      <div className="fixed inset-0 z-[999999] bg-black/90 flex items-center justify-center p-4">
+        <button
+          type="button"
+          onClick={() => setPreviewPhoto(null)}
+          className="absolute top-4 right-4 rounded-full bg-white px-3 py-1 text-xs font-semibold text-black"
+        >
+          Close
+        </button>
+
+        <img
+          src={previewPhoto}
+          alt="Damage Photo"
+          className="max-w-full max-h-[85vh] object-contain rounded-lg bg-white"
+        />
+      </div>
+    ) : null}
+
     <div className="bg-white border border-gray-200 rounded-xl px-[2px] sm:px-5 pt-4 sm:pt-5 pb-5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
       <div className="flex items-center gap-[2px] sm:gap-2 text-[6px] sm:text-[11px] font-semibold text-gray-600 pt-2 pb-3 sm:pb-4">
         <div className="w-[16px] min-w-[16px] sm:w-[32px] sm:min-w-[32px] text-center">ID</div>
@@ -328,8 +320,9 @@ export function ChainHoistRowsBlock({
           </button>
         </div>
       ) : null}
-    </div>
-  );
+        </div>
+  </>
+);
 }
 
 export default function ChainHoistReportPage() {

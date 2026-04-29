@@ -6,8 +6,6 @@ import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
 import { ChainHoistRowsBlock } from "@/app/equipment-report/update/chain-hoist/[itemId]/page";
 
-type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
-
 type DbItem = {
   id: string;
   subcategory_id: string;
@@ -16,38 +14,14 @@ type DbItem = {
   created_at?: string;
 };
 
-type DbUnit = {
-  id: string;
-  item_id: string;
-  unit_no: number | null;
-  serial: string | null;
-  status: string | null;
-  notes: string | null;
-  cert_date: string | null;
-  expiry_date: string | null;
-  damage_photos: string[] | null;
+type Stats = {
+  total: number;
+  available: number;
+  inuse: number;
+  maintenance: number;
+  ksa: number;
+  expired: number;
 };
-
-function toStatus(v: any): UnitStatus {
-  if (v === "available" || v === "in_use" || v === "maintenance" || v === "in_ksa") return v;
-  return "available";
-}
-
-function isExpired(expiry?: string | null) {
-  const s = (expiry ?? "").trim();
-  if (!s) return false;
-
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return false;
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const ed = new Date(d);
-  ed.setHours(0, 0, 0, 0);
-
-  return ed.getTime() < today.getTime();
-}
 
 async function fileToDataUrl(file: File): Promise<string> {
   return await new Promise((resolve, reject) => {
@@ -56,21 +30,6 @@ async function fileToDataUrl(file: File): Promise<string> {
     reader.onload = () => resolve(String(reader.result || ""));
     reader.readAsDataURL(file);
   });
-}
-
-function countByStatus(units: DbUnit[]) {
-  const total = units.length;
-
-  const available = units.filter(
-    (u) => toStatus(u.status) === "available" && !isExpired(u.expiry_date)
-  ).length;
-
-  const inUse = units.filter((u) => toStatus(u.status) === "in_use").length;
-  const maintenance = units.filter((u) => toStatus(u.status) === "maintenance").length;
-  const inKsa = units.filter((u) => toStatus(u.status) === "in_ksa").length;
-  const expired = units.filter((u) => isExpired(u.expiry_date)).length;
-
-  return { total, available, inUse, maintenance, inKsa, expired };
 }
 
 export default function ItemEditClientChainHoistUnits({
@@ -86,12 +45,24 @@ export default function ItemEditClientChainHoistUnits({
   const itemPhotoRef = useRef<HTMLInputElement | null>(null);
   const editable = canEditInventory();
 
-  const backHref = useMemo(() => `/inventory/${category}/${subcategory}`, [category, subcategory]);
+  const backHref = useMemo(() => {
+    return `/inventory/${encodeURIComponent(category)}/${encodeURIComponent(
+      subcategory
+    )}`;
+  }, [category, subcategory]);
 
   const [item, setItem] = useState<DbItem | null>(null);
-  const [units, setUnits] = useState<DbUnit[]>([]);
   const [loading, setLoading] = useState(true);
   const [saveMsg, setSaveMsg] = useState("");
+
+  const [stats, setStats] = useState<Stats>({
+    total: 0,
+    available: 0,
+    inuse: 0,
+    maintenance: 0,
+    ksa: 0,
+    expired: 0,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -99,7 +70,7 @@ export default function ItemEditClientChainHoistUnits({
     (async () => {
       setLoading(true);
 
-      const { data: itemRow, error: itemErr } = await supabase
+      const { data, error } = await supabase
         .from("items")
         .select("id, subcategory_id, name, photo_url, created_at")
         .eq("id", itemId)
@@ -107,32 +78,14 @@ export default function ItemEditClientChainHoistUnits({
 
       if (cancelled) return;
 
-      if (itemErr || !itemRow) {
-        console.error("load chainhoist item error", itemErr);
+      if (error || !data) {
+        console.error("load chainhoist item error", error);
         setItem(null);
-        setUnits([]);
         setLoading(false);
         return;
       }
 
-      setItem(itemRow as DbItem);
-
-      const { data: urows, error: uerr } = await supabase
-        .from("units")
-        .select("id, item_id, unit_no, serial, status, notes, cert_date, expiry_date, damage_photos")
-        .eq("item_id", itemId)
-        .order("unit_no", { ascending: true });
-
-      if (cancelled) return;
-
-      if (uerr) {
-        console.error("load chainhoist units error", uerr);
-        setUnits([]);
-        setLoading(false);
-        return;
-      }
-
-      setUnits((urows ?? []) as DbUnit[]);
+      setItem(data as DbItem);
       setLoading(false);
     })();
 
@@ -141,17 +94,23 @@ export default function ItemEditClientChainHoistUnits({
     };
   }, [itemId, supabase]);
 
-  async function updateItem(patch: Partial<DbItem>) {
+  async function updateItem(patch: Partial<Pick<DbItem, "name" | "photo_url">>) {
     if (!editable || !item) return;
 
-    const { error } = await supabase.from("items").update(patch).eq("id", item.id);
+    const { data, error } = await supabase
+      .from("items")
+      .update(patch)
+      .eq("id", item.id)
+      .select("id, subcategory_id, name, photo_url, created_at")
+      .single();
+
     if (error) {
       console.error("update item error", error);
       alert("Failed to update item");
       return;
     }
 
-    setItem({ ...item, ...patch });
+    setItem(data as DbItem);
   }
 
   async function onPickItemPhoto(e: React.ChangeEvent<HTMLInputElement>) {
@@ -190,14 +149,12 @@ export default function ItemEditClientChainHoistUnits({
     }, 1500);
   }
 
-  const counts = useMemo(() => countByStatus(units), [units]);
-
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 p-3">
-        <div className="max-w-[1100px] mx-auto space-y-3">
-          <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
-            Loading chain hoist report...
+      <div className="min-h-screen bg-gray-50 px-[2px] py-2 sm:p-3">
+        <div className="w-full max-w-none sm:max-w-[1100px] mx-auto space-y-3 px-0">
+          <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
+            Loading chain hoist...
           </div>
         </div>
       </div>
@@ -206,14 +163,15 @@ export default function ItemEditClientChainHoistUnits({
 
   if (!item) {
     return (
-      <div className="min-h-screen bg-gray-50 p-3">
-        <div className="max-w-[1100px] mx-auto space-y-3">
-          <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
+      <div className="min-h-screen bg-gray-50 px-[2px] py-2 sm:p-3">
+        <div className="w-full max-w-none sm:max-w-[1100px] mx-auto space-y-3 px-0">
+          <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
             <div className="font-semibold">Item not found</div>
+
             <div className="mt-4">
               <Link
                 href={backHref}
-                className="px-2.5 py-1 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
+                className="px-2.5 py-1 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
               >
                 Back
               </Link>
@@ -225,8 +183,8 @@ export default function ItemEditClientChainHoistUnits({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-3">
-      <div className="max-w-[1100px] mx-auto space-y-3">
+    <div className="min-h-screen bg-gray-50 px-[2px] py-2 sm:p-3">
+      <div className="w-full max-w-none sm:max-w-[1100px] mx-auto space-y-3 px-0">
         <input
           ref={itemPhotoRef}
           type="file"
@@ -235,148 +193,102 @@ export default function ItemEditClientChainHoistUnits({
           onChange={onPickItemPhoto}
         />
 
-        <div className="bg-white border border-gray-200 rounded-2xl p-6">
-          <div className="flex justify-between items-start gap-4">
-            <div className="flex items-start gap-4 min-w-0">
-              <div
-                style={{
-                  width: "120px",
-                  minWidth: "120px",
-                  display: "flex",
-                  alignItems: "flex-start",
-                  justifyContent: "center",
-                  paddingTop: "18px",
-                }}
-              >
-                <div
-                  style={{
-                    width: "96px",
-                    height: "96px",
-                    position: "relative",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
+        <div className="bg-white border border-gray-200 rounded-2xl p-2 sm:p-6">
+          <div className="flex justify-between items-center gap-2 sm:gap-4">
+            <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1">
+              <div className="w-[58px] min-w-[58px] sm:w-[120px] sm:min-w-[120px] flex items-center justify-center">
+                <div className="relative w-[48px] h-[48px] sm:w-[96px] sm:h-[96px] flex items-center justify-center">
                   {item.photo_url ? (
                     <img
                       src={item.photo_url}
                       alt={item.name}
-                      style={{
-                        width: "100%",
-                        height: "100%",
-                        objectFit: "cover",
-                        borderRadius: "8px",
-                      }}
+                      className="w-full h-full object-cover rounded-lg"
                     />
                   ) : (
-                    <div style={{ fontSize: "10px", color: "#9ca3af" }}>No photo</div>
+                    <div className="text-[8px] sm:text-[10px] text-gray-400">
+                      No photo
+                    </div>
                   )}
 
-                  {editable && (
+                  {editable ? (
                     <button
                       type="button"
                       onClick={() => itemPhotoRef.current?.click()}
                       title="Edit photo"
-                      style={{
-                        position: "absolute",
-                        top: "0px",
-                        right: "0px",
-                        color: "#ef4444",
-                        fontSize: "16px",
-                        cursor: "pointer",
-                        zIndex: 20,
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.color = "#000000")}
-                      onMouseLeave={(e) => (e.currentTarget.style.color = "#ef4444")}
+                      className="absolute right-0 top-0 z-20 text-[10px] sm:text-[16px] text-red-500 hover:text-black"
                     >
                       ✎
                     </button>
-                  )}
+                  ) : null}
                 </div>
               </div>
 
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 min-w-0 mt-2">
-                  <h1
-                    style={{
-                      fontSize: "25px",
-                      fontWeight: 700,
-                      color: "#111827",
-                      lineHeight: 1.1,
-                    }}
-                    className="truncate"
-                  >
+              <div className="min-w-0 flex-1 flex flex-col justify-center">
+                <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                  <h1 className="text-[9px] sm:text-[25px] font-bold text-gray-900 leading-tight mt-0 mb-1.5 sm:mb-4 truncate">
                     {item.name}
                   </h1>
 
-                  {editable && (
+                  {editable ? (
                     <button
                       type="button"
                       onClick={onEditName}
                       title="Edit name"
-                      style={{ color: "#ef4444", fontSize: "16px", cursor: "pointer" }}
-                      onMouseEnter={(e) => (e.currentTarget.style.color = "#000000")}
-                      onMouseLeave={(e) => (e.currentTarget.style.color = "#ef4444")}
+                      className="text-[10px] sm:text-[16px] text-red-500 hover:text-black shrink-0"
                     >
                       ✎
                     </button>
-                  )}
+                  ) : null}
                 </div>
 
-                <div
-                  style={{
-                    borderTop: "1px solid #e5e7eb",
-                    paddingTop: "16px",
-                    marginTop: "16px",
-                  }}
-                >
-                  <div className="flex flex-wrap gap-2 text-[8px] font-semibold">
-                    <span className="px-2 py-1 rounded-lg bg-gray-100 text-black">
-                      Total Qty: {counts.total}
+                <div className="border-t border-gray-200 pt-1.5 sm:pt-4">
+                  <div className="flex flex-nowrap items-center gap-[2px] sm:gap-2 text-[5px] sm:text-[8px] font-semibold overflow-hidden">
+                    <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-gray-100 text-black">
+                      Total Qty: {stats.total}
                     </span>
-                    <span className="px-2 py-1 rounded-lg bg-green-100 text-black">
-                      Available Qty: {counts.available}
+                    <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-green-100 text-black">
+                      Available Qty: {stats.available}
                     </span>
-                    <span className="px-2 py-1 rounded-lg bg-blue-100 text-black">
-                      In Use: {counts.inUse}
+                    <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-blue-100 text-black">
+                      In Use: {stats.inuse}
                     </span>
-                    <span className="px-2 py-1 rounded-lg bg-yellow-100 text-black">
-                      Maintenance: {counts.maintenance}
+                    <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-yellow-100 text-black">
+                      Maintenance: {stats.maintenance}
                     </span>
-                    <span className="px-2 py-1 rounded-lg bg-purple-100 text-black">
-                      In KSA: {counts.inKsa}
+                    <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-purple-100 text-black">
+                      In KSA: {stats.ksa}
                     </span>
-                    <span className="px-2 py-1 rounded-lg bg-red-100 text-black">
-                      Expired: {counts.expired}
+                    <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-red-100 text-black">
+                      Expired: {stats.expired}
                     </span>
                   </div>
                 </div>
 
                 {saveMsg ? (
-                  <div className="mt-3 text-xs text-gray-500">{saveMsg}</div>
+                  <div className="mt-2 text-[10px] sm:text-xs text-gray-500">
+                    {saveMsg}
+                  </div>
                 ) : null}
               </div>
             </div>
 
-            <div className="flex items-center gap-2 shrink-0">
-              <Link
-                href={backHref}
-                className="px-2.5 py-1 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
-              >
-                ← Back
-              </Link>
-            </div>
+            <Link
+              href={backHref}
+              className="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full border border-gray-300 text-[9px] sm:text-[10px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700 shrink-0"
+            >
+              ← Back
+            </Link>
           </div>
         </div>
 
         <ChainHoistRowsBlock
-  itemId={itemId}
-  editable={editable}
-  allowAdd={editable}
-  allowDelete={editable}
-  allowUpload={editable}
-/>
+          itemId={itemId}
+          onStatsChange={setStats}
+          editable={editable}
+          allowAdd={editable}
+          allowDelete={editable}
+          allowUpload={editable}
+        />
       </div>
     </div>
   );
