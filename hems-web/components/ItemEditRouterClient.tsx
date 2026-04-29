@@ -52,11 +52,5 @@ export default function ItemEditRouterClient({
     );
   }
 
-  return (
-    <ItemEditClientSerializedUnits
-      category={category}
-      subcategory={subcategory}
-      itemId={itemId}
-    />
-  );
+  return <ItemEditClientSerializedUnits />;
 }
