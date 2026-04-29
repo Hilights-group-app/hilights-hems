@@ -6,7 +6,6 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ImagePlus, Trash2 } from "lucide-react";
 
-/* ===== TYPES ===== */
 type UserRole = "admin" | "warehouse_manager" | "viewer" | "head";
 type Department = "" | "lighting" | "video" | "rigging";
 
@@ -22,10 +21,7 @@ type Unit = {
 };
 
 type UnitPatch = Partial<
-  Pick<
-    Unit,
-    "unit_no" | "serial" | "status" | "notes" | "cert_date" | "damage_photos"
-  >
+  Pick<Unit, "unit_no" | "serial" | "status" | "notes" | "cert_date" | "damage_photos">
 >;
 
 type Stats = {
@@ -37,7 +33,6 @@ type Stats = {
   expired: number;
 };
 
-/* ===== HELPERS ===== */
 function addOneYear(dateStr: string) {
   const s = (dateStr || "").trim();
   if (!s) return "";
@@ -46,7 +41,6 @@ function addOneYear(dateStr: string) {
 
   const next = new Date(d);
   next.setFullYear(next.getFullYear() + 1);
-
   return next.toISOString().split("T")[0];
 }
 
@@ -73,10 +67,6 @@ async function fileToDataUrl(file: File): Promise<string> {
     reader.readAsDataURL(file);
   });
 }
-
-/* ===================================================== */
-/* 🔥 SHARED ROWS BLOCK */
-/* ===================================================== */
 
 export function ChainHoistRowsBlock({
   itemId,
@@ -146,16 +136,14 @@ export function ChainHoistRowsBlock({
       if (expiredNow) expired++;
     });
 
-    const newStats: Stats = {
+    onStatsChange?.({
       total: units.length,
       available,
       inuse,
       maintenance,
       ksa,
       expired,
-    };
-
-    onStatsChange?.(newStats);
+    });
   }, [units, onStatsChange]);
 
   async function updateUnit(id: string, patch: UnitPatch) {
@@ -192,27 +180,23 @@ export function ChainHoistRowsBlock({
     const currentPhotos = unit.damage_photos ?? [];
     if (currentPhotos.length >= 5) return;
 
-    try {
-      const dataUrl = await fileToDataUrl(file);
-      const nextPhotos = [...currentPhotos, dataUrl].slice(0, 5);
+    const dataUrl = await fileToDataUrl(file);
+    const nextPhotos = [...currentPhotos, dataUrl].slice(0, 5);
 
-      setUnits((prev) =>
-        prev.map((u) =>
-          u.id === unitId ? { ...u, damage_photos: nextPhotos } : u
-        )
-      );
+    setUnits((prev) =>
+      prev.map((u) =>
+        u.id === unitId ? { ...u, damage_photos: nextPhotos } : u
+      )
+    );
 
-      const { error } = await supabase
-        .from("units")
-        .update({ damage_photos: nextPhotos })
-        .eq("id", unitId);
+    const { error } = await supabase
+      .from("units")
+      .update({ damage_photos: nextPhotos })
+      .eq("id", unitId);
 
-      if (error) {
-        console.error("uploadPhoto error:", error);
-        await loadUnits();
-      }
-    } catch (e) {
-      console.error("fileToDataUrl error:", e);
+    if (error) {
+      console.error("uploadPhoto error:", error);
+      await loadUnits();
     }
   }
 
@@ -256,8 +240,7 @@ export function ChainHoistRowsBlock({
   }
 
   async function deleteRow(unitId: string) {
-    const ok = confirm("Delete this row?");
-    if (!ok) return;
+    if (!confirm("Delete this row?")) return;
 
     const { error } = await supabase.from("units").delete().eq("id", unitId);
 
@@ -302,39 +285,16 @@ export function ChainHoistRowsBlock({
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl px-5 pt-5 pb-5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
-      <div className="flex items-center gap-2 text-[11px] font-semibold text-gray-600 pt-2 pb-4 overflow-x-auto">
-        <div style={{ width: "32px", minWidth: "32px", maxWidth: "32px", textAlign: "center" }}>
-          ID
-        </div>
-
-        <div style={{ width: "120px", minWidth: "120px", maxWidth: "120px" }}>
-          Serial
-        </div>
-
-        <div style={{ width: "100px", minWidth: "100px", maxWidth: "100px" }}>
-          Cert Date
-        </div>
-
-        <div style={{ width: "100px", minWidth: "100px", maxWidth: "100px" }}>
-          Expiry
-        </div>
-
-        <div style={{ width: "70px", minWidth: "70px", maxWidth: "70px" }}>
-          Valid
-        </div>
-
-        <div style={{ width: "95px", minWidth: "95px", maxWidth: "95px" }}>
-          Status
-        </div>
-
-        <div style={{ width: "230px", minWidth: "230px", maxWidth: "230px" }}>
-          Note
-        </div>
-
-        <div style={{ minWidth: "200px" }}>
-          Damage Photos
-        </div>
+    <div className="bg-white border border-gray-200 rounded-xl px-[2px] sm:px-5 pt-4 sm:pt-5 pb-5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+      <div className="flex items-center gap-[2px] sm:gap-2 text-[6px] sm:text-[11px] font-semibold text-gray-600 pt-2 pb-3 sm:pb-4">
+        <div className="w-[16px] min-w-[16px] sm:w-[32px] sm:min-w-[32px] text-center">ID</div>
+        <div className="w-[42px] min-w-[42px] sm:w-[120px] sm:min-w-[120px]">Serial</div>
+        <div className="w-[56px] min-w-[56px] sm:w-[100px] sm:min-w-[100px]">Cert</div>
+        <div className="w-[56px] min-w-[56px] sm:w-[100px] sm:min-w-[100px]">Expiry</div>
+        <div className="w-[36px] min-w-[36px] sm:w-[70px] sm:min-w-[70px]">Valid</div>
+        <div className="w-[48px] min-w-[48px] sm:w-[95px] sm:min-w-[95px]">Status</div>
+        <div className="w-[48px] min-w-[48px] sm:w-[230px] sm:min-w-[230px]">Note</div>
+        <div className="flex-1 min-w-[48px] sm:min-w-[200px]">Damage</div>
       </div>
 
       {units.length === 0 ? (
@@ -371,10 +331,6 @@ export function ChainHoistRowsBlock({
     </div>
   );
 }
-
-/* ===================================================== */
-/* PAGE */
-/* ===================================================== */
 
 export default function ChainHoistReportPage() {
   const supabase = createClient();
@@ -511,9 +467,9 @@ export default function ChainHoistReportPage() {
 
   if (loading || !role) {
     return (
-      <div className="min-h-screen bg-gray-50 p-3">
-        <div className="max-w-[1100px] mx-auto space-y-3">
-          <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
+      <div className="min-h-screen bg-gray-50 px-[2px] py-2 sm:p-3">
+        <div className="w-full max-w-none sm:max-w-[1100px] mx-auto space-y-3 px-0">
+          <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
             Loading report...
           </div>
         </div>
@@ -523,8 +479,8 @@ export default function ChainHoistReportPage() {
 
   if (!canOpenPage) {
     return (
-      <div className="min-h-screen bg-gray-50 p-3">
-        <div className="max-w-[900px] mx-auto">
+      <div className="min-h-screen bg-gray-50 px-[2px] py-2 sm:p-3">
+        <div className="w-full max-w-none sm:max-w-[900px] mx-auto px-0">
           <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
             <div className="text-lg font-semibold">Access denied</div>
             <div className="text-sm text-gray-600 mt-2">
@@ -546,8 +502,8 @@ export default function ChainHoistReportPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-3">
-      <div className="max-w-[1100px] mx-auto space-y-3">
+    <div className="min-h-screen bg-gray-50 px-[2px] py-2 sm:p-3">
+      <div className="w-full max-w-none sm:max-w-[1100px] mx-auto space-y-3 px-0">
         <input
           ref={itemPhotoRef}
           type="file"
@@ -556,42 +512,22 @@ export default function ChainHoistReportPage() {
           onChange={onPickItemPhoto}
         />
 
-        <div className="bg-white border border-gray-200 rounded-2xl p-6">
-          <div className="flex justify-between items-start gap-4">
-            <div className="flex items-start gap-4 min-w-0">
-              <div
-                style={{
-                  width: "120px",
-                  minWidth: "120px",
-                  display: "flex",
-                  alignItems: "flex-start",
-                  justifyContent: "center",
-                  paddingTop: "18px",
-                }}
-              >
-                <div className="flex items-start gap-2">
-                  <div
-                    style={{
-                      width: "96px",
-                      height: "96px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      background: "transparent",
-                    }}
-                  >
+        <div className="bg-white border border-gray-200 rounded-2xl p-2 sm:p-6">
+          <div className="flex justify-between items-center gap-2 sm:gap-4">
+            <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1">
+              <div className="w-[58px] min-w-[58px] sm:w-[120px] sm:min-w-[120px] flex items-center justify-center">
+                <div className="flex items-start gap-1 sm:gap-2">
+                  <div className="w-[48px] h-[48px] sm:w-[96px] sm:h-[96px] flex items-center justify-center bg-transparent">
                     {itemPhotoUrl ? (
                       <img
                         src={itemPhotoUrl}
                         alt={itemName}
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "contain",
-                        }}
+                        className="w-full h-full object-contain"
                       />
                     ) : (
-                      <div style={{ fontSize: "10px", color: "#9ca3af" }}>No photo</div>
+                      <div className="text-[8px] sm:text-[10px] text-gray-400">
+                        No photo
+                      </div>
                     )}
                   </div>
 
@@ -599,11 +535,8 @@ export default function ChainHoistReportPage() {
                     <button
                       type="button"
                       onClick={() => itemPhotoRef.current?.click()}
-                      className="mt-1 transition"
+                      className="mt-0.5 sm:mt-1 text-[10px] sm:text-[16px] text-red-500 transition hover:text-black"
                       title="Change photo"
-                      style={{ color: "#ef4444", fontSize: "16px", cursor: "pointer" }}
-                      onMouseEnter={(e) => (e.currentTarget.style.color = "#000000")}
-                      onMouseLeave={(e) => (e.currentTarget.style.color = "#ef4444")}
                     >
                       ✎
                     </button>
@@ -611,41 +544,17 @@ export default function ChainHoistReportPage() {
                 </div>
               </div>
 
-              <div className="min-w-0">
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span
-                    style={{
-                      width: "8px",
-                      height: "8px",
-                      borderRadius: "50%",
-                      backgroundColor: "#ef4444",
-                      display: "inline-block",
-                    }}
-                  />
+              <div className="min-w-0 flex-1 flex flex-col justify-center">
+                <div className="flex items-center gap-1.5 sm:gap-2">
+                  <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-red-500 shrink-0" />
 
-                  <p
-                    style={{
-                      fontSize: "16px",
-                      color: "#4b5563",
-                      margin: 0,
-                      lineHeight: 1,
-                    }}
-                  >
+                  <p className="text-[10px] sm:text-[16px] text-gray-600 m-0 leading-none">
                     Report
                   </p>
                 </div>
 
-                <div className="flex items-center gap-2 min-w-0">
-                  <h1
-                    style={{
-                      fontSize: "25px",
-                      fontWeight: 700,
-                      color: "#111827",
-                      lineHeight: 1.1,
-                      marginTop: "10px",
-                      marginBottom: "16px",
-                    }}
-                  >
+                <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                  <h1 className="text-[9px] sm:text-[25px] font-bold text-gray-900 leading-tight mt-1 sm:mt-[10px] mb-1.5 sm:mb-4 truncate">
                     {itemName || "-"}
                   </h1>
 
@@ -654,43 +563,31 @@ export default function ChainHoistReportPage() {
                       type="button"
                       onClick={renameItem}
                       title="Edit name"
-                      style={{
-                        color: "#ef4444",
-                        fontSize: "16px",
-                        cursor: "pointer",
-                        marginTop: "4px",
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.color = "#000000")}
-                      onMouseLeave={(e) => (e.currentTarget.style.color = "#ef4444")}
+                      className="text-[10px] sm:text-[16px] text-red-500 transition hover:text-black shrink-0"
                     >
                       ✎
                     </button>
                   ) : null}
                 </div>
 
-                <div
-                  style={{
-                    borderTop: "1px solid #e5e7eb",
-                    paddingTop: "16px",
-                  }}
-                >
-                  <div className="flex flex-wrap gap-2 text-[8px] font-semibold">
-                    <span className="px-2 py-1 rounded-lg bg-gray-100 text-black">
+                <div className="border-t border-gray-200 pt-1.5 sm:pt-4">
+                  <div className="flex flex-nowrap items-center gap-[2px] sm:gap-2 text-[5px] sm:text-[8px] font-semibold overflow-hidden">
+                    <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-gray-100 text-black">
                       Total Qty: {stats.total}
                     </span>
-                    <span className="px-2 py-1 rounded-lg bg-green-100 text-black">
+                    <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-green-100 text-black">
                       Available Qty: {stats.available}
                     </span>
-                    <span className="px-2 py-1 rounded-lg bg-blue-100 text-black">
+                    <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-blue-100 text-black">
                       In Use: {stats.inuse}
                     </span>
-                    <span className="px-2 py-1 rounded-lg bg-yellow-100 text-black">
+                    <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-yellow-100 text-black">
                       Maintenance: {stats.maintenance}
                     </span>
-                    <span className="px-2 py-1 rounded-lg bg-purple-100 text-black">
+                    <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-purple-100 text-black">
                       In KSA: {stats.ksa}
                     </span>
-                    <span className="px-2 py-1 rounded-lg bg-red-100 text-black">
+                    <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-red-100 text-black">
                       Expired: {stats.expired}
                     </span>
                   </div>
@@ -700,7 +597,7 @@ export default function ChainHoistReportPage() {
 
             <Link
               href="/equipment-report/update"
-              className="px-2.5 py-1 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98] shrink-0"
+              className="px-2 sm:px-2.5 py-0.5 sm:py-1 rounded-full border border-gray-300 text-[9px] sm:text-[10px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98] shrink-0"
             >
               ← Back
             </Link>
@@ -720,10 +617,6 @@ export default function ChainHoistReportPage() {
   );
 }
 
-/* ===================================================== */
-/* ROW */
-/* ===================================================== */
-
 function DamagePhotoThumb({
   photo,
   index,
@@ -741,30 +634,34 @@ function DamagePhotoThumb({
 
   return (
     <div
-      className="relative w-10 h-10 overflow-visible bg-white shrink-0"
+      className="relative w-[10px] h-[10px] sm:w-10 sm:h-10 overflow-visible bg-white shrink-0"
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
       <img
         src={photo}
         alt={`Damage ${index + 1}`}
-        className="w-10 h-10 object-cover cursor-pointer rounded-lg"
+        className="w-[10px] h-[10px] sm:w-10 sm:h-10 object-cover cursor-pointer rounded-[2px] sm:rounded-lg"
         onClick={() => onOpenPhoto(photo)}
       />
 
       {canDeletePhoto ? (
         <button
           type="button"
-          onClick={onDelete}
-          className="absolute top-0.5 right-0.5 w-4 h-4 rounded-full bg-white border text-[9px] flex items-center justify-center hover:bg-gray-50 z-20"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="absolute -top-[5px] -right-[5px] w-[8px] h-[8px] sm:w-4 sm:h-4 rounded-full bg-white border text-[5px] sm:text-[9px] flex items-center justify-center hover:bg-gray-50 z-20"
           title="Delete photo"
         >
           ✕
         </button>
       ) : null}
 
-      {hover && (
+      {hover ? (
         <div
+          className="hidden sm:block"
           style={{
             position: "fixed",
             top: "50%",
@@ -793,7 +690,7 @@ function DamagePhotoThumb({
             }}
           />
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -829,7 +726,6 @@ function ChainHoistEditableRow({
   const [expiryDate, setExpiryDate] = useState(unit.expiry_date || "");
   const fileRef = useRef<HTMLInputElement | null>(null);
   const timerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
-
   const didInitRef = useRef(false);
 
   useEffect(() => {
@@ -853,8 +749,8 @@ function ChainHoistEditableRow({
   const photos = unit.damage_photos ?? [];
 
   return (
-    <div className="border-t border-gray-200 pt-3">
-      <div className="flex items-center gap-1 flex-nowrap overflow-visible">
+    <div className="border-t border-gray-200 pt-2 sm:pt-3">
+      <div className="flex items-center gap-[2px] sm:gap-2 flex-nowrap overflow-visible">
         <input
           value={unitNo}
           readOnly={!editable}
@@ -870,21 +766,13 @@ function ChainHoistEditableRow({
             if (!editable) return;
             void onSave(unit.id, { unit_no: unitNo.trim() });
           }}
-          style={{
-            width: "32px",
-            minWidth: "32px",
-            maxWidth: "32px",
-            flex: "0 0 32px",
-            border: "none",
-            outline: "none",
-          }}
-          className="rounded-lg px-0 py-1 text-[11px] text-center bg-white read-only:text-gray-700"
+          className="w-[16px] min-w-[16px] sm:w-[32px] sm:min-w-[32px] rounded-lg border-none bg-white px-0 py-1 text-center text-[7px] sm:text-[11px] outline-none read-only:text-gray-700"
         />
 
         <input
           value={serial}
           readOnly={!editable}
-          placeholder={editable ? "Serial number" : ""}
+          placeholder={editable ? "Serial" : ""}
           onChange={(e) => {
             if (!editable) return;
             const v = e.target.value;
@@ -897,15 +785,7 @@ function ChainHoistEditableRow({
             if (!editable) return;
             void onSave(unit.id, { serial });
           }}
-          style={{
-            width: "120px",
-            minWidth: "120px",
-            maxWidth: "120px",
-            flex: "0 0 120px",
-            border: "none",
-            outline: "none",
-          }}
-          className="rounded-lg px-2 py-1 text-[12px] bg-white read-only:text-gray-700"
+          className="w-[42px] min-w-[42px] sm:w-[120px] sm:min-w-[120px] truncate rounded-lg border-none bg-white px-0.5 sm:px-2 py-1 text-[7px] sm:text-[12px] outline-none read-only:text-gray-700"
         />
 
         <input
@@ -928,41 +808,18 @@ function ChainHoistEditableRow({
             if (!editable) return;
             void onSave(unit.id, { cert_date: certDate || null });
           }}
-          style={{
-            width: "100px",
-            minWidth: "100px",
-            maxWidth: "100px",
-            flex: "0 0 100px",
-            border: "none",
-            outline: "none",
-          }}
-          className="rounded-lg px-1 py-1 text-[11px] bg-white read-only:text-gray-700"
+          className="w-[56px] min-w-[56px] sm:w-[100px] sm:min-w-[100px] rounded-lg border-none bg-white px-0 sm:px-1 py-1 text-[6px] sm:text-[11px] outline-none read-only:text-gray-700"
         />
 
         <input
           type="date"
           value={expiryDate}
           readOnly
-          style={{
-            width: "100px",
-            minWidth: "100px",
-            maxWidth: "100px",
-            flex: "0 0 100px",
-            border: "none",
-            outline: "none",
-            color: "#6b7280",
-          }}
-          className="rounded-lg px-1 py-1 text-[11px] bg-white"
+          className="w-[56px] min-w-[56px] sm:w-[100px] sm:min-w-[100px] rounded-lg border-none bg-white px-0 sm:px-1 py-1 text-[6px] sm:text-[11px] outline-none text-gray-500"
         />
 
         <div
-          style={{
-            width: "70px",
-            minWidth: "70px",
-            maxWidth: "70px",
-            flex: "0 0 70px",
-          }}
-          className={`rounded-lg px-2 py-1 text-[11px] font-semibold text-center ${
+          className={`w-[36px] min-w-[36px] sm:w-[70px] sm:min-w-[70px] rounded-md sm:rounded-lg px-[2px] sm:px-2 py-1 text-[6px] sm:text-[11px] font-semibold text-center ${
             validStatus === "expired"
               ? "bg-red-100 text-red-700"
               : "bg-green-100 text-green-700"
@@ -980,16 +837,8 @@ function ChainHoistEditableRow({
             setStatus(v);
             void onSave(unit.id, { status: v });
           }}
-          style={{
-            width: "95px",
-            minWidth: "95px",
-            maxWidth: "95px",
-            flex: "0 0 95px",
-            border: "none",
-            outline: "none",
-            color: getStatusTextColor(status),
-          }}
-          className="rounded-lg px-1 py-1 text-[12px] bg-white disabled:bg-white"
+          style={{ color: getStatusTextColor(status) }}
+          className="w-[48px] min-w-[48px] sm:w-[95px] sm:min-w-[95px] rounded-lg border-none bg-white px-0 sm:px-1 py-1 text-[6px] sm:text-[12px] outline-none disabled:bg-white"
         >
           <option value="available">Available</option>
           <option value="in_use">In Use</option>
@@ -1000,7 +849,7 @@ function ChainHoistEditableRow({
         <textarea
           value={notes}
           readOnly={!editable}
-          placeholder={editable ? "Write note..." : ""}
+          placeholder={editable ? "Note..." : ""}
           onChange={(e) => {
             if (!editable) return;
             const v = e.target.value;
@@ -1019,77 +868,77 @@ function ChainHoistEditableRow({
             el.style.height = `${el.scrollHeight}px`;
           }}
           rows={1}
+          className="w-[48px] min-w-[48px] sm:w-[230px] sm:min-w-[230px] rounded-lg border-none bg-white px-0.5 sm:px-2 py-1 text-[7px] sm:text-[12px] leading-tight sm:leading-[1.35] outline-none resize-none overflow-hidden read-only:text-gray-700"
           style={{
-            width: "230px",
-            minWidth: "230px",
-            maxWidth: "230px",
-            flex: "0 0 230px",
-            border: "none",
-            outline: "none",
-            resize: "none",
-            overflow: "hidden",
             whiteSpace: "pre-wrap",
             overflowWrap: "anywhere",
             wordBreak: "break-word",
-            lineHeight: "1.35",
           }}
-          className="rounded-lg px-2 py-1 text-[12px] bg-white read-only:text-gray-700"
         />
 
-        <div className="min-w-[200px] flex items-center gap-2 overflow-visible">
-          <input
-            ref={fileRef}
-            type="file"
-            hidden
-            accept="image/*"
-            onChange={(e) => {
-              if (!allowUpload) return;
-              if (e.target.files?.[0]) {
-                void onUpload(unit.id, e.target.files[0]);
-              }
-              e.target.value = "";
-            }}
-          />
-
-          {editable ? (
-  <ImagePlus
-    size={20}
-    className="cursor-pointer transition-colors duration-200 shrink-0"
-    style={{ color: "#ef4444" }}
-    onMouseEnter={(e) => (e.currentTarget.style.color = "#000000")}
-    onMouseLeave={(e) => (e.currentTarget.style.color = "#ef4444")}
-    onClick={() => fileRef.current?.click()}
+        <div className="flex min-w-[48px] flex-1 items-center gap-[2px] sm:min-w-[200px] sm:gap-2 overflow-visible">
+  <input
+    ref={fileRef}
+    type="file"
+    hidden
+    accept="image/*"
+    onChange={(e) => {
+      if (!allowUpload) return;
+      if (e.target.files?.[0]) {
+        void onUpload(unit.id, e.target.files[0]);
+      }
+      e.target.value = "";
+    }}
   />
-) : null}
 
-          {editable ? (
-  <span className="text-xs text-gray-400 shrink-0">
-    {photos.length}/5
-  </span>
-) : null}
+  {allowUpload ? (
+    <ImagePlus
+      size={10}
+      className="cursor-pointer shrink-0 transition-colors duration-200 sm:size-5"
+      style={{ color: "#ef4444" }}
+      onMouseEnter={(e) => (e.currentTarget.style.color = "#000000")}
+      onMouseLeave={(e) => (e.currentTarget.style.color = "#ef4444")}
+      onClick={() => fileRef.current?.click()}
+    />
+  ) : null}
 
-          {photos.length > 0 ? (
-            photos.map((photo, idx) => (
-              <DamagePhotoThumb
-                key={`${unit.id}-${idx}`}
-                photo={photo}
-                index={idx}
-                canDeletePhoto={allowUpload}
-                onOpenPhoto={onOpenPhoto}
-                onDelete={() => onDeleteDamagePhoto(unit.id, idx)}
-              />
-            ))
-          ) : editable ? (
-  <span className="text-xs text-gray-400 shrink-0">No photos</span>
-) : null}
-        </div>
+  {allowUpload ? (
+    <span className="text-[5px] sm:text-xs text-gray-400 shrink-0">
+      {photos.length}/5
+    </span>
+  ) : null}
 
-        <div className="w-[28px] min-w-[28px] flex justify-center">
+  {photos.length > 0 ? (
+    <div className="flex items-center gap-[4px] sm:gap-2 overflow-visible">
+      {photos.slice(0, 3).map((photo, idx) => (
+        <DamagePhotoThumb
+          key={`${unit.id}-${idx}`}
+          photo={photo}
+          index={idx}
+          canDeletePhoto={allowUpload}
+          onOpenPhoto={onOpenPhoto}
+          onDelete={() => onDeleteDamagePhoto(unit.id, idx)}
+        />
+      ))}
+
+      {photos.length > 3 ? (
+        <span className="text-[5px] sm:text-xs text-gray-400 shrink-0">
+          +{photos.length - 3}
+        </span>
+      ) : null}
+    </div>
+  ) : allowUpload ? (
+    <span className="hidden sm:inline text-xs text-gray-400 shrink-0">
+      No photos
+    </span>
+  ) : null}
+</div>
+
+        <div className="w-[12px] min-w-[12px] sm:w-[28px] sm:min-w-[28px] flex justify-center">
           {allowDelete ? (
             <Trash2
-              size={16}
-              strokeWidth={2}
-              className="cursor-pointer transition-colors duration-200"
+              size={11}
+              className="cursor-pointer transition-colors duration-200 sm:size-4"
               style={{ color: "#ef4444" }}
               onMouseEnter={(e) => (e.currentTarget.style.color = "#000000")}
               onMouseLeave={(e) => (e.currentTarget.style.color = "#ef4444")}
