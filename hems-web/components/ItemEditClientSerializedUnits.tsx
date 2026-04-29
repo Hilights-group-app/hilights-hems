@@ -375,14 +375,15 @@ export default function ItemReportPage() {
   }
 
   const canOpenPage =
-    role === "admin" ||
-    role === "warehouse_manager" ||
-    role === "head";
+  role === "admin" ||
+  role === "warehouse_manager" ||
+  role === "head" ||
+  role === "viewer";
 
-  const canEditPage =
-    role === "admin" ||
-    role === "warehouse_manager" ||
-    role === "head";
+const canEditPage =
+  role === "admin" ||
+  role === "warehouse_manager" ||
+  role === "head";
 
   async function renameItem() {
     if (!canEditPage) return;
@@ -482,7 +483,7 @@ export default function ItemReportPage() {
 
         <div className="bg-white border border-gray-200 rounded-2xl p-2 sm:p-6">
           <div className="flex justify-between items-start gap-2 sm:gap-4">
-            <div className="flex items-start gap-2 sm:gap-4 min-w-0 flex-1">
+            <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1">
               <div className="w-[58px] min-w-[58px] sm:w-[120px] sm:min-w-[120px] flex items-start justify-center pt-1 sm:pt-[18px]">
                 <div className="flex items-start gap-1 sm:gap-2">
                   <div className="w-[48px] h-[48px] sm:w-[96px] sm:h-[96px] flex items-center justify-center bg-transparent">
@@ -512,17 +513,11 @@ export default function ItemReportPage() {
                 </div>
               </div>
 
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 sm:gap-2">
-                  <span className="w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full bg-red-500 shrink-0" />
-
-                  <p className="text-[10px] sm:text-[16px] text-gray-600 m-0 leading-none">
-                    Report
-                  </p>
-                </div>
+              <div className="min-w-0 flex-1 flex flex-col justify-center">
+                
 
                 <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-                  <h1 className="text-[9px] sm:text-[25px] font-bold text-gray-900 leading-tight mt-1 sm:mt-[10px] mb-1.5 sm:mb-4 truncate">
+                  <h1 className="text-[9px] sm:text-[25px] font-bold text-gray-900 leading-tight mt-0">
                     {itemName || "-"}
                   </h1>
 
