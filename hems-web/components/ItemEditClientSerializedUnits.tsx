@@ -224,7 +224,7 @@ export default function ItemEditClientSerializedUnits({
 
               <div className="min-w-0 flex-1 flex flex-col justify-center">
                 <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-                  <h1 className="text-[9px] sm:text-[25px] font-bold text-gray-900 leading-tight mt-0 mb-1.5 sm:mb-4 truncate">
+                  <h1 className="text-[14px] sm:text-[25px] font-bold text-gray-900 leading-tight mt-0 mb-1.5 sm:mb-4 truncate">
                     {item.name}
                   </h1>
 

@@ -179,10 +179,10 @@ const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
     if (!unit) return;
 
     const currentPhotos = unit.damage_photos ?? [];
-    if (currentPhotos.length >= 5) return;
+if (currentPhotos.length >= 3) return;
 
-    const dataUrl = await fileToDataUrl(file);
-    const nextPhotos = [...currentPhotos, dataUrl].slice(0, 5);
+const dataUrl = await fileToDataUrl(file);
+const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
 
     setUnits((prev) =>
       prev.map((u) =>
@@ -278,7 +278,7 @@ const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
     ) : null}
 
     <div className="bg-white border border-gray-200 rounded-xl px-[2px] sm:px-5 pt-4 sm:pt-5 pb-5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
-      <div className="flex items-center gap-[2px] sm:gap-2 text-[6px] sm:text-[11px] font-semibold text-gray-600 pt-2 pb-3 sm:pb-4">
+      <div className="hidden sm:flex items-center gap-2 text-[11px] font-semibold text-gray-600 pt-2 pb-4">
         <div className="w-[16px] min-w-[16px] sm:w-[32px] sm:min-w-[32px] text-center">ID</div>
         <div className="w-[42px] min-w-[42px] sm:w-[120px] sm:min-w-[120px]">Serial</div>
         <div className="w-[56px] min-w-[56px] sm:w-[100px] sm:min-w-[100px]">Cert</div>
@@ -547,7 +547,7 @@ export default function ChainHoistReportPage() {
                 </div>
 
                 <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-                  <h1 className="text-[9px] sm:text-[25px] font-bold text-gray-900 leading-tight mt-1 sm:mt-[10px] mb-1.5 sm:mb-4 truncate">
+                  <h1 className="text-[14px] sm:text-[25px] font-bold text-gray-900 leading-tight mt-1 sm:mt-[10px] mb-1.5 sm:mb-4 truncate">
                     {itemName || "-"}
                   </h1>
 
@@ -742,8 +742,225 @@ function ChainHoistEditableRow({
   const photos = unit.damage_photos ?? [];
 
   return (
-    <div className="border-t border-gray-200 pt-2 sm:pt-3">
-      <div className="flex items-center gap-[2px] sm:gap-2 flex-nowrap overflow-visible">
+    <div className="border-t border-gray-200 pt-3">
+      <input
+        ref={fileRef}
+        type="file"
+        hidden
+        accept="image/*"
+        onChange={(e) => {
+          if (!allowUpload) return;
+          if (e.target.files?.[0]) {
+            void onUpload(unit.id, e.target.files[0]);
+          }
+          e.target.value = "";
+        }}
+      />
+
+      {/* MOBILE CARD STYLE */}
+      <div className="lg:hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[11px] font-semibold text-gray-400">
+              Chain Hoist Unit
+            </div>
+
+            <input
+              value={unitNo}
+              readOnly={!editable}
+              onChange={(e) => {
+                if (!editable) return;
+                const v = e.target.value;
+                setUnitNo(v);
+                debounceSave("unit_no_mobile", () => {
+                  void onSave(unit.id, { unit_no: v.trim() });
+                });
+              }}
+              onBlur={() => {
+                if (!editable) return;
+                void onSave(unit.id, { unit_no: unitNo.trim() });
+              }}
+              className="mt-1 w-full border-none bg-transparent p-0 text-[18px] font-bold text-gray-900 outline-none"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span
+              className={`rounded-full px-2 py-1 text-[10px] font-semibold ${
+                validStatus === "expired"
+                  ? "bg-red-100 text-red-700"
+                  : "bg-green-100 text-green-700"
+              }`}
+            >
+              {validStatus === "expired" ? "Expired" : "Valid"}
+            </span>
+
+            {allowDelete ? (
+              <Trash2
+                size={16}
+                className="cursor-pointer text-red-500"
+                onClick={() => void onDelete(unit.id)}
+              />
+            ) : null}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <label className="rounded-xl bg-gray-50 p-2">
+            <div className="text-[10px] font-semibold text-gray-400">Serial</div>
+            <input
+              value={serial}
+              readOnly={!editable}
+              placeholder="Serial"
+              onChange={(e) => {
+                if (!editable) return;
+                const v = e.target.value;
+                setSerial(v);
+                debounceSave("serial_mobile", () => {
+                  void onSave(unit.id, { serial: v });
+                });
+              }}
+              onBlur={() => {
+                if (!editable) return;
+                void onSave(unit.id, { serial });
+              }}
+              className="mt-1 w-full border-none bg-transparent p-0 text-[12px] font-medium text-gray-800 outline-none"
+            />
+          </label>
+
+          <label className="rounded-xl bg-gray-50 p-2">
+            <div className="text-[10px] font-semibold text-gray-400">Status</div>
+            <select
+              value={status}
+              disabled={!editable}
+              onChange={(e) => {
+                if (!editable) return;
+                const v = e.target.value;
+                setStatus(v);
+                void onSave(unit.id, { status: v });
+              }}
+              style={{ color: getStatusTextColor(status) }}
+              className="mt-1 w-full border-none bg-transparent p-0 text-[12px] font-semibold outline-none disabled:bg-transparent"
+            >
+              <option value="available">Available</option>
+              <option value="in_use">In Use</option>
+              <option value="maintenance">Maintenance</option>
+              <option value="in_ksa">In KSA</option>
+            </select>
+          </label>
+
+          <label className="rounded-xl bg-gray-50 p-2">
+            <div className="text-[10px] font-semibold text-gray-400">Cert Date</div>
+            <input
+              type="date"
+              value={certDate}
+              readOnly={!editable}
+              onChange={(e) => {
+                if (!editable) return;
+                const v = e.target.value;
+                setCertDate(v);
+
+                const newExpiry = v ? addOneYear(v) : "";
+                setExpiryDate(newExpiry);
+
+                debounceSave("cert_mobile", () => {
+                  void onSave(unit.id, { cert_date: v || null });
+                });
+              }}
+              onBlur={() => {
+                if (!editable) return;
+                void onSave(unit.id, { cert_date: certDate || null });
+              }}
+              className="mt-1 w-full border-none bg-transparent p-0 text-[11px] text-gray-800 outline-none"
+            />
+          </label>
+
+          <label className="rounded-xl bg-gray-50 p-2">
+            <div className="text-[10px] font-semibold text-gray-400">Expiry</div>
+            <input
+              type="date"
+              value={expiryDate}
+              readOnly
+              className="mt-1 w-full border-none bg-transparent p-0 text-[11px] text-gray-500 outline-none"
+            />
+          </label>
+        </div>
+
+        <label className="mt-2 block rounded-xl bg-gray-50 p-2">
+          <div className="text-[10px] font-semibold text-gray-400">Note</div>
+          <textarea
+            value={notes}
+            readOnly={!editable}
+            placeholder="Write note..."
+            onChange={(e) => {
+              if (!editable) return;
+              const v = e.target.value;
+              setNotes(v);
+              debounceSave("notes_mobile", () => {
+                void onSave(unit.id, { notes: v });
+              });
+            }}
+            onBlur={() => {
+              if (!editable) return;
+              void onSave(unit.id, { notes });
+            }}
+            rows={2}
+            className="mt-1 w-full resize-none border-none bg-transparent p-0 text-[12px] text-gray-800 outline-none"
+          />
+        </label>
+
+        <div className="mt-3 rounded-xl bg-gray-50 p-2">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-[10px] font-semibold text-gray-400">
+              Damage Photos ({photos.length}/3)
+            </div>
+
+            {allowUpload ? (
+              <ImagePlus
+                size={17}
+                className="cursor-pointer text-red-500"
+                onClick={() => fileRef.current?.click()}
+              />
+            ) : null}
+          </div>
+
+          {photos.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {photos.slice(0, 3).map((photo, idx) => (
+  <div key={`${unit.id}-mobile-${idx}`} className="relative">
+    <img
+      src={photo}
+      alt={`Damage ${idx + 1}`}
+      onClick={() => onOpenPhoto(photo)}
+      className="h-12 w-12 cursor-pointer rounded-lg object-cover"
+    />
+
+    {allowUpload ? (
+      <button
+        type="button"
+        onClick={() => onDeleteDamagePhoto(unit.id, idx)}
+        className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full border bg-white text-[9px] text-red-500 shadow-sm"
+      >
+        ✕
+      </button>
+    ) : null}
+  </div>
+))}
+
+{photos.length > 3 ? (
+  <span className="flex h-12 w-12 items-center justify-center rounded-lg bg-gray-100 text-[11px] font-semibold text-gray-500">
+    +{photos.length - 3}
+  </span>
+) : null}
+            </div>
+          ) : (
+            <div className="text-[11px] text-gray-400">No photos</div>
+          )}
+        </div>
+      </div>
+
+      {/* DESKTOP TABLE STYLE */}
+      <div className="hidden lg:flex items-center gap-2 flex-nowrap overflow-visible">
         <input
           value={unitNo}
           readOnly={!editable}
@@ -759,7 +976,7 @@ function ChainHoistEditableRow({
             if (!editable) return;
             void onSave(unit.id, { unit_no: unitNo.trim() });
           }}
-          className="w-[16px] min-w-[16px] sm:w-[32px] sm:min-w-[32px] rounded-lg border-none bg-white px-0 py-1 text-center text-[7px] sm:text-[11px] outline-none read-only:text-gray-700"
+          className="w-[32px] min-w-[32px] rounded-lg border-none bg-white px-0 py-1 text-center text-[11px] outline-none read-only:text-gray-700"
         />
 
         <input
@@ -778,7 +995,7 @@ function ChainHoistEditableRow({
             if (!editable) return;
             void onSave(unit.id, { serial });
           }}
-          className="w-[42px] min-w-[42px] sm:w-[120px] sm:min-w-[120px] truncate rounded-lg border-none bg-white px-0.5 sm:px-2 py-1 text-[7px] sm:text-[12px] outline-none read-only:text-gray-700"
+          className="w-[120px] min-w-[120px] truncate rounded-lg border-none bg-white px-2 py-1 text-[12px] outline-none read-only:text-gray-700"
         />
 
         <input
@@ -789,10 +1006,8 @@ function ChainHoistEditableRow({
             if (!editable) return;
             const v = e.target.value;
             setCertDate(v);
-
             const newExpiry = v ? addOneYear(v) : "";
             setExpiryDate(newExpiry);
-
             debounceSave("cert_date", () => {
               void onSave(unit.id, { cert_date: v || null });
             });
@@ -801,18 +1016,18 @@ function ChainHoistEditableRow({
             if (!editable) return;
             void onSave(unit.id, { cert_date: certDate || null });
           }}
-          className="w-[56px] min-w-[56px] sm:w-[100px] sm:min-w-[100px] rounded-lg border-none bg-white px-0 sm:px-1 py-1 text-[6px] sm:text-[11px] outline-none read-only:text-gray-700"
+          className="w-[100px] min-w-[100px] rounded-lg border-none bg-white px-1 py-1 text-[11px] outline-none read-only:text-gray-700"
         />
 
         <input
           type="date"
           value={expiryDate}
           readOnly
-          className="w-[56px] min-w-[56px] sm:w-[100px] sm:min-w-[100px] rounded-lg border-none bg-white px-0 sm:px-1 py-1 text-[6px] sm:text-[11px] outline-none text-gray-500"
+          className="w-[100px] min-w-[100px] rounded-lg border-none bg-white px-1 py-1 text-[11px] text-gray-500 outline-none"
         />
 
         <div
-          className={`w-[36px] min-w-[36px] sm:w-[70px] sm:min-w-[70px] rounded-md sm:rounded-lg px-[2px] sm:px-2 py-1 text-[6px] sm:text-[11px] font-semibold text-center ${
+          className={`w-[70px] min-w-[70px] rounded-lg px-2 py-1 text-[11px] font-semibold text-center ${
             validStatus === "expired"
               ? "bg-red-100 text-red-700"
               : "bg-green-100 text-green-700"
@@ -831,7 +1046,7 @@ function ChainHoistEditableRow({
             void onSave(unit.id, { status: v });
           }}
           style={{ color: getStatusTextColor(status) }}
-          className="w-[48px] min-w-[48px] sm:w-[95px] sm:min-w-[95px] rounded-lg border-none bg-white px-0 sm:px-1 py-1 text-[6px] sm:text-[12px] outline-none disabled:bg-white"
+          className="w-[95px] min-w-[95px] rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none disabled:bg-white"
         >
           <option value="available">Available</option>
           <option value="in_use">In Use</option>
@@ -855,83 +1070,55 @@ function ChainHoistEditableRow({
             if (!editable) return;
             void onSave(unit.id, { notes });
           }}
-          onInput={(e) => {
-            const el = e.currentTarget;
-            el.style.height = "auto";
-            el.style.height = `${el.scrollHeight}px`;
-          }}
           rows={1}
-          className="w-[48px] min-w-[48px] sm:w-[230px] sm:min-w-[230px] rounded-lg border-none bg-white px-0.5 sm:px-2 py-1 text-[7px] sm:text-[12px] leading-tight sm:leading-[1.35] outline-none resize-none overflow-hidden read-only:text-gray-700"
-          style={{
-            whiteSpace: "pre-wrap",
-            overflowWrap: "anywhere",
-            wordBreak: "break-word",
-          }}
+          className="w-[230px] min-w-[230px] resize-none overflow-hidden rounded-lg border-none bg-white px-2 py-1 text-[12px] outline-none read-only:text-gray-700"
         />
 
-        <div className="flex min-w-[48px] flex-1 items-center gap-[2px] sm:min-w-[200px] sm:gap-2 overflow-visible">
-  <input
-    ref={fileRef}
-    type="file"
-    hidden
-    accept="image/*"
-    onChange={(e) => {
-      if (!allowUpload) return;
-      if (e.target.files?.[0]) {
-        void onUpload(unit.id, e.target.files[0]);
-      }
-      e.target.value = "";
-    }}
-  />
+        <div className="flex min-w-[200px] items-center gap-2 overflow-visible">
+          {allowUpload ? (
+            <ImagePlus
+              size={20}
+              className="cursor-pointer shrink-0 transition-colors duration-200"
+              style={{ color: "#ef4444" }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = "#000000")}
+              onMouseLeave={(e) => (e.currentTarget.style.color = "#ef4444")}
+              onClick={() => fileRef.current?.click()}
+            />
+          ) : null}
 
-  {allowUpload ? (
-    <ImagePlus
-      size={10}
-      className="cursor-pointer shrink-0 transition-colors duration-200 sm:size-5"
-      style={{ color: "#ef4444" }}
-      onMouseEnter={(e) => (e.currentTarget.style.color = "#000000")}
-      onMouseLeave={(e) => (e.currentTarget.style.color = "#ef4444")}
-      onClick={() => fileRef.current?.click()}
-    />
-  ) : null}
+          {allowUpload ? (
+            <span className="text-xs text-gray-400 shrink-0">{photos.length}/3</span>
+          ) : null}
 
-  {allowUpload ? (
-    <span className="text-[5px] sm:text-xs text-gray-400 shrink-0">
-      {photos.length}/5
-    </span>
-  ) : null}
+          {photos.length > 0 ? (
+            <div className="flex items-center gap-2 overflow-visible">
+              {photos.slice(0, 3).map((photo, idx) => (
+                <DamagePhotoThumb
+                  key={`${unit.id}-${idx}`}
+                  photo={photo}
+                  index={idx}
+                  canDeletePhoto={allowUpload}
+                  onOpenPhoto={onOpenPhoto}
+                  onDelete={() => onDeleteDamagePhoto(unit.id, idx)}
+                />
+              ))}
 
-  {photos.length > 0 ? (
-    <div className="flex items-center gap-[4px] sm:gap-2 overflow-visible">
-      {photos.slice(0, 3).map((photo, idx) => (
-        <DamagePhotoThumb
-          key={`${unit.id}-${idx}`}
-          photo={photo}
-          index={idx}
-          canDeletePhoto={allowUpload}
-          onOpenPhoto={onOpenPhoto}
-          onDelete={() => onDeleteDamagePhoto(unit.id, idx)}
-        />
-      ))}
+              {photos.length > 3 ? (
+                <span className="text-xs text-gray-400 shrink-0">
+                  +{photos.length - 3}
+                </span>
+              ) : null}
+            </div>
+          ) : allowUpload ? (
+            <span className="text-xs text-gray-400 shrink-0">No photos</span>
+          ) : null}
+        </div>
 
-      {photos.length > 3 ? (
-        <span className="text-[5px] sm:text-xs text-gray-400 shrink-0">
-          +{photos.length - 3}
-        </span>
-      ) : null}
-    </div>
-  ) : allowUpload ? (
-    <span className="hidden sm:inline text-xs text-gray-400 shrink-0">
-      No photos
-    </span>
-  ) : null}
-</div>
-
-        <div className="w-[12px] min-w-[12px] sm:w-[28px] sm:min-w-[28px] flex justify-center">
+        <div className="w-[28px] min-w-[28px] flex justify-center">
           {allowDelete ? (
             <Trash2
-              size={11}
-              className="cursor-pointer transition-colors duration-200 sm:size-4"
+              size={16}
+              className="cursor-pointer transition-colors duration-200"
               style={{ color: "#ef4444" }}
               onMouseEnter={(e) => (e.currentTarget.style.color = "#000000")}
               onMouseLeave={(e) => (e.currentTarget.style.color = "#ef4444")}

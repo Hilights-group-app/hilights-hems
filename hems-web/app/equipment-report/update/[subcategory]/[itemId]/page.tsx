@@ -73,6 +73,7 @@ export function SerializedRowsBlock({
 }) {
   const supabase = createClient();
   const [units, setUnits] = useState<Unit[]>([]);
+  const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
 
   useEffect(() => {
     void loadUnits();
@@ -95,15 +96,13 @@ export function SerializedRowsBlock({
   }
 
   useEffect(() => {
-    const nextStats: Stats = {
+    onStatsChange?.({
       total: units.length,
       available: units.filter((u) => toStatus(u.status) === "available").length,
       inUse: units.filter((u) => toStatus(u.status) === "in_use").length,
       maintenance: units.filter((u) => toStatus(u.status) === "maintenance").length,
       inKsa: units.filter((u) => toStatus(u.status) === "in_ksa").length,
-    };
-
-    onStatsChange?.(nextStats);
+    });
   }, [units, onStatsChange]);
 
   async function updateUnit(id: string, patch: UnitPatch) {
@@ -183,12 +182,12 @@ export function SerializedRowsBlock({
     if (!unit) return;
 
     const currentPhotos = unit.damage_photos ?? [];
-    const remainingSlots = Math.max(0, 5 - currentPhotos.length);
-    if (remainingSlots === 0) return;
+    if (currentPhotos.length >= 3) return;
 
+    const remainingSlots = Math.max(0, 3 - currentPhotos.length);
     const picked = Array.from(files).slice(0, remainingSlots);
     const dataUrls = await Promise.all(picked.map((file) => fileToDataUrl(file)));
-    const nextPhotos = [...currentPhotos, ...dataUrls].slice(0, 5);
+    const nextPhotos = [...currentPhotos, ...dataUrls].slice(0, 3);
 
     await updateUnit(unitId, { damage_photos: nextPhotos });
   }
@@ -206,95 +205,70 @@ export function SerializedRowsBlock({
   }
 
   function openPhoto(url: string) {
-    const win = window.open("", "_blank");
-    if (!win) return;
-
-    win.document.write(`
-      <html>
-        <head>
-          <title>Damage Photo</title>
-          <style>
-            body {
-              margin: 0;
-              background: #111;
-              display: flex;
-              align-items: center;
-              justify-content: center;
-              min-height: 100vh;
-            }
-            img {
-              max-width: 95vw;
-              max-height: 95vh;
-              object-fit: contain;
-            }
-          </style>
-        </head>
-        <body>
-          <img src="${url}" alt="Damage Photo" />
-        </body>
-      </html>
-    `);
-    win.document.close();
+    setPreviewPhoto(url);
   }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl px-[2px] sm:px-5 pt-4 sm:pt-5 pb-5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
-      <div className="flex items-center gap-[2px] sm:gap-2 text-[7px] sm:text-[11px] font-semibold text-gray-600 pt-2 pb-3 sm:pb-4">
-        <div className="w-[18px] min-w-[18px] sm:w-[32px] sm:min-w-[32px] text-center">
-          ID
-        </div>
-
-        <div className="w-[50px] min-w-[50px] sm:w-[120px] sm:min-w-[120px]">
-          Serial
-        </div>
-
-        <div className="w-[55px] min-w-[55px] sm:w-[95px] sm:min-w-[95px]">
-          Status
-        </div>
-
-        <div className="w-[62px] min-w-[62px] sm:w-[230px] sm:min-w-[230px]">
-          Note
-        </div>
-
-        <div className="w-[66px] min-w-[66px] sm:w-[90px] sm:min-w-[90px]">
-          Test Date
-        </div>
-
-        <div className="flex-1 min-w-[58px] sm:min-w-[200px]">
-          Damage
-        </div>
-      </div>
-
-      {units.length === 0 ? (
-        <div className="text-sm text-gray-500">No units found.</div>
-      ) : (
-        units.map((unit, idx) => (
-          <SerializedUnitRow
-            key={unit.id}
-            unit={unit}
-            index={idx}
-            editable={editable}
-            onChange={updateUnit}
-            onPickDamagePhotos={onPickDamagePhotos}
-            onDeleteDamagePhoto={deleteDamagePhoto}
-            onOpenPhoto={openPhoto}
-            onDeleteRow={deleteRow}
-          />
-        ))
-      )}
-
-      {editable ? (
-        <div className="flex justify-start mt-8 pb-4">
+    <>
+      {previewPhoto ? (
+        <div className="fixed inset-0 z-[999999] bg-black/90 flex items-center justify-center p-4">
           <button
             type="button"
-            onClick={addRow}
-            className="px-2.5 py-1 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
+            onClick={() => setPreviewPhoto(null)}
+            className="absolute top-4 right-4 rounded-full bg-white px-3 py-1 text-xs font-semibold text-black"
           >
-            + Add Row
+            Close
           </button>
+
+          <img
+            src={previewPhoto}
+            alt="Damage Photo"
+            className="max-w-full max-h-[85vh] object-contain rounded-lg bg-white"
+          />
         </div>
       ) : null}
-    </div>
+
+      <div className="bg-white border border-gray-200 rounded-xl px-[2px] lg:px-5 pt-4 lg:pt-5 pb-5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+        <div className="hidden lg:flex items-center gap-2 text-[11px] font-semibold text-gray-600 pt-2 pb-4">
+          <div className="w-[32px] min-w-[32px] text-center">ID</div>
+          <div className="w-[120px] min-w-[120px]">Serial</div>
+          <div className="w-[95px] min-w-[95px]">Status</div>
+          <div className="w-[230px] min-w-[230px]">Note</div>
+          <div className="w-[90px] min-w-[90px]">Test Date</div>
+          <div className="flex-1 min-w-[200px]">Damage</div>
+        </div>
+
+        {units.length === 0 ? (
+          <div className="text-sm text-gray-500">No units found.</div>
+        ) : (
+          units.map((unit, idx) => (
+            <SerializedUnitRow
+              key={unit.id}
+              unit={unit}
+              index={idx}
+              editable={editable}
+              onChange={updateUnit}
+              onPickDamagePhotos={onPickDamagePhotos}
+              onDeleteDamagePhoto={deleteDamagePhoto}
+              onOpenPhoto={openPhoto}
+              onDeleteRow={deleteRow}
+            />
+          ))
+        )}
+
+        {editable ? (
+          <div className="flex justify-start mt-8 pb-4">
+            <button
+              type="button"
+              onClick={addRow}
+              className="px-2.5 py-1 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
+            >
+              + Add Row
+            </button>
+          </div>
+        ) : null}
+      </div>
+    </>
   );
 }
 
@@ -522,7 +496,7 @@ export default function ItemReportPage() {
                 </div>
 
                 <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-                  <h1 className="text-[9px] sm:text-[25px] font-bold text-gray-900 leading-tight mt-1 sm:mt-[10px] mb-1.5 sm:mb-4 truncate">
+                  <h1 className="text-[14px] sm:text-[26px] lg:text-[28px] font-bold text-gray-900 leading-tight mt-1 sm:mt-2 mb-2 sm:mb-4 truncate">
                     {itemName || "-"}
                   </h1>
 
@@ -596,22 +570,25 @@ function DamagePhotoThumb({
 
   return (
     <div
-      className="relative w-5 h-5 sm:w-10 sm:h-10 overflow-visible bg-white shrink-0"
+      className="relative w-[10px] h-[10px] lg:w-10 lg:h-10 overflow-visible bg-white shrink-0"
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
       <img
         src={photo}
         alt={`Damage ${index + 1}`}
-        className="w-5 h-5 sm:w-10 sm:h-10 object-cover cursor-pointer rounded-md sm:rounded-lg"
+        className="w-[10px] h-[10px] lg:w-10 lg:h-10 object-cover cursor-pointer rounded-[2px] lg:rounded-lg"
         onClick={() => onOpenPhoto(photo)}
       />
 
       {editable ? (
         <button
           type="button"
-          onClick={onDelete}
-          className="absolute top-0 right-0 w-3 h-3 sm:w-4 sm:h-4 rounded-full bg-white border text-[7px] sm:text-[9px] flex items-center justify-center hover:bg-gray-50 z-20"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="absolute -top-[5px] -right-[5px] w-[8px] h-[8px] lg:w-4 lg:h-4 rounded-full bg-white border text-[5px] lg:text-[9px] flex items-center justify-center hover:bg-gray-50 z-20"
           title="Delete photo"
         >
           ✕
@@ -620,6 +597,7 @@ function DamagePhotoThumb({
 
       {hover ? (
         <div
+          className="hidden lg:block"
           style={{
             position: "fixed",
             top: "50%",
@@ -700,8 +678,207 @@ function SerializedUnitRow({
   }
 
   return (
-    <div className="border-t border-gray-200 pt-2 sm:pt-3">
-      <div className="flex items-center gap-[2px] sm:gap-2 flex-nowrap overflow-visible">
+    <div className="border-t border-gray-200 pt-3">
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={async (e) => {
+          if (!editable) return;
+          await onPickDamagePhotos(unit.id, e.target.files);
+          e.target.value = "";
+        }}
+      />
+
+      {/* MOBILE CARD STYLE */}
+      <div className="lg:hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+        <div className="mb-3 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[11px] font-semibold text-gray-400">
+              Unit
+            </div>
+
+            <input
+              value={unitNo}
+              readOnly={!editable}
+              onChange={(e) => {
+                if (!editable) return;
+                const v = e.target.value;
+                setUnitNo(v);
+                debounceSave("unit_no_mobile", () => {
+                  void onChange(unit.id, { unit_no: v.trim() });
+                });
+              }}
+              onBlur={() => {
+                if (!editable) return;
+                void onChange(unit.id, { unit_no: unitNo.trim() });
+              }}
+              className="mt-1 w-full border-none bg-transparent p-0 text-[22px] font-extrabold tracking-tight text-gray-900 outline-none"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span
+              style={{ color: getStatusTextColor(status) }}
+              className="rounded-full bg-gray-100 px-2 py-1 text-[10px] font-semibold"
+            >
+              {status === "in_use"
+                ? "In Use"
+                : status === "in_ksa"
+                ? "In KSA"
+                : status
+                ? status.charAt(0).toUpperCase() + status.slice(1)
+                : "Available"}
+            </span>
+
+            {editable ? (
+              <Trash2
+                size={16}
+                className="cursor-pointer text-red-500"
+                onClick={() => void onDeleteRow(unit.id)}
+              />
+            ) : null}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          <label className="rounded-xl bg-gray-50 p-2">
+            <div className="text-[10px] font-semibold text-gray-400">Serial</div>
+            <input
+              value={serial}
+              readOnly={!editable}
+              placeholder="Serial"
+              onChange={(e) => {
+                if (!editable) return;
+                const v = e.target.value;
+                setSerial(v);
+                debounceSave("serial_mobile", () => {
+                  void onChange(unit.id, { serial: v });
+                });
+              }}
+              onBlur={() => {
+                if (!editable) return;
+                void onChange(unit.id, { serial });
+              }}
+              className="mt-1 w-full border-none bg-transparent p-0 text-[12px] font-medium text-gray-800 outline-none"
+            />
+          </label>
+
+          <label className="rounded-xl bg-gray-50 p-2">
+            <div className="text-[10px] font-semibold text-gray-400">Status</div>
+            <select
+              value={status}
+              disabled={!editable}
+              onChange={(e) => {
+                if (!editable) return;
+                const v = e.target.value as UnitStatus;
+                setStatus(v);
+                void onChange(unit.id, { status: v });
+              }}
+              style={{ color: getStatusTextColor(status) }}
+              className="mt-1 w-full border-none bg-transparent p-0 text-[12px] font-semibold outline-none disabled:bg-transparent"
+            >
+              <option value="available">Available</option>
+              <option value="in_use">In Use</option>
+              <option value="maintenance">Maintenance</option>
+              <option value="in_ksa">In KSA</option>
+            </select>
+          </label>
+
+          <label className="rounded-xl bg-gray-50 p-2 col-span-2">
+            <div className="text-[10px] font-semibold text-gray-400">Test Date</div>
+            <input
+              type="date"
+              value={testingDate}
+              readOnly={!editable}
+              onChange={(e) => {
+                if (!editable) return;
+                const v = e.target.value;
+                setTestingDate(v);
+                debounceSave("testing_date_mobile", () => {
+                  void onChange(unit.id, { testing_date: v || null });
+                });
+              }}
+              onBlur={() => {
+                if (!editable) return;
+                void onChange(unit.id, { testing_date: testingDate || null });
+              }}
+              className="mt-1 w-full border-none bg-transparent p-0 text-[11px] text-gray-800 outline-none"
+            />
+          </label>
+        </div>
+
+        <label className="mt-2 block rounded-xl bg-gray-50 p-2">
+          <div className="text-[10px] font-semibold text-gray-400">Note</div>
+          <textarea
+            value={notes}
+            readOnly={!editable}
+            placeholder="Write note..."
+            onChange={(e) => {
+              if (!editable) return;
+              const v = e.target.value;
+              setNotes(v);
+              debounceSave("notes_mobile", () => {
+                void onChange(unit.id, { notes: v });
+              });
+            }}
+            onBlur={() => {
+              if (!editable) return;
+              void onChange(unit.id, { notes });
+            }}
+            rows={2}
+            className="mt-1 w-full resize-none border-none bg-transparent p-0 text-[12px] text-gray-800 outline-none"
+          />
+        </label>
+
+        <div className="mt-3 rounded-xl bg-gray-50 p-2">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-[10px] font-semibold text-gray-400">
+              Damage Photos ({photos.length}/3)
+            </div>
+
+            {editable ? (
+              <ImagePlus
+                size={17}
+                className="cursor-pointer text-red-500"
+                onClick={() => fileRef.current?.click()}
+              />
+            ) : null}
+          </div>
+
+          {photos.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {photos.slice(0, 3).map((photo, idx) => (
+                <div key={`${unit.id}-mobile-${idx}`} className="relative">
+                  <img
+                    src={photo}
+                    alt={`Damage ${idx + 1}`}
+                    onClick={() => onOpenPhoto(photo)}
+                    className="h-12 w-12 cursor-pointer rounded-lg object-cover"
+                  />
+
+                  {editable ? (
+                    <button
+                      type="button"
+                      onClick={() => void onDeleteDamagePhoto(unit.id, idx)}
+                      className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full border bg-white text-[9px] text-red-500 shadow-sm"
+                    >
+                      ✕
+                    </button>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-[11px] text-gray-400">No photos</div>
+          )}
+        </div>
+      </div>
+
+      {/* DESKTOP TABLE STYLE */}
+      <div className="hidden lg:flex items-center gap-2 flex-nowrap overflow-visible">
         <input
           value={unitNo}
           readOnly={!editable}
@@ -717,7 +894,7 @@ function SerializedUnitRow({
             if (!editable) return;
             void onChange(unit.id, { unit_no: unitNo.trim() });
           }}
-          className="w-[18px] min-w-[18px] sm:w-[32px] sm:min-w-[32px] rounded-lg border-none bg-white px-0 py-1 text-center text-[8px] sm:text-[11px] outline-none read-only:text-gray-700"
+          className="w-[32px] min-w-[32px] rounded-lg border-none bg-white px-0 py-1 text-center text-[11px] outline-none read-only:text-gray-700"
         />
 
         <input
@@ -736,7 +913,7 @@ function SerializedUnitRow({
             if (!editable) return;
             void onChange(unit.id, { serial });
           }}
-          className="w-[50px] min-w-[50px] sm:w-[120px] sm:min-w-[120px] truncate rounded-lg border-none bg-white px-1 sm:px-2 py-1 text-[8px] sm:text-[12px] outline-none read-only:text-gray-700"
+          className="w-[120px] min-w-[120px] truncate rounded-lg border-none bg-white px-2 py-1 text-[12px] outline-none read-only:text-gray-700"
         />
 
         <select
@@ -749,7 +926,7 @@ function SerializedUnitRow({
             void onChange(unit.id, { status: v });
           }}
           style={{ color: getStatusTextColor(status) }}
-          className="w-[55px] min-w-[55px] sm:w-[95px] sm:min-w-[95px] rounded-lg border-none bg-white px-0.5 sm:px-1 py-1 text-[7px] sm:text-[12px] outline-none disabled:bg-white"
+          className="w-[95px] min-w-[95px] rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none disabled:bg-white"
         >
           <option value="available">Available</option>
           <option value="in_use">In Use</option>
@@ -773,13 +950,8 @@ function SerializedUnitRow({
             if (!editable) return;
             void onChange(unit.id, { notes });
           }}
-          onInput={(e) => {
-            const el = e.currentTarget;
-            el.style.height = "auto";
-            el.style.height = `${el.scrollHeight}px`;
-          }}
           rows={1}
-          className="w-[62px] min-w-[62px] sm:w-[230px] sm:min-w-[230px] rounded-lg border-none bg-white px-1 sm:px-2 py-1 text-[8px] sm:text-[12px] leading-tight sm:leading-[1.35] outline-none resize-none overflow-hidden read-only:text-gray-700"
+          className="w-[230px] min-w-[230px] resize-none overflow-hidden rounded-lg border-none bg-white px-2 py-1 text-[12px] outline-none read-only:text-gray-700"
           style={{
             whiteSpace: "pre-wrap",
             overflowWrap: "anywhere",
@@ -803,27 +975,14 @@ function SerializedUnitRow({
             if (!editable) return;
             void onChange(unit.id, { testing_date: testingDate || null });
           }}
-          className="w-[66px] min-w-[66px] sm:w-[90px] sm:min-w-[90px] rounded-lg border-none bg-white px-0 sm:px-1 py-1 text-[7px] sm:text-[12px] outline-none read-only:text-gray-700"
+          className="w-[90px] min-w-[90px] rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none read-only:text-gray-700"
         />
 
-        <div className="flex min-w-[58px] flex-1 items-center gap-[2px] sm:min-w-[200px] sm:gap-2 overflow-visible">
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*"
-            multiple
-            className="hidden"
-            onChange={async (e) => {
-              if (!editable) return;
-              await onPickDamagePhotos(unit.id, e.target.files);
-              e.target.value = "";
-            }}
-          />
-
+        <div className="flex min-w-[200px] items-center gap-2 overflow-visible">
           {editable ? (
             <ImagePlus
-              size={13}
-              className="cursor-pointer shrink-0 transition-colors duration-200 sm:size-5"
+              size={20}
+              className="cursor-pointer shrink-0 transition-colors duration-200"
               style={{ color: "#ef4444" }}
               onMouseEnter={(e) => (e.currentTarget.style.color = "#000000")}
               onMouseLeave={(e) => (e.currentTarget.style.color = "#ef4444")}
@@ -832,14 +991,14 @@ function SerializedUnitRow({
           ) : null}
 
           {editable ? (
-            <span className="text-[7px] sm:text-xs text-gray-400 shrink-0">
-              {photos.length}/5
+            <span className="text-xs text-gray-400 shrink-0">
+              {photos.length}/3
             </span>
           ) : null}
 
           {photos.length > 0 ? (
-            <div className="flex items-center gap-[2px] sm:gap-2 overflow-visible">
-              {photos.slice(0, 2).map((photo, idx) => (
+            <div className="flex items-center gap-2 overflow-visible">
+              {photos.slice(0, 3).map((photo, idx) => (
                 <DamagePhotoThumb
                   key={`${unit.id}-${idx}`}
                   photo={photo}
@@ -851,17 +1010,15 @@ function SerializedUnitRow({
               ))}
             </div>
           ) : editable ? (
-            <span className="hidden sm:inline text-xs text-gray-400 shrink-0">
-              No photos
-            </span>
+            <span className="text-xs text-gray-400 shrink-0">No photos</span>
           ) : null}
         </div>
 
-        <div className="w-[14px] min-w-[14px] sm:w-[28px] sm:min-w-[28px] flex justify-center">
+        <div className="w-[28px] min-w-[28px] flex justify-center">
           {editable ? (
             <Trash2
-              size={12}
-              className="cursor-pointer transition-colors duration-200 sm:size-4"
+              size={16}
+              className="cursor-pointer transition-colors duration-200"
               style={{ color: "#ef4444" }}
               onMouseEnter={(e) => (e.currentTarget.style.color = "#000000")}
               onMouseLeave={(e) => (e.currentTarget.style.color = "#ef4444")}
