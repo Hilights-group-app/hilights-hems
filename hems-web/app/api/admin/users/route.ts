@@ -41,7 +41,6 @@ export async function GET() {
       await supabaseAdmin.auth.admin.listUsers();
 
     if (authListError) {
-      console.error("listUsers error:", authListError);
       return NextResponse.json(
         { error: authListError.message || "Failed to list auth users." },
         { status: 500 }
@@ -57,20 +56,17 @@ export async function GET() {
 
     const { data: profiles, error: profilesError } = await supabaseAdmin
       .from("profiles")
-      .select("id, full_name, role, department")
+      .select("id, full_name, role, department, avatar_url")
       .in("id", ids);
 
     if (profilesError) {
-      console.error("profiles fetch error:", profilesError);
       return NextResponse.json(
         { error: profilesError.message || "Failed to load profiles." },
         { status: 500 }
       );
     }
 
-    const profileMap = new Map(
-      (profiles ?? []).map((p: any) => [p.id, p])
-    );
+    const profileMap = new Map((profiles ?? []).map((p: any) => [p.id, p]));
 
     const users = authUsers
       .map((u) => {
@@ -83,6 +79,7 @@ export async function GET() {
           full_name: p?.full_name ?? "",
           role: (p?.role ?? "viewer") as UserRole,
           department: (p?.department ?? "") as Department | "",
+          avatar_url: p?.avatar_url ?? "",
         };
       })
       .sort((a, b) => {
@@ -93,7 +90,6 @@ export async function GET() {
 
     return NextResponse.json({ users });
   } catch (error: any) {
-    console.error("GET /api/admin/users fatal error:", error);
     return NextResponse.json(
       { error: error?.message || "Failed to load users." },
       { status: 500 }
@@ -114,6 +110,7 @@ export async function PATCH(req: Request) {
     const full_name = String(body?.full_name ?? "").trim();
     const role = String(body?.role ?? "") as UserRole;
     const departmentRaw = String(body?.department ?? "") as Department;
+    const avatar_url = String(body?.avatar_url ?? "").trim();
 
     if (!id) {
       return NextResponse.json({ error: "Missing user id." }, { status: 400 });
@@ -138,6 +135,7 @@ export async function PATCH(req: Request) {
         full_name,
         role,
         department: department || null,
+        avatar_url: avatar_url || null,
       })
       .eq("id", id);
 
@@ -147,7 +145,6 @@ export async function PATCH(req: Request) {
 
     return NextResponse.json({ ok: true });
   } catch (error: any) {
-    console.error("PATCH /api/admin/users error:", error);
     return NextResponse.json(
       { error: error?.message || "Failed to update user." },
       { status: 500 }

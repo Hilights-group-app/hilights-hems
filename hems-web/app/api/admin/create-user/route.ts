@@ -44,6 +44,7 @@ export async function POST(req: Request) {
     const password = String(body?.password ?? "");
     const role = String(body?.role ?? "") as UserRole;
     const departmentRaw = String(body?.department ?? "") as Department;
+    const avatar_url = String(body?.avatar_url ?? "").trim();
 
     if (!full_name) {
       return NextResponse.json({ error: "Full name is required." }, { status: 400 });
@@ -88,6 +89,7 @@ export async function POST(req: Request) {
       full_name,
       role,
       department: department || null,
+      avatar_url: avatar_url || null,
     });
 
     if (profileError) {
@@ -107,6 +109,7 @@ export async function POST(req: Request) {
         full_name,
         role,
         department: department || "",
+        avatar_url: avatar_url || "",
       },
     });
   } catch (error: any) {

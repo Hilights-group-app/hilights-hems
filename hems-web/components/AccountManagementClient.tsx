@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type UserRole = "admin" | "warehouse_manager" | "viewer" | "head";
 type Department = "" | "lighting" | "video" | "rigging";
@@ -12,6 +12,7 @@ type ManagedUser = {
   email: string;
   role: UserRole;
   department: Department | "";
+  avatar_url?: string | null;
   created_at: string;
 };
 
@@ -26,12 +27,44 @@ async function safeJsonResponse(res: Response) {
   }
 }
 
+async function fileToDataUrl(file: File): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.readAsDataURL(file);
+  });
+}
+
+function initials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "U";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+function roleLabel(role: UserRole, department?: Department | "") {
+  if (role === "admin") return "Admin";
+  if (role === "warehouse_manager") return "Warehouse Manager";
+  if (role === "viewer") return "Viewer";
+  if (role === "head") {
+    if (department === "lighting") return "Head of Lighting";
+    if (department === "video") return "Head of Video";
+    if (department === "rigging") return "Head of Rigging";
+    return "Head";
+  }
+  return role;
+}
+
 export default function AccountManagementClient() {
+  const avatarInputRef = useRef<HTMLInputElement | null>(null);
+
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [role, setRole] = useState<UserRole>("viewer");
   const [department, setDepartment] = useState<Department>("");
+  const [avatarUrl, setAvatarUrl] = useState("");
 
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(true);
@@ -75,6 +108,37 @@ export default function AccountManagementClient() {
     loadUsers();
   }, []);
 
+  function updateLocalUser(id: string, patch: Partial<ManagedUser>) {
+    setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, ...patch } : u)));
+  }
+
+  async function onPickCreateAvatar(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      setAvatarUrl(dataUrl);
+    } catch {
+      setErr("Failed to read image.");
+    } finally {
+      e.target.value = "";
+    }
+  }
+
+  async function updateUserAvatar(userId: string, file: File | null) {
+    if (!file) return;
+
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      updateLocalUser(userId, { avatar_url: dataUrl });
+      setMsg("Photo selected. Click Save to update user.");
+      setErr(null);
+    } catch {
+      setErr("Failed to read image.");
+    }
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
@@ -92,6 +156,7 @@ export default function AccountManagementClient() {
           password,
           role,
           department: role === "head" ? department : "",
+          avatar_url: avatarUrl,
         }),
       });
 
@@ -108,6 +173,7 @@ export default function AccountManagementClient() {
       setPassword("");
       setRole("viewer");
       setDepartment("");
+      setAvatarUrl("");
 
       await loadUsers();
     } catch (e: any) {
@@ -115,10 +181,6 @@ export default function AccountManagementClient() {
     } finally {
       setSubmitting(false);
     }
-  }
-
-  function updateLocalUser(id: string, patch: Partial<ManagedUser>) {
-    setUsers((prev) => prev.map((u) => (u.id === id ? { ...u, ...patch } : u)));
   }
 
   async function saveUser(user: ManagedUser) {
@@ -136,6 +198,7 @@ export default function AccountManagementClient() {
           full_name: user.full_name,
           role: user.role,
           department: user.role === "head" ? user.department : "",
+          avatar_url: user.avatar_url || "",
         }),
       });
 
@@ -191,7 +254,7 @@ export default function AccountManagementClient() {
           <div>
             <h1 className="text-2xl font-bold">Account Management</h1>
             <p className="text-sm text-gray-600 mt-1">
-              Create users and manage roles and departments.
+              Create users and manage roles, departments and photos.
             </p>
           </div>
 
@@ -208,6 +271,46 @@ export default function AccountManagementClient() {
         <h2 className="text-sm font-bold text-gray-900 mb-4">Create User</h2>
 
         <form onSubmit={onSubmit} className="space-y-4 max-w-2xl">
+          <input
+            ref={avatarInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={onPickCreateAvatar}
+          />
+
+          <div className="flex items-center gap-4 rounded-2xl border border-gray-100 bg-gray-50 p-3">
+            <button
+              type="button"
+              onClick={() => avatarInputRef.current?.click()}
+              className="h-16 w-16 overflow-hidden rounded-full bg-white border shadow-sm flex items-center justify-center text-sm font-bold text-gray-700 hover:ring-2 hover:ring-black/10 transition"
+              title="Upload user photo"
+            >
+              {avatarUrl ? (
+                <img src={avatarUrl} alt="Avatar" className="h-full w-full object-cover" />
+              ) : (
+                initials(fullName || "User")
+              )}
+            </button>
+
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-gray-900">User Photo</div>
+              <div className="text-xs text-gray-500 mt-1">
+                Tap the circle to upload profile photo.
+              </div>
+
+              {avatarUrl ? (
+                <button
+                  type="button"
+                  onClick={() => setAvatarUrl("")}
+                  className="mt-2 text-xs text-red-500 hover:text-black"
+                >
+                  Remove photo
+                </button>
+              ) : null}
+            </div>
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Full Name
@@ -321,6 +424,48 @@ export default function AccountManagementClient() {
           <div className="space-y-3">
             {users.map((user) => (
               <div key={user.id} className="border rounded-2xl p-4">
+                <input
+                  id={`avatar-${user.id}`}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    void updateUserAvatar(user.id, e.target.files?.[0] || null);
+                    e.target.value = "";
+                  }}
+                />
+
+                <div className="flex items-center gap-3 mb-4">
+                  <button
+                    type="button"
+                    onClick={() => document.getElementById(`avatar-${user.id}`)?.click()}
+                    className="h-12 w-12 rounded-full overflow-hidden bg-gray-100 border flex items-center justify-center text-sm font-bold text-gray-700 shrink-0 hover:ring-2 hover:ring-black/20 transition"
+                    title="Change photo"
+                  >
+                    {user.avatar_url ? (
+                      <img
+                        src={user.avatar_url}
+                        alt={user.full_name}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      initials(user.full_name || "User")
+                    )}
+                  </button>
+
+                  <div className="min-w-0">
+                    <div className="font-semibold text-sm truncate">
+                      {user.full_name || "Unnamed User"}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {roleLabel(user.role, user.department)}
+                    </div>
+                    <div className="text-[10px] text-gray-400 mt-0.5">
+                      Click photo to change, then Save.
+                    </div>
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
                   <div className="md:col-span-3">
                     <label className="block text-xs text-gray-500 mb-1">
@@ -411,7 +556,10 @@ export default function AccountManagementClient() {
                 </div>
 
                 <div className="mt-2 text-xs text-gray-500">
-                  Created: {user.created_at ? new Date(user.created_at).toLocaleString() : "—"}
+                  Created:{" "}
+                  {user.created_at
+                    ? new Date(user.created_at).toLocaleString()
+                    : "—"}
                 </div>
               </div>
             ))}
