@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ImagePlus, Trash2 } from "lucide-react";
 import { getUserName } from "@/lib/authStore";
+import { createNotification } from "@/lib/notifications";
 
 type UserRole = "admin" | "warehouse_manager" | "viewer" | "head";
 type Department = "" | "lighting" | "video" | "rigging";
@@ -175,6 +176,8 @@ export function ProjectorRowsBlock({
       console.error("loadUnits error:", error);
       return;
     }
+
+
 
     setUnits((data ?? []) as unknown as Unit[]);
   }

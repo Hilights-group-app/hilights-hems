@@ -157,7 +157,7 @@ export function SerializedRowsBlock({
       console.error("addRow error:", error);
       return;
     }
-
+    
     setUnits((prev) => [...prev, data as Unit]);
   }
 

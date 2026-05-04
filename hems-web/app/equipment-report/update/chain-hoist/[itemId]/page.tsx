@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/client";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { ImagePlus, Trash2 } from "lucide-react";
+import { createNotification } from "@/lib/notifications";
+import { getUserName } from "@/lib/authStore";
 
 type UserRole = "admin" | "warehouse_manager" | "viewer" | "head";
 type Department = "" | "lighting" | "video" | "rigging";

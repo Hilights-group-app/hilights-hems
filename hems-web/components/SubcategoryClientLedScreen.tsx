@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
-import { Trash2 } from "lucide-react";
+import { ChevronDown, Trash2 } from "lucide-react";
 
 type MatrixRow = {
   id: string;
@@ -30,8 +30,6 @@ type ParsedLedName = {
   brand: string;
   model: string;
 };
-
-type QtyViewMode = "sqm" | "cabinet";
 
 function clampQty(v: any) {
   const n = Number(v);
@@ -64,12 +62,7 @@ function parseLedName(name: string): ParsedLedName {
   }
 
   const firstSpace = clean.indexOf(" ");
-  if (firstSpace === -1) {
-    return {
-      brand: clean,
-      model: "",
-    };
-  }
+  if (firstSpace === -1) return { brand: clean, model: "" };
 
   return {
     brand: normalizeText(clean.slice(0, firstSpace)),
@@ -88,12 +81,7 @@ function buildLedName(brand: string, model: string) {
   return `${b} - ${m}`;
 }
 
-function rowAvailableFromTotal(
-  total: number,
-  inUse: number,
-  maintenance: number,
-  inKsa: number
-) {
+function rowAvailableFromTotal(total: number, inUse: number, maintenance: number, inKsa: number) {
   return Math.max(0, total - inUse - maintenance - inKsa);
 }
 
@@ -106,87 +94,94 @@ function parseCabinetArea(size: string): number {
   const a = Number(nums[0]);
   const b = Number(nums[1]);
 
-  if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) {
-    return 1;
-  }
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) return 1;
 
   const sideA = a > 20 ? a / 1000 : a;
   const sideB = b > 20 ? b / 1000 : b;
 
   const sqm = sideA * sideB;
-
   if (!Number.isFinite(sqm) || sqm <= 0) return 1;
+
   return sqm;
 }
 
-function toUnitValue(cabinets: number, size: string, mode: QtyViewMode) {
-  if (mode === "cabinet") return cabinets;
+function toSqm(cabinets: number, size: string) {
   return cabinets * parseCabinetArea(size);
 }
 
-function formatQty(value: number, mode: QtyViewMode) {
-  if (mode === "cabinet") return String(clampQty(value));
-
+function formatSqm(value: number) {
   const rounded = Math.round(value * 100) / 100;
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
 }
 
-function unitSuffix(mode: QtyViewMode) {
-  return mode === "sqm" ? "SQM" : "Cabinet";
+function LedRowPhoto({ photo, name }: { photo?: string | null; name: string }) {
+  return (
+    <div className="flex h-12 w-12 min-w-12 items-center justify-center rounded-xl bg-gray-50">
+      {photo ? (
+        <img src={photo} alt={name} className="h-full w-full rounded-xl object-cover" />
+      ) : (
+        <div className="text-[9px] text-gray-400">No photo</div>
+      )}
+    </div>
+  );
 }
 
-function StatBadge({
+function MobileStat({
   label,
   value,
-  mode,
   tone,
 }: {
   label: string;
   value: number;
-  mode: QtyViewMode;
   tone: "gray" | "green" | "blue" | "yellow" | "purple";
 }) {
-  const toneClass =
+  const cls =
     tone === "gray"
-      ? "bg-gray-100 text-black"
+      ? "bg-gray-100"
       : tone === "green"
-      ? "bg-green-100 text-black"
+      ? "bg-green-100"
       : tone === "blue"
-      ? "bg-blue-100 text-black"
+      ? "bg-blue-100"
       : tone === "yellow"
-      ? "bg-yellow-100 text-black"
-      : "bg-purple-100 text-black";
+      ? "bg-yellow-100"
+      : "bg-purple-100";
 
   return (
-    <span
-      className={`rounded-lg px-2 py-1 text-[10px] font-semibold ${toneClass}`}
-    >
-      {label}: {formatQty(value, mode)} {unitSuffix(mode)}
-    </span>
+    <div className="w-[48px] text-center sm:w-auto">
+      <div className="mb-1 truncate text-[8px] font-semibold text-gray-500">
+        {label}
+      </div>
+      <div className={`rounded-lg px-1 py-1 text-[9px] font-bold text-black ${cls}`}>
+        {formatSqm(value)}
+      </div>
+    </div>
   );
 }
 
-function LedRowPhoto({
-  photo,
-  name,
+function SmallStat({
+  label,
+  value,
+  tone,
 }: {
-  photo?: string | null;
-  name: string;
+  label: string;
+  value: number;
+  tone: "gray" | "green" | "blue" | "yellow" | "purple";
 }) {
+  const cls =
+    tone === "gray"
+      ? "bg-gray-100"
+      : tone === "green"
+      ? "bg-green-100"
+      : tone === "blue"
+      ? "bg-blue-100"
+      : tone === "yellow"
+      ? "bg-yellow-100"
+      : "bg-purple-100";
+
   return (
-    <div className="flex h-11 w-11 min-w-[44px] items-center justify-center">
-      {photo ? (
-        <img
-          src={photo}
-          alt={name}
-          className="h-full w-full rounded-lg bg-white object-cover"
-        />
-      ) : (
-        <div className="flex h-full w-full items-center justify-center rounded-lg bg-white text-[9px] text-gray-400">
-          No photo
-        </div>
-      )}
-    </div>
+    <span className={`rounded-lg px-2 py-1 text-[9px] font-semibold text-black ${cls}`}>
+      {label}: {formatSqm(value)} SQM
+    </span>
   );
 }
 
@@ -206,9 +201,7 @@ export default function SubcategoryClientLedScreen({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState("");
 
-  const [resolvedCategoryId, setResolvedCategoryId] = useState<string | null>(
-    categoryId ?? null
-  );
+  const [resolvedCategoryId, setResolvedCategoryId] = useState<string | null>(categoryId ?? null);
 
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
@@ -216,7 +209,7 @@ export default function SubcategoryClientLedScreen({
   const [totalQtyInput, setTotalQtyInput] = useState(0);
   const [newPhoto, setNewPhoto] = useState<string | null>(null);
 
-  const [viewModeByModel, setViewModeByModel] = useState<Record<string, QtyViewMode>>({});
+  const [openModelId, setOpenModelId] = useState<string | null>(null);
 
   const [editingRow, setEditingRow] = useState<MatrixRow | null>(null);
   const [editTotal, setEditTotal] = useState(0);
@@ -264,8 +257,6 @@ export default function SubcategoryClientLedScreen({
         .order("created_at", { ascending: false });
 
       if (error) {
-        console.error("loadModels relation query error", error);
-
         const fallback = await supabase
           .from("matrix_models")
           .select("id, category_id, subcategory_id, name, created_at")
@@ -273,7 +264,6 @@ export default function SubcategoryClientLedScreen({
           .order("created_at", { ascending: false });
 
         if (fallback.error) {
-          console.error("loadModels fallback error", fallback.error);
           setModels([]);
           setErrorMsg(fallback.error.message || "Failed to load LED screen models.");
           setLoading(false);
@@ -286,15 +276,10 @@ export default function SubcategoryClientLedScreen({
           base.map(async (m) => {
             const rres = await supabase
               .from("matrix_rows")
-              .select(
-                "id, model_id, size, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data"
-              )
+              .select("id, model_id, size, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data")
               .eq("model_id", m.id);
 
-            return {
-              ...m,
-              matrix_rows: (rres.data ?? []) as MatrixRow[],
-            };
+            return { ...m, matrix_rows: (rres.data ?? []) as MatrixRow[] };
           })
         );
 
@@ -305,7 +290,6 @@ export default function SubcategoryClientLedScreen({
 
       setModels((data ?? []) as MatrixModel[]);
     } catch (e: any) {
-      console.error("loadModels unexpected error", e);
       setErrorMsg(e?.message || "Failed to load LED screen models.");
       setModels([]);
     } finally {
@@ -344,17 +328,11 @@ export default function SubcategoryClientLedScreen({
   }, [subcategoryId, categoryId]);
 
   const parsedModels = useMemo(() => {
-    return models.map((m) => ({
-      ...m,
-      parsed: parseLedName(m.name),
-    }));
+    return models.map((m) => ({ ...m, parsed: parseLedName(m.name) }));
   }, [models]);
 
   const brandSuggestions = useMemo(() => {
-    const list = Array.from(
-      new Set(parsedModels.map((m) => m.parsed.brand).filter(Boolean))
-    ).sort((a, b) => a.localeCompare(b));
-
+    const list = Array.from(new Set(parsedModels.map((m) => m.parsed.brand).filter(Boolean))).sort();
     const q = normalizeText(brand).toLowerCase();
     if (!q) return list;
     return list.filter((x) => x.toLowerCase().includes(q));
@@ -362,16 +340,8 @@ export default function SubcategoryClientLedScreen({
 
   const modelSuggestions = useMemo(() => {
     const currentBrand = normalizeText(brand).toLowerCase();
-
-    const source = parsedModels.filter((m) => {
-      if (!currentBrand) return true;
-      return m.parsed.brand.toLowerCase() === currentBrand;
-    });
-
-    const list = Array.from(
-      new Set(source.map((m) => m.parsed.model).filter(Boolean))
-    ).sort((a, b) => a.localeCompare(b));
-
+    const source = parsedModels.filter((m) => !currentBrand || m.parsed.brand.toLowerCase() === currentBrand);
+    const list = Array.from(new Set(source.map((m) => m.parsed.model).filter(Boolean))).sort();
     const q = normalizeText(model).toLowerCase();
     if (!q) return list;
     return list.filter((x) => x.toLowerCase().includes(q));
@@ -388,12 +358,8 @@ export default function SubcategoryClientLedScreen({
     });
 
     const list = Array.from(
-      new Set(
-        matchedModels.flatMap((m) =>
-          (m.matrix_rows ?? []).map((r) => normalizeText(r.size)).filter(Boolean)
-        )
-      )
-    ).sort((a, b) => a.localeCompare(b));
+      new Set(matchedModels.flatMap((m) => (m.matrix_rows ?? []).map((r) => normalizeText(r.size)).filter(Boolean)))
+    ).sort();
 
     const q = normalizeText(cabinetSize).toLowerCase();
     if (!q) return list;
@@ -403,7 +369,6 @@ export default function SubcategoryClientLedScreen({
   async function onPickNewPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
-
     try {
       const dataUrl = await fileToDataUrl(f);
       setNewPhoto(dataUrl);
@@ -415,7 +380,6 @@ export default function SubcategoryClientLedScreen({
   async function onPickAddCabinetPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     if (!f) return;
-
     try {
       const dataUrl = await fileToDataUrl(f);
       setAddCabinetPhoto(dataUrl);
@@ -442,25 +406,10 @@ export default function SubcategoryClientLedScreen({
     const cleanCabinet = normalizeText(cabinetSize);
     const totalQty = clampQty(totalQtyInput);
 
-    if (!cleanBrand) {
-      setErrorMsg("Please enter brand name.");
-      return;
-    }
-
-    if (!cleanModel) {
-      setErrorMsg("Please enter model / pixel pitch.");
-      return;
-    }
-
-    if (!cleanCabinet) {
-      setErrorMsg("Please enter panel size.");
-      return;
-    }
-
-    if (totalQty <= 0) {
-      setErrorMsg("Please enter qty by panel.");
-      return;
-    }
+    if (!cleanBrand) return setErrorMsg("Please enter brand name.");
+    if (!cleanModel) return setErrorMsg("Please enter model / pixel pitch.");
+    if (!cleanCabinet) return setErrorMsg("Please enter panel size.");
+    if (totalQty <= 0) return setErrorMsg("Please enter qty by panel.");
 
     setSubmitting(true);
 
@@ -481,7 +430,6 @@ export default function SubcategoryClientLedScreen({
 
         if (existingRow) {
           const newTotal = clampQty(existingRow.qty) + totalQty;
-
           const newAvailable = rowAvailableFromTotal(
             newTotal,
             clampQty(existingRow.in_use_qty),
@@ -489,7 +437,7 @@ export default function SubcategoryClientLedScreen({
             clampQty(existingRow.in_ksa_qty)
           );
 
-          const { error: updateQtyError } = await supabase
+          const { error } = await supabase
             .from("matrix_rows")
             .update({
               qty: newTotal,
@@ -498,13 +446,12 @@ export default function SubcategoryClientLedScreen({
             })
             .eq("id", existingRow.id);
 
-          if (updateQtyError) {
-            console.error("merge qty error", updateQtyError);
-            setErrorMsg(updateQtyError.message || "Failed to update qty.");
+          if (error) {
+            setErrorMsg(error.message || "Failed to update qty.");
             return;
           }
         } else {
-          const { error: addRowError } = await supabase.from("matrix_rows").insert({
+          const { error } = await supabase.from("matrix_rows").insert({
             model_id: existingModel.id,
             size: cleanCabinet,
             qty: totalQty,
@@ -515,9 +462,8 @@ export default function SubcategoryClientLedScreen({
             photo_data: newPhoto || null,
           });
 
-          if (addRowError) {
-            console.error("add row to existing model error", addRowError);
-            setErrorMsg(addRowError.message || "Failed to add cabinet row.");
+          if (error) {
+            setErrorMsg(error.message || "Failed to add cabinet row.");
             return;
           }
         }
@@ -533,7 +479,6 @@ export default function SubcategoryClientLedScreen({
           .single();
 
         if (error || !created) {
-          console.error("add LED model error", error);
           setErrorMsg(error?.message || "Failed to add LED screen model.");
           return;
         }
@@ -550,10 +495,11 @@ export default function SubcategoryClientLedScreen({
         });
 
         if (firstRow.error) {
-          console.error("add first LED cabinet row error", firstRow.error);
           setErrorMsg(firstRow.error.message || "Model added, but failed to create first cabinet row.");
           return;
         }
+
+        setOpenModelId(created.id);
       }
 
       setBrand("");
@@ -562,21 +508,16 @@ export default function SubcategoryClientLedScreen({
       setTotalQtyInput(0);
       setNewPhoto(null);
       setSaveMsg("LED screen added");
-
-      setTimeout(() => {
-        setSaveMsg((prev) => (prev === "LED screen added" ? "" : prev));
-      }, 1500);
+      setTimeout(() => setSaveMsg((prev) => (prev === "LED screen added" ? "" : prev)), 1500);
 
       await loadModels(subcategoryId);
     } catch (e: any) {
-      console.error("addLedScreen unexpected error", e);
       setErrorMsg(e?.message || "Failed to add LED screen.");
     } finally {
       setSubmitting(false);
     }
   }
-
-  function openEditPopup(row: MatrixRow) {
+    function openEditPopup(row: MatrixRow) {
     setEditingRow(row);
     setEditTotal(clampQty(row.qty));
     setEditInUse(clampQty(row.in_use_qty));
@@ -615,18 +556,12 @@ export default function SubcategoryClientLedScreen({
     const nextInKsa = clampQty(editInKsa);
     const nextMaintenance = clampQty(editingRow.maintenance_qty);
 
-    const sumOthers = nextInUse + nextMaintenance + nextInKsa;
-    if (sumOthers > total) {
+    if (nextInUse + nextMaintenance + nextInKsa > total) {
       alert("In Use + Maintenance + In KSA cannot be more than Total Qty");
       return;
     }
 
-    const nextAvailable = rowAvailableFromTotal(
-      total,
-      nextInUse,
-      nextMaintenance,
-      nextInKsa
-    );
+    const nextAvailable = rowAvailableFromTotal(total, nextInUse, nextMaintenance, nextInKsa);
 
     setSavingEdit(true);
 
@@ -641,7 +576,6 @@ export default function SubcategoryClientLedScreen({
       .eq("id", editingRow.id);
 
     if (error) {
-      console.error("saveEditPopup error", error);
       alert("Failed to save row");
       setSavingEdit(false);
       return;
@@ -673,15 +607,8 @@ export default function SubcategoryClientLedScreen({
     const size = normalizeText(addCabinetSize);
     const total = clampQty(addCabinetQty);
 
-    if (!size) {
-      alert("Please enter cabinet size");
-      return;
-    }
-
-    if (total <= 0) {
-      alert("Please enter qty");
-      return;
-    }
+    if (!size) return alert("Please enter cabinet size");
+    if (total <= 0) return alert("Please enter qty");
 
     setSavingAddCabinet(true);
 
@@ -697,7 +624,6 @@ export default function SubcategoryClientLedScreen({
     });
 
     if (error) {
-      console.error("add cabinet error", error);
       alert("Failed to add cabinet");
       setSavingAddCabinet(false);
       return;
@@ -705,13 +631,11 @@ export default function SubcategoryClientLedScreen({
 
     if (subcategoryId) {
       setSaveMsg("Cabinet added");
-      setTimeout(() => {
-        setSaveMsg((prev) => (prev === "Cabinet added" ? "" : prev));
-      }, 1500);
-
+      setTimeout(() => setSaveMsg((prev) => (prev === "Cabinet added" ? "" : prev)), 1500);
       await loadModels(subcategoryId);
     }
 
+    setOpenModelId(addingModelId);
     closeAddCabinetPopup();
   }
 
@@ -728,84 +652,94 @@ export default function SubcategoryClientLedScreen({
     const cleanName = buildLedName(nextBrand, nextModel);
     if (!cleanName) return;
 
-    const { error } = await supabase
-      .from("matrix_models")
-      .update({ name: cleanName })
-      .eq("id", modelId);
+    const { error } = await supabase.from("matrix_models").update({ name: cleanName }).eq("id", modelId);
 
     if (error) {
-      console.error("renameModel error", error);
       alert("Rename failed");
       return;
     }
 
     if (subcategoryId) {
       setSaveMsg("Model renamed");
-      setTimeout(() => {
-        setSaveMsg((prev) => (prev === "Model renamed" ? "" : prev));
-      }, 1500);
-
+      setTimeout(() => setSaveMsg((prev) => (prev === "Model renamed" ? "" : prev)), 1500);
       await loadModels(subcategoryId);
     }
   }
 
-  async function renameRow(row: MatrixRow) {
+  async function saveRowDirect(row: MatrixRow, patch: Partial<MatrixRow>) {
     if (!editable) return;
 
-    const next = prompt("Rename cabinet size:", row.size);
-    if (!next) return;
+    const nextSize = normalizeText(String(patch.size ?? row.size));
+    const nextTotal = clampQty(patch.qty ?? row.qty);
+    const nextInUse = clampQty(patch.in_use_qty ?? row.in_use_qty);
+    const nextMaintenance = clampQty(row.maintenance_qty);
+    const nextInKsa = clampQty(patch.in_ksa_qty ?? row.in_ksa_qty);
 
-    const clean = normalizeText(next);
-    if (!clean) return;
-
-    const { error } = await supabase
-      .from("matrix_rows")
-      .update({ size: clean })
-      .eq("id", row.id);
-
-    if (error) {
-      console.error("renameRow error", error);
-      alert("Rename cabinet size failed");
+    if (!nextSize) {
+      alert("Cabinet size cannot be empty");
       return;
     }
+
+    if (nextInUse + nextMaintenance + nextInKsa > nextTotal) {
+      alert("In Use + Maintenance + In KSA cannot be more than Total Qty");
+      return;
+    }
+
+    const nextAvailable = rowAvailableFromTotal(nextTotal, nextInUse, nextMaintenance, nextInKsa);
 
     setModels((prev) =>
       prev.map((m) => ({
         ...m,
         matrix_rows: (m.matrix_rows ?? []).map((r) =>
-          r.id === row.id ? { ...r, size: clean } : r
+          r.id === row.id
+            ? {
+                ...r,
+                size: nextSize,
+                qty: nextTotal,
+                available_qty: nextAvailable,
+                in_use_qty: nextInUse,
+                in_ksa_qty: nextInKsa,
+              }
+            : r
         ),
       }))
     );
+
+    const { error } = await supabase
+      .from("matrix_rows")
+      .update({
+        size: nextSize,
+        qty: nextTotal,
+        available_qty: nextAvailable,
+        in_use_qty: nextInUse,
+        in_ksa_qty: nextInKsa,
+      })
+      .eq("id", row.id);
+
+    if (error) {
+      alert("Failed to save row");
+      if (subcategoryId) await loadModels(subcategoryId);
+    }
   }
 
   async function deleteModel(modelId: string) {
     if (!editable) return;
     if (!confirm("Delete this LED model?")) return;
 
-    const r = await supabase.from("matrix_rows").delete().eq("model_id", modelId);
-    if (r.error) console.warn("delete rows warn", r.error);
+    await supabase.from("matrix_rows").delete().eq("model_id", modelId);
 
     const { error } = await supabase.from("matrix_models").delete().eq("id", modelId);
+
     if (error) {
-      console.error("deleteModel error", error);
       alert("Delete failed");
       return;
     }
 
     if (subcategoryId) {
       setSaveMsg("Model deleted");
-      setTimeout(() => {
-        setSaveMsg((prev) => (prev === "Model deleted" ? "" : prev));
-      }, 1500);
-
+      setTimeout(() => setSaveMsg((prev) => (prev === "Model deleted" ? "" : prev)), 1500);
       await loadModels(subcategoryId);
     }
-  }
-
-  function addRow(modelId: string) {
-    if (!editable) return;
-    openAddCabinetPopup(modelId);
   }
 
   async function deleteRow(rowId: string) {
@@ -815,7 +749,6 @@ export default function SubcategoryClientLedScreen({
     const { error } = await supabase.from("matrix_rows").delete().eq("id", rowId);
 
     if (error) {
-      console.error("deleteRow error", error);
       alert("Delete row failed");
       return;
     }
@@ -828,14 +761,10 @@ export default function SubcategoryClientLedScreen({
     );
   }
 
-  function setModelViewMode(modelId: string, mode: QtyViewMode) {
-    setViewModeByModel((prev) => ({ ...prev, [modelId]: mode }));
-  }
-
   if (loading) {
     return (
       <div className="mx-auto max-w-[1100px] px-3 sm:px-0">
-        <div className="rounded-xl border border-gray-200 bg-white px-5 py-6 text-gray-900 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+        <div className="rounded-xl border border-gray-200 bg-white px-5 py-6 text-gray-900">
           Loading LED screen models...
         </div>
       </div>
@@ -845,91 +774,75 @@ export default function SubcategoryClientLedScreen({
   return (
     <div className="mx-auto max-w-[1100px] space-y-3 px-3 text-black sm:px-0">
       {editable && (
-        <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-6">
-          <div className="mb-4 flex items-center justify-between gap-4">
-            <h1 className="text-[14px] font-semibold leading-[1.1] text-gray-900">
-              Add Led Screen
-            </h1>
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5">
+          <div className="mb-4">
+            <h1 className="text-[16px] font-bold text-gray-900">Add LED Screen</h1>
+            <p className="mt-1 text-[11px] text-gray-500">
+              Add model once, then add cabinet sizes inside it.
+            </p>
           </div>
 
           <div className="grid grid-cols-1 gap-3 md:grid-cols-12">
-            <div className="md:col-span-2">
-              <input
-                list="led-brand-list"
-                value={brand}
-                onChange={(e) => setBrand(e.target.value)}
-                placeholder="Brand Name (e.g Absen)"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-[12px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
-              />
-              <datalist id="led-brand-list">
-                {brandSuggestions.map((b) => (
-                  <option key={b} value={b} />
-                ))}
-              </datalist>
-            </div>
+            <input
+              list="led-brand-list"
+              value={brand}
+              onChange={(e) => setBrand(e.target.value)}
+              placeholder="Brand"
+              className="w-full rounded-xl border border-gray-200 px-3 py-2 text-[12px] outline-none focus:ring-1 focus:ring-black md:col-span-2"
+            />
+            <datalist id="led-brand-list">
+              {brandSuggestions.map((b) => (
+                <option key={b} value={b} />
+              ))}
+            </datalist>
 
-            <div className="md:col-span-2">
-              <input
-                list="led-model-list"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder="Model & ph (e.g PL2.9)"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-[12px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
-              />
-              <datalist id="led-model-list">
-                {modelSuggestions.map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
-            </div>
+            <input
+              list="led-model-list"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="Model / PH"
+              className="w-full rounded-xl border border-gray-200 px-3 py-2 text-[12px] outline-none focus:ring-1 focus:ring-black md:col-span-2"
+            />
+            <datalist id="led-model-list">
+              {modelSuggestions.map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
 
-            <div className="md:col-span-3">
-              <input
-                list="led-cabinet-list"
-                value={cabinetSize}
-                onChange={(e) => setCabinetSize(e.target.value)}
-                placeholder="Panel size (e.g 500mm X 500mm)"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-[12px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
-              />
-              <datalist id="led-cabinet-list">
-                {cabinetSuggestions.map((s) => (
-                  <option key={s} value={s} />
-                ))}
-              </datalist>
-            </div>
+            <input
+              list="led-cabinet-list"
+              value={cabinetSize}
+              onChange={(e) => setCabinetSize(e.target.value)}
+              placeholder="Cabinet size"
+              className="w-full rounded-xl border border-gray-200 px-3 py-2 text-[12px] outline-none focus:ring-1 focus:ring-black md:col-span-3"
+            />
+            <datalist id="led-cabinet-list">
+              {cabinetSuggestions.map((s) => (
+                <option key={s} value={s} />
+              ))}
+            </datalist>
 
-            <div className="md:col-span-1">
-              <input
-                type="number"
-                min={0}
-                value={String(totalQtyInput)}
-                onChange={(e) => setTotalQtyInput(clampQty(e.target.value))}
-                placeholder="Qty"
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-[12px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
-              />
-            </div>
+            <input
+              type="number"
+              min={0}
+              value={String(totalQtyInput)}
+              onChange={(e) => setTotalQtyInput(clampQty(e.target.value))}
+              placeholder="Qty"
+              className="w-full rounded-xl border border-gray-200 px-3 py-2 text-[12px] outline-none focus:ring-1 focus:ring-black md:col-span-1"
+            />
 
-            <div className="md:col-span-2">
-              <label className="flex w-full cursor-pointer items-center justify-center rounded-full border border-gray-300 bg-white px-2.5 py-2 text-[10px] font-medium text-gray-700 transition-all duration-150 ease-out hover:border-red-200 hover:bg-red-50 hover:text-red-700 hover:shadow-sm active:scale-[0.98]">
-                <span>{newPhoto ? "Photo ✔" : "Upload Photo"}</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={onPickNewPhoto}
-                />
-              </label>
-            </div>
+            <label className="flex w-full cursor-pointer justify-center rounded-full border border-gray-200 bg-white px-3 py-2 text-[10px] font-medium text-gray-700 hover:bg-gray-50 md:col-span-2">
+              {newPhoto ? "Photo ✔" : "Upload Photo"}
+              <input type="file" accept="image/*" className="hidden" onChange={onPickNewPhoto} />
+            </label>
 
-            <div className="md:col-span-2">
-              <button
-                type="button"
-                onClick={addLedScreen}
-                className="w-full rounded-full border border-black bg-black px-2.5 py-2 text-[10px] font-medium text-white transition-all duration-150 ease-out hover:opacity-90 active:scale-[0.98]"
-              >
-                {submitting ? "Adding..." : "+ Add"}
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={addLedScreen}
+              className="w-full rounded-full bg-black px-3 py-2 text-[10px] font-medium text-white hover:opacity-90 md:col-span-2"
+            >
+              {submitting ? "Adding..." : "+ Add Model"}
+            </button>
           </div>
 
           {(errorMsg || saveMsg) && (
@@ -941,127 +854,94 @@ export default function SubcategoryClientLedScreen({
       )}
 
       {models.length === 0 ? (
-        <div className="rounded-xl border border-gray-200 bg-white px-5 py-6 text-gray-900 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+        <div className="rounded-xl border border-gray-200 bg-white px-5 py-6 text-gray-900">
           No LED screen models yet.
         </div>
       ) : (
-        <div className="rounded-2xl border border-gray-200 bg-white p-3 sm:p-5">
-          {parsedModels.map((m, index) => {
-            const isLast = index === parsedModels.length - 1;
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-[15px] font-bold text-gray-900">LED Screen Models</h2>
+            <span className="text-[11px] text-gray-500">{models.length} models</span>
+          </div>
 
-            return (
-              <div key={m.id} className={!isLast ? "mb-4 pb-4" : ""}>
-                <LedModelCard
-                  model={m}
-                  brand={m.parsed.brand}
-                  modelName={m.parsed.model}
-                  editable={editable}
-                  mode={viewModeByModel[m.id] ?? "sqm"}
-                  onChangeMode={(mode) => setModelViewMode(m.id, mode)}
-                  onRename={() => renameModel(m.id, m.name)}
-                  onDelete={() => deleteModel(m.id)}
-                  onAddRow={() => addRow(m.id)}
-                  onDeleteRow={(rowId) => deleteRow(rowId)}
-                  onOpenEdit={(row) => openEditPopup(row)}
-                  onRenameRow={(row) => renameRow(row)}
-                />
-              </div>
-            );
-          })}
+          <div className="divide-y divide-gray-100">
+            {parsedModels.map((m) => (
+              <LedModelCard
+                key={m.id}
+                model={m}
+                brand={m.parsed.brand}
+                modelName={m.parsed.model}
+                editable={editable}
+                isOpen={openModelId === m.id}
+                onToggle={() => setOpenModelId((prev) => (prev === m.id ? null : m.id))}
+                onRename={() => renameModel(m.id, m.name)}
+                onDelete={() => deleteModel(m.id)}
+                onAddRow={() => openAddCabinetPopup(m.id)}
+                onDeleteRow={(rowId) => deleteRow(rowId)}
+                onOpenEdit={(row) => openEditPopup(row)}
+                onSaveRowDirect={saveRowDirect}
+              />
+            ))}
+          </div>
         </div>
       )}
 
       {editingRow && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-4 shadow-xl sm:p-6">
-            <h3 className="text-[18px] font-semibold text-gray-900 sm:text-[20px]">
-              Edit Qty
-            </h3>
-
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+            <h3 className="text-[18px] font-semibold text-gray-900">Edit Qty</h3>
             <div className="mt-2 text-[11px] text-gray-600">
               Cabinet Size: <span className="font-semibold text-black">{editingRow.size}</span>
             </div>
 
-            <div className="mt-1 text-[11px] text-gray-600">
-              Total Qty: <span className="font-semibold text-black">{editingRow.qty}</span>
-            </div>
-
             <div className="mt-4 grid grid-cols-1 gap-3">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Total Qty
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  value={String(editTotal)}
-                  onChange={(e) => setEditTotal(clampQty(e.target.value))}
-                  className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:ring-1 focus:ring-black"
-                />
+              <input
+                type="number"
+                min={0}
+                value={String(editTotal)}
+                onChange={(e) => setEditTotal(clampQty(e.target.value))}
+                placeholder="Total Qty"
+                className="w-full rounded-xl border border-gray-200 px-4 py-3 outline-none"
+              />
+
+              <input
+                type="number"
+                min={0}
+                value={String(editInUse)}
+                onChange={(e) => setEditInUse(clampQty(e.target.value))}
+                placeholder="In Use"
+                className="w-full rounded-xl border border-gray-200 px-4 py-3 outline-none"
+              />
+
+              <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
+                Maintenance: {editingRow.maintenance_qty} (auto from report)
               </div>
 
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  In Use
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  value={String(editInUse)}
-                  onChange={(e) => setEditInUse(clampQty(e.target.value))}
-                  className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:ring-1 focus:ring-black"
-                />
-              </div>
+              <input
+                type="number"
+                min={0}
+                value={String(editInKsa)}
+                onChange={(e) => setEditInKsa(clampQty(e.target.value))}
+                placeholder="In KSA"
+                className="w-full rounded-xl border border-gray-200 px-4 py-3 outline-none"
+              />
 
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Maintenance
-                </label>
-                <div className="w-full rounded-lg border border-gray-300 bg-gray-50 px-4 py-3 text-sm text-gray-700">
-                  {editingRow.maintenance_qty} (auto from report)
-                </div>
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  In KSA
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  value={String(editInKsa)}
-                  onChange={(e) => setEditInKsa(clampQty(e.target.value))}
-                  className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:ring-1 focus:ring-black"
-                />
-              </div>
-
-              <div className="pt-1 text-sm text-gray-600">
-                Available (auto):
+              <div className="text-sm text-gray-600">
+                Available:
                 <span className="ml-2 font-semibold text-black">
-                  {rowAvailableFromTotal(
-                    clampQty(editTotal),
-                    clampQty(editInUse),
-                    clampQty(editingRow.maintenance_qty),
-                    clampQty(editInKsa)
-                  )}
+                  {rowAvailableFromTotal(clampQty(editTotal), clampQty(editInUse), clampQty(editingRow.maintenance_qty), clampQty(editInKsa))}
                 </span>
               </div>
             </div>
 
             <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={closeEditPopup}
-                className="rounded-full border border-gray-300 bg-white px-2.5 py-1 text-[10px] font-medium text-gray-700 transition-all duration-150 ease-out hover:border-red-200 hover:bg-red-50 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
-              >
+              <button onClick={closeEditPopup} className="rounded-full border px-4 py-1 text-xs">
                 Cancel
               </button>
-
               <button
-                type="button"
                 onClick={saveEditPopup}
                 disabled={savingEdit}
-                className="rounded-full border border-black bg-black px-2.5 py-1 text-[10px] font-medium text-white transition-all duration-150 ease-out hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
+                className="rounded-full bg-black px-4 py-1 text-xs text-white disabled:opacity-50"
               >
                 {savingEdit ? "Saving..." : "Save"}
               </button>
@@ -1072,67 +952,40 @@ export default function SubcategoryClientLedScreen({
 
       {addingModelId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-4 shadow-xl sm:p-6">
-            <h3 className="text-[18px] font-semibold text-gray-900 sm:text-[20px]">
-              Add Cabinet
-            </h3>
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+            <h3 className="text-[18px] font-semibold text-gray-900">Add Cabinet</h3>
 
             <div className="mt-4 grid grid-cols-1 gap-3">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Cabinet Size
-                </label>
-                <input
-                  value={addCabinetSize}
-                  onChange={(e) => setAddCabinetSize(e.target.value)}
-                  placeholder="e.g. 500mm X 500mm"
-                  className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:ring-1 focus:ring-black"
-                />
-              </div>
+              <input
+                value={addCabinetSize}
+                onChange={(e) => setAddCabinetSize(e.target.value)}
+                placeholder="Cabinet Size"
+                className="w-full rounded-xl border border-gray-200 px-4 py-3 outline-none"
+              />
 
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Qty by Panel
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  value={String(addCabinetQty)}
-                  onChange={(e) => setAddCabinetQty(clampQty(e.target.value))}
-                  className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:ring-1 focus:ring-black"
-                />
-              </div>
+              <input
+                type="number"
+                min={0}
+                value={String(addCabinetQty)}
+                onChange={(e) => setAddCabinetQty(clampQty(e.target.value))}
+                placeholder="Qty by Panel"
+                className="w-full rounded-xl border border-gray-200 px-4 py-3 outline-none"
+              />
 
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Photo
-                </label>
-                <label className="flex w-full cursor-pointer items-center justify-center rounded-lg border border-gray-300 bg-white px-3 py-3 text-sm text-gray-700 transition-all duration-150 hover:border-red-200 hover:bg-red-50 hover:text-red-700">
-                  <span>{addCabinetPhoto ? "Photo selected" : "Upload Photo"}</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={onPickAddCabinetPhoto}
-                  />
-                </label>
-              </div>
+              <label className="flex cursor-pointer justify-center rounded-xl border border-gray-200 px-4 py-3 text-sm text-gray-700 hover:bg-gray-50">
+                {addCabinetPhoto ? "Photo selected" : "Upload Photo"}
+                <input type="file" accept="image/*" className="hidden" onChange={onPickAddCabinetPhoto} />
+              </label>
             </div>
 
             <div className="mt-6 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={closeAddCabinetPopup}
-                className="rounded-full border border-gray-300 bg-white px-2.5 py-1 text-[10px] font-medium text-gray-700 transition-all duration-150 ease-out hover:border-red-200 hover:bg-red-50 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
-              >
+              <button onClick={closeAddCabinetPopup} className="rounded-full border px-4 py-1 text-xs">
                 Cancel
               </button>
-
               <button
-                type="button"
                 onClick={saveAddCabinetPopup}
                 disabled={savingAddCabinet}
-                className="rounded-full border border-black bg-black px-2.5 py-1 text-[10px] font-medium text-white transition-all duration-150 ease-out hover:opacity-90 active:scale-[0.98] disabled:opacity-50"
+                className="rounded-full bg-black px-4 py-1 text-xs text-white disabled:opacity-50"
               >
                 {savingAddCabinet ? "Saving..." : "Save"}
               </button>
@@ -1149,199 +1002,233 @@ function LedModelCard({
   brand,
   modelName,
   editable,
-  mode,
-  onChangeMode,
+  isOpen,
+  onToggle,
   onRename,
   onDelete,
   onAddRow,
   onDeleteRow,
   onOpenEdit,
-  onRenameRow,
+  onSaveRowDirect,
 }: {
   model: MatrixModel;
   brand: string;
   modelName: string;
   editable: boolean;
-  mode: QtyViewMode;
-  onChangeMode: (mode: QtyViewMode) => void;
+  isOpen: boolean;
+  onToggle: () => void;
   onRename: () => void;
   onDelete: () => void;
   onAddRow: () => void;
   onDeleteRow: (rowId: string) => void;
   onOpenEdit: (row: MatrixRow) => void;
-  onRenameRow: (row: MatrixRow) => void;
+  onSaveRowDirect: (row: MatrixRow, patch: Partial<MatrixRow>) => Promise<void>;
 }) {
   const rows = model.matrix_rows ?? [];
+  const firstPhoto = rows.find((r) => r.photo_data)?.photo_data ?? null;
 
-  const totalDisplay = rows.reduce(
-    (sum, row) => sum + toUnitValue(clampQty(row.qty), row.size, mode),
-    0
+  const totalDisplay = rows.reduce((sum, row) => sum + toSqm(clampQty(row.qty), row.size), 0);
+  const availableDisplay = rows.reduce((sum, row) => sum + toSqm(clampQty(row.available_qty), row.size), 0);
+  const inUseDisplay = rows.reduce((sum, row) => sum + toSqm(clampQty(row.in_use_qty), row.size), 0);
+  const maintenanceDisplay = rows.reduce((sum, row) => sum + toSqm(clampQty(row.maintenance_qty), row.size), 0);
+  const inKsaDisplay = rows.reduce((sum, row) => sum + toSqm(clampQty(row.in_ksa_qty), row.size), 0);
+
+  return (
+    <div className="py-4">
+      <button type="button" onClick={onToggle} className="w-full text-left">
+        <div className="flex items-center gap-4">
+          <LedRowPhoto photo={firstPhoto} name={model.name} />
+
+          <div className="min-w-0 flex-1">
+            <div className="mb-3 truncate text-[15px] font-bold text-gray-900 sm:text-[16px]">
+              {brand} <span className="font-medium">{modelName}</span>
+            </div>
+
+            <div className="flex flex-nowrap items-start gap-1 overflow-hidden sm:hidden">
+              <MobileStat label="Total" value={totalDisplay} tone="gray" />
+              <MobileStat label="Available" value={availableDisplay} tone="green" />
+              <MobileStat label="In Use" value={inUseDisplay} tone="blue" />
+              <MobileStat label="Maintenance" value={maintenanceDisplay} tone="yellow" />
+              <MobileStat label="In KSA" value={inKsaDisplay} tone="purple" />
+            </div>
+
+            <div className="hidden flex-wrap gap-1.5 sm:flex">
+              <SmallStat label="Total" value={totalDisplay} tone="gray" />
+              <SmallStat label="Available" value={availableDisplay} tone="green" />
+              <SmallStat label="In Use" value={inUseDisplay} tone="blue" />
+              <SmallStat label="Maintenance" value={maintenanceDisplay} tone="yellow" />
+              <SmallStat label="In KSA" value={inKsaDisplay} tone="purple" />
+            </div>
+          </div>
+
+          <ChevronDown
+            size={18}
+            className={`shrink-0 text-gray-500 transition-transform ${isOpen ? "rotate-180" : ""}`}
+          />
+        </div>
+      </button>
+
+      {isOpen && (
+        <div className="mt-4 rounded-2xl border border-gray-100 bg-gray-50 p-3 sm:bg-white sm:p-4">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="text-[11px] font-semibold text-gray-500">
+              Cabinet Sizes
+            </div>
+
+            {editable && (
+              <div className="flex flex-wrap gap-2">
+                <button onClick={onRename} className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[10px]">
+                  Rename Model
+                </button>
+                <button onClick={onDelete} className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[10px] text-red-500">
+                  Delete Model
+                </button>
+                <button onClick={onAddRow} className="rounded-full bg-black px-3 py-1 text-[10px] text-white">
+                  + Cabinet
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="hidden overflow-hidden rounded-xl border border-gray-100 sm:block">
+            <div className="grid grid-cols-[70px_1.4fr_0.8fr_0.8fr_0.8fr_0.8fr_0.8fr_70px] bg-gray-50 px-3 py-3 text-[10px] font-semibold text-gray-500">
+              <div>Photo</div>
+              <div>Cabinet Size</div>
+              <div>Total Qty</div>
+              <div>Available</div>
+              <div>In Use</div>
+              <div>Maint.</div>
+              <div>In KSA</div>
+              <div>Delete</div>
+            </div>
+
+            {rows.map((r) => (
+              <DesktopEditableCabinetRow
+                key={r.id}
+                row={r}
+                editable={editable}
+                onSaveRowDirect={onSaveRowDirect}
+                onDeleteRow={onDeleteRow}
+              />
+            ))}
+          </div>
+
+          <div className="space-y-3 sm:hidden">
+            {rows.map((r) => (
+              <div key={r.id} className="rounded-2xl border border-gray-100 bg-white p-3">
+                <div className="flex gap-3">
+                  <LedRowPhoto photo={r.photo_data} name={r.size} />
+
+                  <div className="min-w-0 flex-1">
+                    <div className="mb-3 truncate text-[14px] font-bold text-gray-900">
+                      {r.size}
+                    </div>
+
+                    <div className="flex flex-nowrap gap-1 overflow-x-auto">
+                      <MobileStat label="Total" value={toSqm(r.qty, r.size)} tone="gray" />
+                      <MobileStat label="Available" value={toSqm(r.available_qty, r.size)} tone="green" />
+                      <MobileStat label="In Use" value={toSqm(r.in_use_qty, r.size)} tone="blue" />
+                      <MobileStat label="Maintenance" value={toSqm(r.maintenance_qty, r.size)} tone="yellow" />
+                      <MobileStat label="In KSA" value={toSqm(r.in_ksa_qty, r.size)} tone="purple" />
+                    </div>
+                  </div>
+                </div>
+
+                {editable && (
+                  <div className="mt-3 flex justify-end gap-3">
+                    <button onClick={() => onOpenEdit(r)} className="rounded-full border border-gray-200 px-3 py-1 text-[10px]">
+                      Edit
+                    </button>
+                    <Trash2 size={16} className="cursor-pointer text-red-500" onClick={() => onDeleteRow(r.id)} />
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
-  const availableDisplay = rows.reduce(
-    (sum, row) => sum + toUnitValue(clampQty(row.available_qty), row.size, mode),
-    0
-  );
-  const inUseDisplay = rows.reduce(
-    (sum, row) => sum + toUnitValue(clampQty(row.in_use_qty), row.size, mode),
-    0
-  );
-  const maintenanceDisplay = rows.reduce(
-    (sum, row) => sum + toUnitValue(clampQty(row.maintenance_qty), row.size, mode),
-    0
-  );
-  const inKsaDisplay = rows.reduce(
-    (sum, row) => sum + toUnitValue(clampQty(row.in_ksa_qty), row.size, mode),
-    0
+}
+
+function DesktopEditableCabinetRow({
+  row,
+  editable,
+  onSaveRowDirect,
+  onDeleteRow,
+}: {
+  row: MatrixRow;
+  editable: boolean;
+  onSaveRowDirect: (row: MatrixRow, patch: Partial<MatrixRow>) => Promise<void>;
+  onDeleteRow: (rowId: string) => void;
+}) {
+  const [size, setSize] = useState(row.size);
+  const [qty, setQty] = useState(String(row.qty));
+  const [inUse, setInUse] = useState(String(row.in_use_qty));
+  const [inKsa, setInKsa] = useState(String(row.in_ksa_qty));
+
+  useEffect(() => {
+    setSize(row.size);
+    setQty(String(row.qty));
+    setInUse(String(row.in_use_qty));
+    setInKsa(String(row.in_ksa_qty));
+  }, [row]);
+
+  const available = rowAvailableFromTotal(
+    clampQty(qty),
+    clampQty(inUse),
+    clampQty(row.maintenance_qty),
+    clampQty(inKsa)
   );
 
   return (
-    <div className="rounded-2xl border border-gray-200 bg-white p-4">
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 flex-1">
-          <div className="text-[16px] font-semibold text-black">
-            {brand} <span className="font-normal">{modelName}</span>
-          </div>
+    <div className="grid grid-cols-[70px_1.4fr_0.8fr_0.8fr_0.8fr_0.8fr_0.8fr_70px] items-center border-t border-gray-100 px-3 py-3 text-[11px]">
+      <LedRowPhoto photo={row.photo_data} name={row.size} />
 
-          <div className="mt-2 flex flex-wrap gap-2">
-            <StatBadge label="Total" value={totalDisplay} mode={mode} tone="gray" />
-            <StatBadge label="Available" value={availableDisplay} mode={mode} tone="green" />
-            <StatBadge label="In Use" value={inUseDisplay} mode={mode} tone="blue" />
-            <StatBadge label="Maintenance" value={maintenanceDisplay} mode={mode} tone="yellow" />
-            <StatBadge label="In KSA" value={inKsaDisplay} mode={mode} tone="purple" />
-          </div>
-        </div>
+      <input
+        value={size}
+        readOnly={!editable}
+        onChange={(e) => setSize(e.target.value)}
+        onBlur={() => onSaveRowDirect(row, { size })}
+        className="w-full rounded-lg border-none bg-transparent px-1 py-1 font-medium outline-none focus:bg-gray-50"
+      />
 
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
-          <button
-            type="button"
-            onClick={() => onChangeMode("sqm")}
-            className={`rounded-full border px-2.5 py-1 text-[10px] font-medium transition-all duration-150 ease-out active:scale-[0.98] ${
-              mode === "sqm"
-                ? "border-black bg-black text-white"
-                : "border-gray-300 bg-white text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700 hover:shadow-sm"
-            }`}
-          >
-            SQM
-          </button>
+      <input
+        value={qty}
+        readOnly={!editable}
+        onChange={(e) => setQty(String(clampQty(e.target.value)))}
+        onBlur={() => onSaveRowDirect(row, { qty: clampQty(qty) })}
+        className="w-full rounded-lg border-none bg-transparent px-1 py-1 outline-none focus:bg-gray-50"
+      />
 
-          <button
-            type="button"
-            onClick={() => onChangeMode("cabinet")}
-            className={`rounded-full border px-2.5 py-1 text-[10px] font-medium transition-all duration-150 ease-out active:scale-[0.98] ${
-              mode === "cabinet"
-                ? "border-black bg-black text-white"
-                : "border-gray-300 bg-white text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700 hover:shadow-sm"
-            }`}
-          >
-            Cabinet
-          </button>
-
-          {editable && (
-            <>
-              <button
-                type="button"
-                onClick={onRename}
-                className="rounded-full border border-gray-300 bg-white px-2.5 py-1 text-[10px] font-medium text-gray-700 transition-all duration-150 ease-out hover:border-red-200 hover:bg-red-50 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
-              >
-                Rename
-              </button>
-
-              <button
-                type="button"
-                onClick={onDelete}
-                className="rounded-full border border-gray-300 bg-white px-2.5 py-1 text-[10px] font-medium text-gray-700 transition-all duration-150 ease-out hover:border-red-200 hover:bg-red-50 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
-              >
-                Delete
-              </button>
-            </>
-          )}
-        </div>
+      <div className="font-semibold text-green-700">
+        {formatSqm(toSqm(available, size))}
       </div>
 
-      <div className="space-y-2">
-        {rows.map((r, index) => (
-          <div
-            key={r.id}
-            className={`flex flex-col gap-3 rounded-xl border border-gray-100 bg-white p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:rounded-none sm:border-0 sm:px-4 sm:py-3 ${
-              index !== rows.length - 1 ? "sm:border-b sm:border-gray-100" : ""
-            }`}
-          >
-            <div className="flex min-w-0 items-center gap-3 sm:flex-1">
-              <LedRowPhoto photo={r.photo_data} name={r.size} />
+      <input
+        value={inUse}
+        readOnly={!editable}
+        onChange={(e) => setInUse(String(clampQty(e.target.value)))}
+        onBlur={() => onSaveRowDirect(row, { in_use_qty: clampQty(inUse) })}
+        className="w-full rounded-lg border-none bg-transparent px-1 py-1 outline-none focus:bg-gray-50"
+      />
 
-              <div className="min-w-0 flex items-center gap-2">
-                <span className="truncate text-[13px] font-medium text-black sm:text-[14px] sm:whitespace-nowrap">
-                  {r.size}
-                </span>
+      <div className="font-semibold text-yellow-700">
+        {formatSqm(toSqm(row.maintenance_qty, size))}
+      </div>
 
-                {editable && (
-                  <button
-                    type="button"
-                    onClick={() => onRenameRow(r)}
-                    title="Rename cabinet size"
-                    className="cursor-pointer text-sm text-red-500 transition-colors hover:text-black sm:text-[16px]"
-                  >
-                    ✎
-                  </button>
-                )}
-              </div>
-            </div>
+      <input
+        value={inKsa}
+        readOnly={!editable}
+        onChange={(e) => setInKsa(String(clampQty(e.target.value)))}
+        onBlur={() => onSaveRowDirect(row, { in_ksa_qty: clampQty(inKsa) })}
+        className="w-full rounded-lg border-none bg-transparent px-1 py-1 outline-none focus:bg-gray-50"
+      />
 
-            <div className="flex flex-wrap gap-2 sm:flex-[2] sm:items-center sm:justify-center">
-              <div className="rounded-lg bg-gray-100 px-2 py-1 text-[10px] font-semibold text-black sm:text-[8px] whitespace-nowrap">
-                Total: {formatQty(toUnitValue(r.qty, r.size, mode), mode)} {unitSuffix(mode)}
-              </div>
-
-              <div className="rounded-lg bg-green-100 px-2 py-1 text-[10px] font-semibold text-black sm:text-[8px] whitespace-nowrap">
-                Available: {formatQty(toUnitValue(r.available_qty, r.size, mode), mode)} {unitSuffix(mode)}
-              </div>
-
-              <div className="rounded-lg bg-blue-100 px-2 py-1 text-[10px] font-semibold text-black sm:text-[8px] whitespace-nowrap">
-                In Use: {formatQty(toUnitValue(r.in_use_qty, r.size, mode), mode)} {unitSuffix(mode)}
-              </div>
-
-              <div className="rounded-lg bg-yellow-100 px-2 py-1 text-[10px] font-semibold text-black sm:text-[8px] whitespace-nowrap">
-                Maintenance: {formatQty(toUnitValue(r.maintenance_qty, r.size, mode), mode)} {unitSuffix(mode)}
-              </div>
-
-              <div className="rounded-lg bg-purple-100 px-2 py-1 text-[10px] font-semibold text-black sm:text-[8px] whitespace-nowrap">
-                In KSA: {formatQty(toUnitValue(r.in_ksa_qty, r.size, mode), mode)} {unitSuffix(mode)}
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-2 shrink-0">
-              {editable && (
-                <button
-                  type="button"
-                  onClick={() => onOpenEdit(r)}
-                  className="rounded-full border border-gray-300 bg-white px-2 py-1 text-[10px] font-medium text-gray-700 transition-all duration-150 ease-out hover:border-red-200 hover:bg-red-50 hover:text-red-700 hover:shadow-sm active:scale-[0.98] sm:px-2.5"
-                >
-                  Edit
-                </button>
-              )}
-
-              {editable && (
-                <Trash2
-                  size={16}
-                  className="cursor-pointer text-red-500 transition-colors duration-200 hover:text-black"
-                  onClick={() => onDeleteRow(r.id)}
-                />
-              )}
-            </div>
-          </div>
-        ))}
-
-        {editable && (
-          <div className="pt-2">
-            <button
-              type="button"
-              onClick={onAddRow}
-              className="rounded-full border border-gray-300 bg-white px-2.5 py-1 text-[10px] font-medium text-gray-700 transition-all duration-150 ease-out hover:border-red-200 hover:bg-red-50 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
-            >
-              + Add Cabinet
-            </button>
-          </div>
-        )}
+      <div>
+        {editable ? (
+          <Trash2 size={15} className="cursor-pointer text-red-500" onClick={() => onDeleteRow(row.id)} />
+        ) : null}
       </div>
     </div>
   );
