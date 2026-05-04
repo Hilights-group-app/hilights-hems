@@ -774,7 +774,7 @@ export default function SubcategoryClientLedScreen({
   return (
     <div className="mx-auto max-w-[1100px] space-y-3 px-3 text-black sm:px-0">
       {editable && (
-        <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5">
+        <div className="rounded-2xl border border-gray-200 bg-white px-3 py-0 sm:px-5">
           <div className="mb-4">
             <h1 className="text-[16px] font-bold text-gray-900">Add LED Screen</h1>
             <p className="mt-1 text-[11px] text-gray-500">
@@ -858,11 +858,7 @@ export default function SubcategoryClientLedScreen({
           No LED screen models yet.
         </div>
       ) : (
-        <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-[15px] font-bold text-gray-900">LED Screen Models</h2>
-            <span className="text-[11px] text-gray-500">{models.length} models</span>
-          </div>
+        <div className="rounded-2xl border border-gray-200 bg-white px-3 py-0 sm:px-5">
 
           <div className="divide-y divide-gray-100">
             {parsedModels.map((m) => (
@@ -1034,10 +1030,9 @@ function LedModelCard({
   const inKsaDisplay = rows.reduce((sum, row) => sum + toSqm(clampQty(row.in_ksa_qty), row.size), 0);
 
   return (
-    <div className="py-4">
+    <div className="py-2">
       <button type="button" onClick={onToggle} className="w-full text-left">
         <div className="flex items-center gap-4">
-          <LedRowPhoto photo={firstPhoto} name={model.name} />
 
           <div className="min-w-0 flex-1">
             <div className="mb-3 truncate text-[15px] font-bold text-gray-900 sm:text-[16px]">
@@ -1069,7 +1064,7 @@ function LedModelCard({
       </button>
 
       {isOpen && (
-        <div className="mt-4 rounded-2xl border border-gray-100 bg-gray-50 p-3 sm:bg-white sm:p-4">
+        <div className="mt-2 rounded-2xl border border-gray-100 bg-gray-50 px-3 py-2 sm:bg-white sm:px-4 sm:py-3">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <div className="text-[11px] font-semibold text-gray-500">
               Cabinet Sizes
