@@ -51,7 +51,12 @@ export async function readCatalog(): Promise<Catalog> {
     .order("name");
 
   if (subErr || !subs) {
-    console.error("readCatalog subcategories error", subErr);
+    console.error("readCatalog subcategories error", {
+  message: subErr?.message,
+  details: subErr?.details,
+  hint: subErr?.hint,
+  code: subErr?.code,
+});
     return { categories: cats.map((c) => ({ ...c, subcategories: [] })) };
   }
 
