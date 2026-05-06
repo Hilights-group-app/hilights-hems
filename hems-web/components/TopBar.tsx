@@ -53,7 +53,6 @@ export default function TopBar() {
       .limit(10);
 
     if (error) {
-      console.error("load notifications error:", error);
       return;
     }
 

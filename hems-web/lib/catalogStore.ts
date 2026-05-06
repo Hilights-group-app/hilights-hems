@@ -35,50 +35,59 @@ export type Catalog = {
 READ CATALOG (DB)
 --------------------------*/
 export async function readCatalog(): Promise<Catalog> {
-  const { data: cats, error: catErr } = await supabase
-    .from("categories")
-    .select("*")
-    .order("name");
+  try {
 
-  if (catErr || !cats) {
-    console.error("readCatalog categories error", catErr);
+    const { data: cats, error: catErr } = await supabase
+      .from("categories")
+      .select("*")
+      .order("name");
+
+    if (catErr || !cats) {
+      console.error("readCatalog categories error", catErr);
+      return { categories: [] };
+    }
+
+    const { data: subs, error: subErr } = await supabase
+      .from("subcategories")
+      .select("*")
+      .order("name");
+
+    if (subErr || !subs) {
+      console.error("readCatalog subcategories error", subErr);
+
+      return {
+        categories: (cats as Category[]).map((c) => ({
+          ...c,
+          subcategories: [],
+        })),
+      };
+    }
+
+    const subByCat = new Map<string, Subcategory[]>();
+
+    for (const s of subs as Subcategory[]) {
+      const arr = subByCat.get(s.category_id) ?? [];
+      arr.push(s);
+      subByCat.set(s.category_id, arr);
+    }
+
+    const categories: CatalogCategory[] = (cats as Category[]).map((c) => ({
+      ...c,
+      subcategories: subByCat.get(c.id) ?? [],
+    }));
+
+    return { categories };
+  } catch (err) {
+    console.error("readCatalog fatal error", err);
     return { categories: [] };
   }
-
-  const { data: subs, error: subErr } = await supabase
-    .from("subcategories")
-    .select("*")
-    .order("name");
-
-  if (subErr || !subs) {
-    console.error("readCatalog subcategories error", {
-  message: subErr?.message,
-  details: subErr?.details,
-  hint: subErr?.hint,
-  code: subErr?.code,
-});
-    return { categories: cats.map((c) => ({ ...c, subcategories: [] })) };
-  }
-
-  const subByCat = new Map<string, Subcategory[]>();
-  for (const s of subs as Subcategory[]) {
-    const arr = subByCat.get(s.category_id) ?? [];
-    arr.push(s);
-    subByCat.set(s.category_id, arr);
-  }
-
-  const categories: CatalogCategory[] = (cats as Category[]).map((c) => ({
-    ...c,
-    subcategories: subByCat.get(c.id) ?? [],
-  }));
-
-  return { categories };
 }
 
 /* -------------------------
 CATEGORY CRUD
 --------------------------*/
 export async function addCategory(name: string, slug: string) {
+
   const { data, error } = await supabase
     .from("categories")
     .insert({ name, slug })
@@ -90,6 +99,7 @@ export async function addCategory(name: string, slug: string) {
 }
 
 export async function renameCategory(id: string, name: string, slug: string) {
+
   const { data, error } = await supabase
     .from("categories")
     .update({ name, slug })
@@ -102,8 +112,9 @@ export async function renameCategory(id: string, name: string, slug: string) {
 }
 
 export async function deleteCategory(id: string) {
-  // مهم: إذا عندك FK cascade في DB يكفي هذا
+
   const { error } = await supabase.from("categories").delete().eq("id", id);
+
   if (error) throw error;
   return true;
 }
@@ -117,6 +128,7 @@ export async function addSubcategory(
   slug: string,
   type: SubcategoryType | null = "fixture_units"
 ) {
+
   const { data, error } = await supabase
     .from("subcategories")
     .insert({ category_id, name, slug, type })
@@ -132,6 +144,7 @@ export async function renameSubcategory(
   name: string,
   slug: string
 ) {
+
   const { data, error } = await supabase
     .from("subcategories")
     .update({ name, slug })
@@ -144,7 +157,9 @@ export async function renameSubcategory(
 }
 
 export async function deleteSubcategory(id: string) {
+
   const { error } = await supabase.from("subcategories").delete().eq("id", id);
+
   if (error) throw error;
   return true;
 }
@@ -153,6 +168,7 @@ export async function setSubcategoryType(
   id: string,
   type: SubcategoryType | null
 ) {
+
   const { data, error } = await supabase
     .from("subcategories")
     .update({ type })

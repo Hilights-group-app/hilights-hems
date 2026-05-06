@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { readCatalog } from "@/lib/catalogStore";
 
 type Category = {
   id: string;
@@ -14,32 +15,37 @@ type Category = {
   }[];
 };
 
-export default function InventoryClient({
-  initialCategories = [],
-}: {
-  initialCategories?: Category[];
-}) {
-  const [categories, setCategories] = useState<Category[]>(initialCategories);
+export default function InventoryClient() {
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingSub, setLoadingSub] = useState<string | null>(null);
 
+  useEffect(() => {
+    void loadCatalog();
+  }, []);
+
+  async function loadCatalog() {
+    try {
+      const data = await readCatalog();
+      setCategories(data.categories || []);
+    } catch (e) {
+      console.error("Inventory load error:", e);
+      setCategories([]);
+    } finally {
+      setLoading(false);
+    }
+  }
 
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 p-3">
         <div className="mx-auto max-w-[1100px] space-y-3">
           {Array.from({ length: 5 }).map((_, i) => (
-            <div
-              key={i}
-              className="rounded-2xl border border-gray-200 bg-white px-4 py-4 shadow-sm"
-            >
+            <div key={i} className="rounded-2xl border border-gray-200 bg-white px-4 py-4 shadow-sm">
               <div className="mb-4 h-4 w-32 animate-pulse rounded bg-gray-200" />
               <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                 {Array.from({ length: 6 }).map((_, j) => (
-                  <div
-                    key={j}
-                    className="h-9 animate-pulse rounded-xl bg-gray-200 sm:h-7 sm:w-24 sm:rounded-full"
-                  />
+                  <div key={j} className="h-9 animate-pulse rounded-xl bg-gray-200 sm:h-7 sm:w-24 sm:rounded-full" />
                 ))}
               </div>
             </div>
@@ -79,7 +85,6 @@ export default function InventoryClient({
                   className={`
                     relative flex min-h-[42px] items-center justify-center overflow-hidden rounded-xl border px-3 py-2 text-center text-[12px] font-semibold shadow-sm transition-all duration-200
                     sm:min-h-0 sm:rounded-full sm:px-3 sm:py-1.5 sm:text-[11px] sm:font-medium sm:shadow-none
-
                     ${
                       loadingSub === sub.id
                         ? "scale-95 border-red-200 bg-red-100 text-red-700 shadow-inner"
