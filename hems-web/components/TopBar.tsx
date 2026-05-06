@@ -220,6 +220,8 @@ export default function TopBar() {
       logout(),
       new Promise((resolve) => setTimeout(resolve, 1200)),
     ]);
+
+    await supabase.auth.signOut({ scope: "global" });
   } catch (e) {
     console.error("logout error:", e);
   } finally {
@@ -228,7 +230,7 @@ export default function TopBar() {
     setProfile({});
     setNotifications([]);
 
-    window.location.href = "/login";
+    window.location.replace("/login");
   }
 }
 
