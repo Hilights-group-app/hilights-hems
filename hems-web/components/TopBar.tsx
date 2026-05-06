@@ -28,6 +28,8 @@ export default function TopBar() {
   const [open, setOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [avatarLoaded, setAvatarLoaded] = useState(false);
 
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
 
@@ -35,9 +37,18 @@ export default function TopBar() {
     role?: string;
     department?: string;
     avatar_url?: string | null;
-  }>({});
+  }>(() => {
+    if (typeof window === "undefined") return {};
+
+    return {
+      role: localStorage.getItem("hems:profile:role") || "",
+      department: localStorage.getItem("hems:profile:department") || "",
+      avatar_url: localStorage.getItem("hems:profile:avatar_url") || "",
+    };
+  });
 
   const supabase = createClient();
+  const showPrivateNav = loggedIn && pathname !== "/login";
 
   useEffect(() => {
     setSidebarOpen(false);
@@ -52,9 +63,7 @@ export default function TopBar() {
       .order("created_at", { ascending: false })
       .limit(10);
 
-    if (error) {
-      return;
-    }
+    if (error) return;
 
     setNotifications((data ?? []) as NotificationRow[]);
   }
@@ -88,11 +97,22 @@ export default function TopBar() {
 
       if (!mounted || !data) return;
 
+      const avatar = data.avatar_url ?? "";
+
       setProfile({
         role: data.role ?? "",
         department: data.department ?? "",
-        avatar_url: data.avatar_url ?? "",
+        avatar_url: avatar,
       });
+
+      localStorage.setItem("hems:profile:role", data.role ?? "");
+      localStorage.setItem("hems:profile:department", data.department ?? "");
+
+      if (avatar && !avatar.startsWith("data:image")) {
+        localStorage.setItem("hems:profile:avatar_url", avatar);
+      } else {
+        localStorage.removeItem("hems:profile:avatar_url");
+      }
 
       if (data.full_name) setUserNameState(data.full_name);
     }
@@ -116,7 +136,7 @@ export default function TopBar() {
       }
     }
 
-    syncAuth();
+    void syncAuth();
 
     const {
       data: { subscription },
@@ -184,17 +204,33 @@ export default function TopBar() {
   }, []);
 
   async function onLogout() {
-    await logout();
+  if (loggingOut) return;
+
+  setLoggingOut(true);
+  setOpen(false);
+  setNotifOpen(false);
+  setSidebarOpen(false);
+
+  localStorage.removeItem("hems:profile:role");
+  localStorage.removeItem("hems:profile:department");
+  localStorage.removeItem("hems:profile:avatar_url");
+
+  try {
+    await Promise.race([
+      logout(),
+      new Promise((resolve) => setTimeout(resolve, 1200)),
+    ]);
+  } catch (e) {
+    console.error("logout error:", e);
+  } finally {
     setLoggedIn(false);
     setUserNameState(null);
     setProfile({});
     setNotifications([]);
-    setOpen(false);
-    setNotifOpen(false);
-    setSidebarOpen(false);
-    router.replace("/login");
-    router.refresh();
+
+    window.location.href = "/login";
   }
+}
 
   const unreadCount = notifications.filter((n) => !n.is_read).length;
 
@@ -239,20 +275,22 @@ export default function TopBar() {
       <header className="bg-white shadow-sm">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-2.5 py-2 sm:px-6">
           <div className="flex min-w-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setSidebarOpen(true)}
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-700 transition hover:bg-gray-100 active:scale-95"
-              title="Menu"
-            >
-              <Menu size={22} strokeWidth={2.4} />
-            </button>
+            {showPrivateNav ? (
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(true)}
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-700 transition hover:bg-gray-100 active:scale-95"
+                title="Menu"
+              >
+                <Menu size={22} strokeWidth={2.4} />
+              </button>
+            ) : null}
 
             <Link href="/" className="flex shrink-0 items-center">
               <img
                 src="/logo-icon.png"
                 alt="Logo"
-                className="h-6 w-6 rounded-md object-contain bg-white p-[2px] sm:h-7 sm:w-7"
+                className="h-6 w-6 rounded-md bg-white object-contain p-[2px] sm:h-7 sm:w-7"
               />
             </Link>
 
@@ -265,153 +303,162 @@ export default function TopBar() {
 
           <div className="relative flex items-center gap-2">
             {loggedIn ? (
-              <>
-                <div className="flex items-center gap-2 px-1 py-0.5">
-                  <div ref={notifRef} className="relative">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setNotifOpen((v) => !v);
-                        setOpen(false);
-                        void markNotificationsRead();
-                      }}
-                      className="relative flex h-6 w-6 items-center justify-center rounded-full text-gray-700 transition hover:bg-gray-100"
-                      title="Notifications"
-                    >
-                      <Bell size={15} strokeWidth={2} />
+              <div className="flex items-center gap-2 px-1 py-0.5">
+                {pathname !== "/login" ? (
+                  <>
+                    <div ref={notifRef} className="relative">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNotifOpen((v) => !v);
+                          setOpen(false);
+                          void markNotificationsRead();
+                        }}
+                        className="relative flex h-6 w-6 items-center justify-center rounded-full text-gray-700 transition hover:bg-gray-100"
+                        title="Notifications"
+                      >
+                        <Bell size={15} strokeWidth={2} />
 
-                      {unreadCount > 0 ? (
-                        <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-red-500 px-1 text-[8px] font-bold text-white">
-                          {unreadCount > 9 ? "9+" : unreadCount}
-                        </span>
-                      ) : null}
-                    </button>
+                        {unreadCount > 0 ? (
+                          <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-red-500 px-1 text-[8px] font-bold text-white">
+                            {unreadCount > 9 ? "9+" : unreadCount}
+                          </span>
+                        ) : null}
+                      </button>
 
-                    {notifOpen ? (
-                      <div className="absolute right-0 top-full z-50 mt-2 w-72 rounded-xl border border-gray-200 bg-white p-2 shadow-md">
-                        <div className="px-2 py-2 text-xs font-semibold text-gray-900">
-                          Notifications
-                        </div>
+                      {notifOpen ? (
+                        <div className="absolute right-0 top-full z-50 mt-2 w-72 rounded-xl border border-gray-200 bg-white p-2 shadow-md">
+                          <div className="px-2 py-2 text-xs font-semibold text-gray-900">
+                            Notifications
+                          </div>
 
-                        <div className="max-h-72 overflow-y-auto">
-                          {notifications.length === 0 ? (
-                            <div className="px-2 py-4 text-xs text-gray-500">
-                              No notifications yet.
-                            </div>
-                          ) : (
-                            notifications.map((n) => (
-                              <button
-                                key={n.id}
-                                type="button"
-                                onClick={() => openNotification(n)}
-                                className="w-full rounded-lg px-2 py-2 text-left transition hover:bg-gray-50"
-                              >
-                                <div className="flex items-start gap-2">
-                                  <span
-                                    className={`mt-1 h-2 w-2 rounded-full shrink-0 ${
-                                      n.is_read ? "bg-gray-200" : "bg-red-500"
-                                    }`}
-                                  />
-                                  <div className="min-w-0">
-                                    <div className="truncate text-xs font-semibold text-gray-900">
-                                      {n.title}
-                                    </div>
-                                    <div className="line-clamp-2 text-[11px] text-gray-500">
-                                      {n.message || ""}
-                                    </div>
-                                    <div className="mt-1 text-[10px] text-gray-400">
-                                      {n.actor_name ? `${n.actor_name} • ` : ""}
-                                      {new Date(n.created_at).toLocaleString()}
+                          <div className="max-h-72 overflow-y-auto">
+                            {notifications.length === 0 ? (
+                              <div className="px-2 py-4 text-xs text-gray-500">
+                                No notifications yet.
+                              </div>
+                            ) : (
+                              notifications.map((n) => (
+                                <button
+                                  key={n.id}
+                                  type="button"
+                                  onClick={() => openNotification(n)}
+                                  className="w-full rounded-lg px-2 py-2 text-left transition hover:bg-gray-50"
+                                >
+                                  <div className="flex items-start gap-2">
+                                    <span
+                                      className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
+                                        n.is_read ? "bg-gray-200" : "bg-red-500"
+                                      }`}
+                                    />
+                                    <div className="min-w-0">
+                                      <div className="truncate text-xs font-semibold text-gray-900">
+                                        {n.title}
+                                      </div>
+                                      <div className="line-clamp-2 text-[11px] text-gray-500">
+                                        {n.message || ""}
+                                      </div>
+                                      <div className="mt-1 text-[10px] text-gray-400">
+                                        {n.actor_name ? `${n.actor_name} • ` : ""}
+                                        {new Date(n.created_at).toLocaleString()}
+                                      </div>
                                     </div>
                                   </div>
-                                </div>
-                              </button>
-                            ))
-                          )}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className="h-5 w-px bg-gray-200" />
-
-                  <div ref={wrapperRef} className="relative">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setOpen((v) => !v);
-                        setNotifOpen(false);
-                      }}
-                      className="flex items-center gap-1.5 rounded-lg px-1 py-0.5 transition hover:bg-gray-50 active:scale-[0.98]"
-                    >
-                      {profile.avatar_url ? (
-                        <img
-                          src={profile.avatar_url}
-                          alt={userName || "User"}
-                          className="h-6 w-6 rounded-full object-cover"
-                        />
-                      ) : (
-                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-gray-900 text-[9px] font-semibold text-white">
-                          {userInitials}
-                        </span>
-                      )}
-
-                      <span className="hidden text-left leading-none sm:block">
-                        <span className="block max-w-[120px] truncate text-[10px] font-semibold leading-3 text-gray-900">
-                          {userName}
-                        </span>
-                        <span className="block max-w-[120px] truncate text-[9px] leading-3 text-gray-500">
-                          {roleLabel()}
-                        </span>
-                      </span>
-
-                      <ChevronDown
-                        size={10}
-                        className={`text-gray-400 transition-transform ${
-                          open ? "rotate-180" : ""
-                        }`}
-                      />
-                    </button>
-
-                    {open ? (
-                      <div className="absolute right-0 top-full z-50 mt-2 w-56 rounded-xl border border-gray-200 bg-white p-3 shadow-md">
-                        <div className="flex items-center gap-3">
-                          {profile.avatar_url ? (
-                            <img
-                              src={profile.avatar_url}
-                              alt={userName || "User"}
-                              className="h-10 w-10 rounded-full object-cover"
-                            />
-                          ) : (
-                            <span className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-900 text-xs font-semibold text-white">
-                              {userInitials}
-                            </span>
-                          )}
-
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-gray-900">
-                              {userName}
-                            </div>
-                            <div className="truncate text-xs text-gray-500">
-                              {roleLabel()}
-                            </div>
+                                </button>
+                              ))
+                            )}
                           </div>
                         </div>
+                      ) : null}
+                    </div>
 
-                        <div className="my-3 h-px bg-gray-200" />
+                    <div className="h-5 w-px bg-gray-200" />
+                  </>
+                ) : null}
 
-                        <button
-                          type="button"
-                          onClick={onLogout}
-                          className="w-full rounded-lg px-2 py-2 text-left text-sm text-red-500 transition hover:bg-red-50"
-                        >
-                          Logout
-                        </button>
+                <div ref={wrapperRef} className="relative">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOpen((v) => !v);
+                      setNotifOpen(false);
+                    }}
+                    className="flex items-center gap-1.5 rounded-lg px-1 py-0.5 transition hover:bg-gray-50 active:scale-[0.98]"
+                  >
+                    <div className="relative h-6 w-6 overflow-hidden rounded-full bg-gray-900">
+  {profile.avatar_url ? (
+    <img
+  src={profile.avatar_url}
+  alt={userName || "User"}
+  loading="eager"
+  onLoad={() => setAvatarLoaded(true)}
+  className={`h-full w-full object-cover transition-opacity duration-200 ${
+    avatarLoaded ? "opacity-100" : "opacity-0"
+  }`}
+/>
+  ) : (
+    <span className="flex h-full w-full items-center justify-center text-[9px] font-semibold text-white">
+      {userInitials}
+    </span>
+  )}
+</div>
+
+                    <span className="hidden text-left leading-none sm:block">
+                      <span className="block max-w-[120px] truncate text-[10px] font-semibold leading-3 text-gray-900">
+                        {userName}
+                      </span>
+                      <span className="block max-w-[120px] truncate text-[9px] leading-3 text-gray-500">
+                        {roleLabel()}
+                      </span>
+                    </span>
+
+                    <ChevronDown
+                      size={10}
+                      className={`text-gray-400 transition-transform ${
+                        open ? "rotate-180" : ""
+                      }`}
+                    />
+                  </button>
+
+                  {open && !loggingOut ? (
+                    <div className="absolute right-0 top-full z-50 mt-2 w-56 rounded-xl border border-gray-200 bg-white p-3 shadow-md">
+                      <div className="flex items-center gap-3">
+                        {profile.avatar_url ? (
+                          <img
+                            src={profile.avatar_url}
+                            alt={userName || "User"}
+                            className="h-10 w-10 rounded-full object-cover"
+                          />
+                        ) : (
+                          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-900 text-xs font-semibold text-white">
+                            {userInitials}
+                          </span>
+                        )}
+
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold text-gray-900">
+                            {userName}
+                          </div>
+                          <div className="truncate text-xs text-gray-500">
+                            {roleLabel()}
+                          </div>
+                        </div>
                       </div>
-                    ) : null}
-                  </div>
+
+                      <div className="my-3 h-px bg-gray-200" />
+
+                      <button
+                        type="button"
+                        onClick={onLogout}
+                        disabled={loggingOut}
+                        className="w-full rounded-lg px-2 py-2 text-left text-sm text-red-500 transition hover:bg-red-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {loggingOut ? "Logging out..." : "Logout"}
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
-              </>
+              </div>
             ) : (
               <Link
                 href="/login"
@@ -424,52 +471,62 @@ export default function TopBar() {
         </div>
       </header>
 
-      <div
-        className={`fixed inset-0 z-[9998] bg-black/30 transition-opacity duration-200 ${
-          sidebarOpen ? "opacity-100" : "pointer-events-none opacity-0"
-        }`}
-        onClick={() => setSidebarOpen(false)}
-      />
-
-      <aside
-        className={`fixed left-0 top-0 z-[9999] h-full w-[260px] bg-white shadow-2xl transition-transform duration-300 ease-out ${
-          sidebarOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
-      >
-        <div className="flex items-center justify-between border-b border-gray-100 px-4 py-4">
-          <div className="flex items-center gap-2">
-            <img src="/logo.png" alt="Logo" className="h-5 w-auto object-contain" />
-            <span className="text-sm font-bold text-gray-900">HEMS</span>
-          </div>
-
-          <button
-            type="button"
+      {showPrivateNav ? (
+        <>
+          <div
+            className={`fixed inset-0 z-[9998] bg-black/30 transition-opacity duration-200 ${
+              sidebarOpen ? "opacity-100" : "pointer-events-none opacity-0"
+            }`}
             onClick={() => setSidebarOpen(false)}
-            className="flex h-8 w-8 items-center justify-center rounded-full text-gray-600 hover:bg-gray-100"
+          />
+
+          <aside
+            className={`fixed left-0 top-0 z-[9999] h-full w-[260px] bg-white shadow-2xl transition-transform duration-300 ease-out ${
+              sidebarOpen ? "translate-x-0" : "-translate-x-full"
+            }`}
           >
-            <X size={18} />
-          </button>
-        </div>
+            <div className="flex items-center justify-between border-b border-gray-100 px-4 py-4">
+              <div className="flex items-center gap-2">
+                <img
+                  src="/logo.png"
+                  alt="Logo"
+                  className="h-5 w-auto object-contain"
+                />
+                <span className="text-sm font-bold text-gray-900">HEMS</span>
+              </div>
 
-        <nav className="p-3">
-          {navItems.map((item) => {
-            const active =
-              item.href === "/" ? pathname === "/" : pathname?.startsWith(item.href);
-
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`mb-1 flex items-center rounded-xl px-3 py-3 text-sm font-medium transition ${
-                  active ? "bg-gray-900 text-white" : "text-gray-700 hover:bg-gray-100"
-                }`}
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-gray-600 hover:bg-gray-100"
               >
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
-      </aside>
+                <X size={18} />
+              </button>
+            </div>
+
+            <nav className="p-3">
+              {navItems.map((item) => {
+                const active =
+                  item.href === "/" ? pathname === "/" : pathname?.startsWith(item.href);
+
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`mb-1 flex items-center rounded-xl px-3 py-3 text-sm font-medium transition ${
+                      active
+                        ? "bg-gray-900 text-white"
+                        : "text-gray-700 hover:bg-gray-100"
+                    }`}
+                  >
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </nav>
+          </aside>
+        </>
+      ) : null}
     </>
   );
 }
