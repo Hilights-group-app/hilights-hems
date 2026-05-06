@@ -163,28 +163,28 @@ export default function TopBar() {
     };
   }, [pathname]);
 
-  useEffect(() => {
-    if (!loggedIn) return;
+  //useEffect(() => {
+    //if (!loggedIn) return;
 
-    const channel = supabase
-      .channel("notifications-topbar")
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "notifications",
-        },
-        () => {
-          void loadNotifications();
-        }
-      )
-      .subscribe();
+    //const channel = supabase
+      //.channel("notifications-topbar")
+      //.on(
+       // "postgres_changes",
+       // {
+        //  event: "INSERT",
+         // schema: "public",
+          //table: "notifications",
+        //},
+       // () => {
+       //   void loadNotifications();
+       // }
+      //)
+     // .subscribe();
 
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [loggedIn]);
+  //  return () => {
+  //    void supabase.removeChannel(channel);
+  //  };
+//  }, [loggedIn]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -207,9 +207,9 @@ export default function TopBar() {
   if (loggingOut) return;
 
   setLoggingOut(true);
-  setOpen(false);
   setNotifOpen(false);
   setSidebarOpen(false);
+  setOpen(true);
 
   localStorage.removeItem("hems:profile:role");
   localStorage.removeItem("hems:profile:department");
@@ -422,7 +422,7 @@ export default function TopBar() {
                     />
                   </button>
 
-                  {open && !loggingOut ? (
+                  {open ? (
                     <div className="absolute right-0 top-full z-50 mt-2 w-56 rounded-xl border border-gray-200 bg-white p-3 shadow-md">
                       <div className="flex items-center gap-3">
                         {profile.avatar_url ? (
