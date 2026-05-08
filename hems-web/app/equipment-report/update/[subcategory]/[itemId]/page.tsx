@@ -13,7 +13,7 @@ type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
 type Unit = {
   id: string;
-  unit_no: string | number | null;
+  unit_no: number | null;
   serial: string | null;
   status: string | null;
   notes: string | null;
@@ -111,7 +111,7 @@ export function SerializedRowsBlock({
     const nextPatch: UnitPatch = { ...patch };
 
     if (patch.unit_no !== undefined) {
-      nextPatch.unit_no = String(patch.unit_no ?? "").trim();
+      nextPatch.unit_no = Number(patch.unit_no) || 0;
     }
 
     setUnits((prev) =>
@@ -143,7 +143,7 @@ export function SerializedRowsBlock({
       .from("units")
       .insert({
         item_id: itemId,
-        unit_no: String(nextNumber),
+        unit_no: nextNumber,
         serial: "",
         status: "available",
         notes: "",
@@ -708,12 +708,12 @@ function SerializedUnitRow({
                 const v = e.target.value;
                 setUnitNo(v);
                 debounceSave("unit_no_mobile", () => {
-                  void onChange(unit.id, { unit_no: v.trim() });
+                  void onChange(unit.id, { unit_no: Number(v) || 0 });
                 });
               }}
               onBlur={() => {
                 if (!editable) return;
-                void onChange(unit.id, { unit_no: unitNo.trim() });
+                void onChange(unit.id, { unit_no: Number(unitNo) || 0 });
               }}
               className="mt-1 w-full border-none bg-transparent p-0 text-[22px] font-extrabold tracking-tight text-gray-900 outline-none"
             />
@@ -887,12 +887,12 @@ function SerializedUnitRow({
             const v = e.target.value;
             setUnitNo(v);
             debounceSave("unit_no", () => {
-              void onChange(unit.id, { unit_no: v.trim() });
+              void onChange(unit.id, { unit_no: Number(v) || 0 });
             });
           }}
           onBlur={() => {
             if (!editable) return;
-            void onChange(unit.id, { unit_no: unitNo.trim() });
+            void onChange(unit.id, { unit_no: Number(unitNo) || 0 });
           }}
           className="w-[32px] min-w-[32px] rounded-lg border-none bg-white px-0 py-1 text-center text-[11px] outline-none read-only:text-gray-700"
         />

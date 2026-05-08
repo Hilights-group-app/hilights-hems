@@ -17,7 +17,17 @@ type Category = {
 
 export default function InventoryClient() {
   const [categories, setCategories] = useState<Category[]>([]);
-  const [loading, setLoading] = useState(true);
+  const hasCache =
+  typeof window !== "undefined" &&
+  !!sessionStorage.getItem("hems:catalog");
+  
+  const [mounted, setMounted] = useState(false);
+
+useEffect(() => {
+  setMounted(true);
+}, []);
+
+const [loading, setLoading] = useState(!hasCache);
   const [loadingSub, setLoadingSub] = useState<string | null>(null);
 
   useEffect(() => {
@@ -25,17 +35,36 @@ export default function InventoryClient() {
   }, []);
 
   async function loadCatalog() {
-    try {
-      const data = await readCatalog();
-      setCategories(data.categories || []);
-    } catch (e) {
-      console.error("Inventory load error:", e);
-      setCategories([]);
-    } finally {
-      setLoading(false);
-    }
+  const cached = sessionStorage.getItem("hems:catalog");
+
+  if (cached) {
+    setCategories(JSON.parse(cached));
+    setLoading(false);
   }
 
+  try {
+    const data = await readCatalog();
+    const cats = data.categories || [];
+
+    setCategories(cats);
+    sessionStorage.setItem("hems:catalog", JSON.stringify(cats));
+  } catch (e) {
+    console.error("Inventory load error:", e);
+  } finally {
+    setLoading(false);
+  }
+}
+if (!mounted) {
+  return (
+    <div className="min-h-screen bg-gray-50 p-3">
+      <div className="mx-auto max-w-[1100px] space-y-3">
+        <div className="rounded-2xl border border-gray-200 bg-white px-4 py-4 shadow-sm text-sm text-gray-500">
+          Loading...
+        </div>
+      </div>
+    </div>
+  );
+}
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 p-3">

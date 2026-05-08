@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
-import { Trash2 } from "lucide-react";
+import { Trash2, ChevronDown } from "lucide-react";
 
 type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
@@ -23,12 +23,48 @@ type ItemStats = {
   inKsa: number;
 };
 
+type OnlineImage = {
+  title?: string;
+  image?: string;
+  original?: string;
+  thumbnail?: string;
+};
+
 async function fileToDataUrl(file: File): Promise<string> {
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error("Failed to read file"));
     reader.onload = () => resolve(String(reader.result || ""));
     reader.readAsDataURL(file);
+  });
+}
+
+function splitBrandModel(name: string) {
+  const parts = name.split(" - ");
+  const brand = (parts[0] || "").trim();
+  const model = parts.slice(1).join(" - ").trim();
+
+  return {
+    brand,
+    model,
+  };
+}
+
+function sortItemsByBrand(items: ItemRow[]) {
+  return [...items].sort((a, b) => {
+    const aParts = splitBrandModel(a.name);
+    const bParts = splitBrandModel(b.name);
+
+    const brandCompare = aParts.brand.localeCompare(bParts.brand, undefined, {
+      sensitivity: "base",
+    });
+
+    if (brandCompare !== 0) return brandCompare;
+
+    return (aParts.model || a.name).localeCompare(bParts.model || b.name, undefined, {
+      sensitivity: "base",
+      numeric: true,
+    });
   });
 }
 
@@ -125,14 +161,30 @@ export default function SubcategoryClientSerialized({
   const [items, setItems] = useState<ItemRow[]>([]);
   const [statsByItem, setStatsByItem] = useState<Record<string, ItemStats>>({});
 
-  const [name, setName] = useState("");
+  const [brand, setBrand] = useState("");
+  const [model, setModel] = useState("");
   const [qty, setQty] = useState<number>(1);
   const [photo, setPhoto] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState("");
 
+  const [photoMenuOpen, setPhotoMenuOpen] = useState(false);
+  const [searchPanelOpen, setSearchPanelOpen] = useState(false);
+  const [imageSearch, setImageSearch] = useState("");
+  const [imageResults, setImageResults] = useState<OnlineImage[]>([]);
+  const [searchingImages, setSearchingImages] = useState(false);
+
+  const fixtureName = useMemo(() => {
+    const b = brand.trim();
+    const m = model.trim();
+
+    if (b && m) return `${b} - ${m}`;
+    if (b) return b;
+    return m;
+  }, [brand, model]);
+
   const canAdd = useMemo(
-    () => editable && name.trim().length > 0 && qty >= 1,
-    [editable, name, qty]
+    () => editable && fixtureName.trim().length > 0 && qty >= 1,
+    [editable, fixtureName, qty]
   );
 
   async function resolveSubcategoryId() {
@@ -178,7 +230,7 @@ export default function SubcategoryClientSerialized({
 
       if (itemsRes.error) throw itemsRes.error;
 
-      const list = (itemsRes.data || []) as ItemRow[];
+      const list = sortItemsByBrand((itemsRes.data || []) as ItemRow[]);
       setItems(list);
 
       if (list.length === 0) {
@@ -207,8 +259,7 @@ export default function SubcategoryClientSerialized({
 
       const stats: Record<string, ItemStats> = {};
       for (const itId of ids) {
-        const s = by[itId] || [];
-        stats[itId] = countByStatus(s);
+        stats[itId] = countByStatus(by[itId] || []);
       }
 
       setStatsByItem(stats);
@@ -224,6 +275,20 @@ export default function SubcategoryClientSerialized({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category, subcategory]);
 
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      const target = e.target as Node;
+      const menu = document.getElementById("add-photo-menu");
+
+      if (menu && !menu.contains(target)) {
+        setPhotoMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
   async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     if (!editable) return;
 
@@ -233,6 +298,8 @@ export default function SubcategoryClientSerialized({
     try {
       const dataUrl = await fileToDataUrl(f);
       setPhoto(dataUrl);
+      setSaveMsg("Photo selected");
+      setTimeout(() => setSaveMsg(""), 1500);
     } catch (e: any) {
       alert(e?.message || "Photo failed");
     } finally {
@@ -240,10 +307,43 @@ export default function SubcategoryClientSerialized({
     }
   }
 
+  async function searchOnlineImages() {
+    const q = (imageSearch || fixtureName).trim();
+    if (!q) {
+      alert("Write brand/model first");
+      return;
+    }
+
+    setSearchingImages(true);
+    setImageResults([]);
+
+    try {
+      const res = await fetch(`/api/google-image?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
+      setImageResults(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error("Image search error:", e);
+      alert("Failed to search images");
+    } finally {
+      setSearchingImages(false);
+    }
+  }
+
+  function selectOnlinePhoto(img: OnlineImage) {
+    const imageUrl = img.original || img.image || img.thumbnail;
+    if (!imageUrl) return;
+
+    setPhoto(imageUrl);
+    setSearchPanelOpen(false);
+    setImageResults([]);
+    setSaveMsg("Online photo selected");
+    setTimeout(() => setSaveMsg(""), 1500);
+  }
+
   async function onAdd() {
     if (!editable || !subId) return;
 
-    const nm = name.trim();
+    const nm = fixtureName.trim();
     if (!nm) return;
 
     const q = Math.max(1, Number(qty) || 1);
@@ -273,16 +373,32 @@ export default function SubcategoryClientSerialized({
       const insUnits = await supabase.from("units").insert(unitsPayload);
       if (insUnits.error) throw insUnits.error;
 
-      setName("");
+      setBrand("");
+      setModel("");
       setQty(1);
       setPhoto(null);
+      setImageSearch("");
+      setImageResults([]);
+      setSearchPanelOpen(false);
+      setPhotoMenuOpen(false);
       setSaveMsg("Item added");
 
       setTimeout(() => {
         setSaveMsg((prev) => (prev === "Item added" ? "" : prev));
       }, 1500);
 
-      await load();
+      setItems((prev) => sortItemsByBrand([...prev, newItem]));
+
+setStatsByItem((prev) => ({
+  ...prev,
+  [newItem.id]: {
+    total: q,
+    available: q,
+    inUse: 0,
+    maintenance: 0,
+    inKsa: 0,
+  },
+}));
     } catch (e: any) {
       setErr(e?.message || "Add failed");
     }
@@ -307,7 +423,13 @@ export default function SubcategoryClientSerialized({
         setSaveMsg((prev) => (prev === "Item renamed" ? "" : prev));
       }, 1500);
 
-      await load();
+      setItems((prev) =>
+  sortItemsByBrand(
+    prev.map((it) =>
+      it.id === itemId ? { ...it, name: nextName.trim() } : it
+    )
+  )
+);
     } catch (e: any) {
       alert(e?.message || "Rename failed");
     }
@@ -329,7 +451,13 @@ export default function SubcategoryClientSerialized({
         setSaveMsg((prev) => (prev === "Item deleted" ? "" : prev));
       }, 1500);
 
-      await load();
+      setItems((prev) => prev.filter((it) => it.id !== itemId));
+
+setStatsByItem((prev) => {
+  const next = { ...prev };
+  delete next[itemId];
+  return next;
+});
     } catch (e: any) {
       alert(e?.message || "Delete failed");
     }
@@ -379,11 +507,28 @@ export default function SubcategoryClientSerialized({
             </h1>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_96px_auto_auto] gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_96px_auto_auto] gap-3">
             <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Fixture name (e.g. VL440B)"
+              value={brand}
+              onChange={(e) => {
+                setBrand(e.target.value);
+                if (!imageSearch) {
+                  setImageSearch(`${e.target.value} ${model}`.trim());
+                }
+              }}
+              placeholder="Brand (e.g. Ayrton)"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-black text-[12px] text-gray-900"
+            />
+
+            <input
+              value={model}
+              onChange={(e) => {
+                setModel(e.target.value);
+                if (!imageSearch) {
+                  setImageSearch(`${brand} ${e.target.value}`.trim());
+                }
+              }}
+              placeholder="Model (e.g. Cobra)"
               className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-black text-[12px] text-gray-900"
             />
 
@@ -403,13 +548,43 @@ export default function SubcategoryClientSerialized({
               onChange={onPickPhoto}
             />
 
-            <button
-              type="button"
-              onClick={() => fileRef.current?.click()}
-              className="w-full md:w-auto px-2 py-1.5 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
-            >
-              {photo ? "Photo ✔" : "Upload Photo"}
-            </button>
+            <div id="add-photo-menu" className="relative">
+              <button
+                type="button"
+                onClick={() => setPhotoMenuOpen((v) => !v)}
+                className="flex w-full md:w-auto items-center justify-center gap-1 px-2 py-1.5 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
+              >
+                {photo ? "Photo ✔" : "Add photo"}
+                <ChevronDown size={12} />
+              </button>
+
+              {photoMenuOpen ? (
+                <div className="absolute right-0 z-50 mt-2 w-36 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPhotoMenuOpen(false);
+                      fileRef.current?.click();
+                    }}
+                    className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
+                  >
+                    Upload photo
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPhotoMenuOpen(false);
+                      setSearchPanelOpen(true);
+                      setImageSearch(fixtureName);
+                    }}
+                    className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
+                  >
+                    Search photo
+                  </button>
+                </div>
+              ) : null}
+            </div>
 
             <button
               onClick={onAdd}
@@ -420,7 +595,98 @@ export default function SubcategoryClientSerialized({
             </button>
           </div>
 
-          {saveMsg ? <div className="mt-3 text-xs text-gray-500">{saveMsg}</div> : null}
+          {photo ? (
+            <div className="mt-3 flex items-center gap-3">
+              <img
+                src={photo}
+                alt="Selected"
+                className="h-14 w-14 rounded-lg object-cover border border-gray-200"
+              />
+              <button
+                type="button"
+                onClick={() => setPhoto(null)}
+                className="text-[10px] text-red-500 hover:text-black"
+              >
+                Remove photo
+              </button>
+            </div>
+          ) : null}
+
+          {searchPanelOpen ? (
+            <div className="mt-4 rounded-2xl border border-gray-200 p-3">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="text-[12px] font-semibold text-gray-900">
+                  Search photo online
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchPanelOpen(false);
+                    setImageResults([]);
+                  }}
+                  className="text-[10px] text-red-500 hover:text-black"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="flex gap-2">
+                <input
+                  value={imageSearch}
+                  onChange={(e) => setImageSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void searchOnlineImages();
+                    }
+                  }}
+                  placeholder="Search image..."
+                  className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-[12px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => void searchOnlineImages()}
+                  disabled={searchingImages}
+                  className="rounded-lg bg-black px-3 py-2 text-[11px] font-medium text-white disabled:opacity-40"
+                >
+                  {searchingImages ? "Searching..." : "Search"}
+                </button>
+              </div>
+
+              {imageResults.length > 0 ? (
+                <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-6">
+                  {imageResults.map((img, index) => {
+                    const imageUrl = img.original || img.image || img.thumbnail;
+                    const thumb = img.thumbnail || imageUrl;
+
+                    if (!imageUrl || !thumb) return null;
+
+                    return (
+                      <button
+                        key={`${imageUrl}-${index}`}
+                        type="button"
+                        onClick={() => selectOnlinePhoto(img)}
+                        className="overflow-hidden rounded-lg border border-gray-200 hover:border-blue-400"
+                        title={img.title || "Select photo"}
+                      >
+                        <img
+                          src={thumb}
+                          alt={img.title || "Online image"}
+                          className="aspect-square w-full object-cover"
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {saveMsg ? (
+            <div className="mt-3 text-xs text-gray-500">{saveMsg}</div>
+          ) : null}
         </div>
       )}
 
@@ -444,127 +710,134 @@ export default function SubcategoryClientSerialized({
 
             return (
               <div
-  key={it.id}
-  className={!isLast ? "border-b border-gray-100 pb-4 mb-4" : ""}
->
-  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-    <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
-      <Link
-        href={detailsHref}
-        className="flex items-start gap-3 min-w-0 flex-1 group"
-      >
-        <ItemPhoto photo={it.photo_url} name={it.name} />
-
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 min-w-0">
-            <h2
-              className="truncate text-[10px] sm:text-[11px] font-semibold text-gray-900 group-hover:text-black"
-              style={{ lineHeight: 1.1 }}
-            >
-              {it.name}
-            </h2>
-
-            {editable && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onRename(it.id, it.name);
-                }}
-                title="Rename"
-                className="text-red-500 text-[12px] shrink-0 transition-colors hover:text-black"
+                key={it.id}
+                className={!isLast ? "border-b border-gray-100 pb-4 mb-4" : ""}
               >
-                ✎
-              </button>
-            )}
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
+                    <Link
+                      href={detailsHref}
+                      className="flex items-start gap-3 min-w-0 flex-1 group"
+                    >
+                      <ItemPhoto photo={it.photo_url} name={it.name} />
 
-            {/* Mobile delete on same line as title */}
-            {editable && (
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onDelete(it.id);
-                }}
-                title="Delete"
-                className="ml-auto text-red-500 shrink-0 transition-colors duration-200 hover:text-black sm:hidden"
-              >
-                <Trash2 size={15} />
-              </button>
-            )}
-          </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <h2
+                            className="truncate text-[10px] sm:text-[11px] font-semibold text-gray-900 group-hover:text-black"
+                            style={{ lineHeight: 1.1 }}
+                          >
+                            {it.name}
+                          </h2>
 
-          {/* Mobile stats with colors */}
-          <div className="mt-2 sm:hidden">
-            <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
-              <div className="text-[8px] font-semibold text-gray-500">Total</div>
-              <div className="text-[8px] font-semibold text-gray-500">Available</div>
-              <div className="text-[8px] font-semibold text-gray-500">In Use</div>
-              <div className="text-[8px] font-semibold text-gray-500">Maintenance</div>
-              <div className="text-[8px] font-semibold text-gray-500">In KSA</div>
+                          {editable && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                onRename(it.id, it.name);
+                              }}
+                              title="Rename"
+                              className="text-red-500 text-[12px] shrink-0 transition-colors hover:text-black"
+                            >
+                              ✎
+                            </button>
+                          )}
 
-              <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
-                {stats.total}
-              </div>
-              <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
-                {stats.available}
-              </div>
-              <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
-                {stats.inUse}
-              </div>
-              <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
-                {stats.maintenance}
-              </div>
-              <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
-                {stats.inKsa}
-              </div>
-            </div>
-          </div>
+                          {editable && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                onDelete(it.id);
+                              }}
+                              title="Delete"
+                              className="ml-auto text-red-500 shrink-0 transition-colors duration-200 hover:text-black sm:hidden"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          )}
+                        </div>
 
-          {/* Desktop stats */}
-          <div className="mt-1 hidden sm:block">
-            <div className="flex flex-wrap gap-2">
-              <StatPill label="Total Qty" value={stats.total} />
-              <StatPill
-                label="Available Qty"
-                value={stats.available}
-                tone="green"
-              />
-              <StatPill
-                label="In Use"
-                value={stats.inUse}
-                tone="blue"
-              />
-              <StatPill
-                label="Maintenance"
-                value={stats.maintenance}
-                tone="yellow"
-              />
-              <StatPill
-                label="In KSA"
-                value={stats.inKsa}
-                tone="purple"
-              />
-            </div>
-          </div>
-        </div>
-      </Link>
-    </div>
+                        <div className="mt-2 sm:hidden">
+                          <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
+                            <div className="text-[8px] font-semibold text-gray-500">
+                              Total
+                            </div>
+                            <div className="text-[8px] font-semibold text-gray-500">
+                              Available
+                            </div>
+                            <div className="text-[8px] font-semibold text-gray-500">
+                              In Use
+                            </div>
+                            <div className="text-[8px] font-semibold text-gray-500">
+                              Maintenance
+                            </div>
+                            <div className="text-[8px] font-semibold text-gray-500">
+                              In KSA
+                            </div>
 
-    <div className="hidden sm:flex items-center gap-2 shrink-0">
-      {editable && (
-        <button
-          onClick={() => onDelete(it.id)}
-          className="px-2 py-1 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
-        >
-          Delete
-        </button>
-      )}
-    </div>
-  </div>
-</div>
+                            <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
+                              {stats.total}
+                            </div>
+                            <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
+                              {stats.available}
+                            </div>
+                            <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
+                              {stats.inUse}
+                            </div>
+                            <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
+                              {stats.maintenance}
+                            </div>
+                            <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
+                              {stats.inKsa}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-1 hidden sm:block">
+                          <div className="flex flex-wrap gap-2">
+                            <StatPill label="Total Qty" value={stats.total} />
+                            <StatPill
+                              label="Available Qty"
+                              value={stats.available}
+                              tone="green"
+                            />
+                            <StatPill
+                              label="In Use"
+                              value={stats.inUse}
+                              tone="blue"
+                            />
+                            <StatPill
+                              label="Maintenance"
+                              value={stats.maintenance}
+                              tone="yellow"
+                            />
+                            <StatPill
+                              label="In KSA"
+                              value={stats.inKsa}
+                              tone="purple"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </Link>
+                  </div>
+
+                  <div className="hidden sm:flex items-center gap-2 shrink-0">
+                    {editable && (
+                      <button
+                        onClick={() => onDelete(it.id)}
+                        className="px-2 py-1 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
             );
           })}
         </div>

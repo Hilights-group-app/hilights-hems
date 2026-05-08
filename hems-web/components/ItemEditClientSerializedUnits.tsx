@@ -20,6 +20,13 @@ type Stats = {
   inKsa: number;
 };
 
+type OnlineImage = {
+  title?: string;
+  image?: string;
+  original?: string;
+  thumbnail?: string;
+};
+
 async function fileToDataUrl(file: File): Promise<string> {
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -41,17 +48,23 @@ export default function ItemEditClientSerializedUnits({
   const supabase = createClient();
   const itemPhotoRef = useRef<HTMLInputElement | null>(null);
   const editable = canEditInventory();
+  const [photoMenuOpen, setPhotoMenuOpen] = useState(false);
+  const photoMenuRef = useRef<HTMLDivElement | null>(null);
 
   const backHref = useMemo(() => {
-  const safeCategory = encodeURIComponent(category);
-  const safeSubcategory = encodeURIComponent(subcategory);
-
-  return `/inventory/${safeCategory}/${safeSubcategory}`;
-}, [category, subcategory]);
+    const safeCategory = encodeURIComponent(category);
+    const safeSubcategory = encodeURIComponent(subcategory);
+    return `/inventory/${safeCategory}/${safeSubcategory}`;
+  }, [category, subcategory]);
 
   const [item, setItem] = useState<DbItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [saveMsg, setSaveMsg] = useState("");
+
+  const [imageSearch, setImageSearch] = useState("");
+  const [imageResults, setImageResults] = useState<OnlineImage[]>([]);
+  const [searchingImages, setSearchingImages] = useState(false);
+
   const [stats, setStats] = useState<Stats>({
     total: 0,
     available: 0,
@@ -89,6 +102,23 @@ export default function ItemEditClientSerializedUnits({
       cancelled = true;
     };
   }, [itemId, supabase]);
+
+  useEffect(() => {
+  function handleClickOutside(e: MouseEvent) {
+    if (
+      photoMenuRef.current &&
+      !photoMenuRef.current.contains(e.target as Node)
+    ) {
+      setPhotoMenuOpen(false);
+    }
+  }
+
+  document.addEventListener("mousedown", handleClickOutside);
+
+  return () => {
+    document.removeEventListener("mousedown", handleClickOutside);
+  };
+}, []);
 
   async function updateItem(patch: Partial<Pick<DbItem, "name" | "photo_url">>) {
     if (!editable || !item) return;
@@ -143,6 +173,55 @@ export default function ItemEditClientSerializedUnits({
     setTimeout(() => {
       setSaveMsg((prev) => (prev === "Item renamed" ? "" : prev));
     }, 1500);
+  }
+
+  async function searchGoogleImages(customQuery?: string) {
+    const finalQuery = (customQuery || imageSearch || item?.name || "").trim();
+    if (!finalQuery) return;
+
+    setImageSearch(finalQuery);
+    setSearchingImages(true);
+    setImageResults([]);
+
+    try {
+      const res = await fetch(
+        `/api/google-image?q=${encodeURIComponent(finalQuery)}`
+      );
+
+      const data = await res.json();
+
+      setImageResults(Array.isArray(data) ? data : []);
+    } catch (e) {
+      console.error("Image search error:", e);
+      alert("Failed to search images");
+    } finally {
+      setSearchingImages(false);
+    }
+  }
+
+  async function selectOnlineImage(img: OnlineImage) {
+    const imageUrl = img.original || img.image || img.thumbnail;
+
+    if (!imageUrl) return;
+
+    await updateItem({ photo_url: imageUrl });
+
+    setItem((prev) =>
+      prev
+        ? {
+            ...prev,
+            photo_url: imageUrl,
+          }
+        : prev
+    );
+
+    setSaveMsg("Photo updated from online search");
+
+    setTimeout(() => {
+      setSaveMsg((prev) =>
+        prev === "Photo updated from online search" ? "" : prev
+      );
+    }, 2000);
   }
 
   if (loading) {
@@ -210,15 +289,48 @@ export default function ItemEditClientSerializedUnits({
                   )}
 
                   {editable ? (
-                    <button
-                      type="button"
-                      onClick={() => itemPhotoRef.current?.click()}
-                      title="Edit photo"
-                      className="absolute right-0 top-0 z-20 text-[10px] sm:text-[16px] text-red-500 hover:text-black"
-                    >
-                      ✎
-                    </button>
-                  ) : null}
+  <div
+  ref={photoMenuRef}
+  className="absolute right-0 top-0 z-30"
+>
+    <button
+      type="button"
+      onClick={() =>
+        setPhotoMenuOpen((prev) => !prev)
+      }
+      className="text-[10px] sm:text-[16px] text-red-500 hover:text-black"
+      title="Photo options"
+    >
+      ✎
+    </button>
+
+    {photoMenuOpen ? (
+      <div className="absolute right-0 mt-1 w-36 rounded-xl border border-gray-200 bg-white shadow-xl overflow-hidden">
+        <button
+          type="button"
+          onClick={() => {
+  setPhotoMenuOpen(false);
+  void searchGoogleImages(item.name);
+}}
+          className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-100"
+        >
+          Upload photo
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setPhotoMenuOpen(false);
+            void searchGoogleImages(item.name);
+          }}
+          className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-100"
+        >
+          Search photo
+        </button>
+      </div>
+    ) : null}
+  </div>
+) : null}
                 </div>
               </div>
 
@@ -277,6 +389,68 @@ export default function ItemEditClientSerializedUnits({
           </div>
         </div>
 
+        {imageResults.length > 0 ? (
+  <div className="bg-white border border-gray-200 rounded-2xl p-3 sm:p-5">
+    <div className="flex items-center justify-between mb-3">
+      <div className="font-semibold text-sm text-gray-900">
+        Select photo
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setImageResults([])}
+        className="text-xs text-red-500 hover:text-black"
+      >
+        Close
+      </button>
+    </div>
+
+    <div className="mb-3 flex gap-2">
+  <input
+    value={imageSearch}
+    onChange={(e) => setImageSearch(e.target.value)}
+    onKeyDown={(e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void searchGoogleImages();
+      }
+    }}
+    placeholder="Search another..."
+    className="flex-1 rounded-xl border border-gray-300 px-3 py-2 text-sm outline-none focus:border-gray-900"
+  />
+
+  <button
+    type="button"
+    onClick={() => void searchGoogleImages()}
+    disabled={searchingImages}
+    className="rounded-xl bg-gray-900 px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+  >
+    {searchingImages ? "..." : "Search"}
+  </button>
+</div>
+    <div className="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-6 gap-2">
+      {imageResults.map((img, index) => {
+        const imageUrl = img.original || img.image || img.thumbnail;
+        if (!imageUrl) return null;
+
+        return (
+          <button
+            key={`${imageUrl}-${index}`}
+            type="button"
+            onClick={() => void selectOnlineImage(img)}
+            className="overflow-hidden rounded-xl border border-gray-200 hover:border-blue-400"
+          >
+            <img
+              src={img.thumbnail || imageUrl}
+              alt={img.title || "Online result"}
+              className="w-full aspect-square object-cover"
+            />
+          </button>
+        );
+      })}
+    </div>
+  </div>
+) : null}
         <SerializedRowsBlock
           itemId={itemId}
           editable={editable}
