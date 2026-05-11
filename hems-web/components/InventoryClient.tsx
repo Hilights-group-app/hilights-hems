@@ -8,26 +8,22 @@ type Category = {
   id: string;
   name: string;
   slug: string;
-  subcategories: {
-    id: string;
-    name: string;
-    slug: string;
-  }[];
+  subcategories: { id: string; name: string; slug: string }[];
 };
 
+function getCachedCatalog(): Category[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const cached = sessionStorage.getItem("hems:catalog");
+    return cached ? JSON.parse(cached) : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function InventoryClient() {
-  const [categories, setCategories] = useState<Category[]>([]);
-  const hasCache =
-  typeof window !== "undefined" &&
-  !!sessionStorage.getItem("hems:catalog");
-  
-  const [mounted, setMounted] = useState(false);
-
-useEffect(() => {
-  setMounted(true);
-}, []);
-
-const [loading, setLoading] = useState(!hasCache);
+  const [categories, setCategories] = useState<Category[]>(() => getCachedCatalog());
+  const [loading, setLoading] = useState(() => getCachedCatalog().length === 0);
   const [loadingSub, setLoadingSub] = useState<string | null>(null);
 
   useEffect(() => {
@@ -35,36 +31,19 @@ const [loading, setLoading] = useState(!hasCache);
   }, []);
 
   async function loadCatalog() {
-  const cached = sessionStorage.getItem("hems:catalog");
+    try {
+      const data = await readCatalog();
+      const cats = data.categories || [];
 
-  if (cached) {
-    setCategories(JSON.parse(cached));
-    setLoading(false);
+      setCategories(cats);
+      sessionStorage.setItem("hems:catalog", JSON.stringify(cats));
+    } catch (e) {
+      console.error("Inventory load error:", e);
+    } finally {
+      setLoading(false);
+    }
   }
 
-  try {
-    const data = await readCatalog();
-    const cats = data.categories || [];
-
-    setCategories(cats);
-    sessionStorage.setItem("hems:catalog", JSON.stringify(cats));
-  } catch (e) {
-    console.error("Inventory load error:", e);
-  } finally {
-    setLoading(false);
-  }
-}
-if (!mounted) {
-  return (
-    <div className="min-h-screen bg-gray-50 p-3">
-      <div className="mx-auto max-w-[1100px] space-y-3">
-        <div className="rounded-2xl border border-gray-200 bg-white px-4 py-4 shadow-sm text-sm text-gray-500">
-          Loading...
-        </div>
-      </div>
-    </div>
-  );
-}
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 p-3">

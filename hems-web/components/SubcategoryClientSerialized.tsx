@@ -30,6 +30,12 @@ type OnlineImage = {
   thumbnail?: string;
 };
 
+type FixturesCache = {
+  subId: string | null;
+  items: ItemRow[];
+  statsByItem: Record<string, ItemStats>;
+};
+
 async function fileToDataUrl(file: File): Promise<string> {
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -44,10 +50,7 @@ function splitBrandModel(name: string) {
   const brand = (parts[0] || "").trim();
   const model = parts.slice(1).join(" - ").trim();
 
-  return {
-    brand,
-    model,
-  };
+  return { brand, model };
 }
 
 function sortItemsByBrand(items: ItemRow[]) {
@@ -61,10 +64,14 @@ function sortItemsByBrand(items: ItemRow[]) {
 
     if (brandCompare !== 0) return brandCompare;
 
-    return (aParts.model || a.name).localeCompare(bParts.model || b.name, undefined, {
-      sensitivity: "base",
-      numeric: true,
-    });
+    return (aParts.model || a.name).localeCompare(
+      bParts.model || b.name,
+      undefined,
+      {
+        sensitivity: "base",
+        numeric: true,
+      }
+    );
   });
 }
 
@@ -88,6 +95,41 @@ function countByStatus(statuses: UnitStatus[]): ItemStats {
     maintenance,
     inKsa,
   };
+}
+
+function cacheKeyFor(category: string, subcategory: string) {
+  return `hems:${category}:${subcategory}:fixtures`;
+}
+
+function readFixturesCache(
+  category: string,
+  subcategory: string
+): FixturesCache | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = sessionStorage.getItem(cacheKeyFor(category, subcategory));
+    return raw ? (JSON.parse(raw) as FixturesCache) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeFixturesCache(
+  category: string,
+  subcategory: string,
+  data: FixturesCache
+) {
+  if (typeof window === "undefined") return;
+
+  try {
+    sessionStorage.setItem(
+      cacheKeyFor(category, subcategory),
+      JSON.stringify(data)
+    );
+  } catch {
+    // ignore cache write errors
+  }
 }
 
 function StatPill({
@@ -154,12 +196,18 @@ export default function SubcategoryClientSerialized({
   const fileRef = useRef<HTMLInputElement | null>(null);
   const editable = canEditInventory();
 
-  const [loading, setLoading] = useState(true);
+  const initialCache = readFixturesCache(category, subcategory);
+
+  const [loading, setLoading] = useState(!initialCache);
   const [err, setErr] = useState<string | null>(null);
 
-  const [subId, setSubId] = useState<string | null>(null);
-  const [items, setItems] = useState<ItemRow[]>([]);
-  const [statsByItem, setStatsByItem] = useState<Record<string, ItemStats>>({});
+  const [subId, setSubId] = useState<string | null>(
+    initialCache?.subId || null
+  );
+  const [items, setItems] = useState<ItemRow[]>(initialCache?.items || []);
+  const [statsByItem, setStatsByItem] = useState<Record<string, ItemStats>>(
+    initialCache?.statsByItem || {}
+  );
 
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
@@ -212,10 +260,30 @@ export default function SubcategoryClientSerialized({
     return subRes.data.id as string;
   }
 
-  async function load() {
-    setLoading(true);
+  async function load(forceRefresh = false) {
     setErr(null);
 
+    const cacheKey = cacheKeyFor(category, subcategory);
+
+    if (!forceRefresh && typeof window !== "undefined") {
+      const cached = readFixturesCache(category, subcategory);
+
+      if (cached) {
+        setSubId(cached.subId);
+        setItems(cached.items || []);
+        setStatsByItem(cached.statsByItem || {});
+        setLoading(false);
+
+        void refreshData(cacheKey);
+        return;
+      }
+    }
+
+    if (!initialCache) setLoading(true);
+    await refreshData(cacheKey);
+  }
+
+  async function refreshData(cacheKey: string) {
     try {
       const sid = await resolveSubcategoryId();
       setSubId(sid);
@@ -225,44 +293,54 @@ export default function SubcategoryClientSerialized({
         .select(
           "id,name,photo_url,subcategory_id,total,available,in_use,maintenance,in_ksa"
         )
-        .eq("subcategory_id", sid)
-        .order("name");
+        .eq("subcategory_id", sid);
 
       if (itemsRes.error) throw itemsRes.error;
 
       const list = sortItemsByBrand((itemsRes.data || []) as ItemRow[]);
-      setItems(list);
-
-      if (list.length === 0) {
-        setStatsByItem({});
-        return;
-      }
-
       const ids = list.map((x) => x.id);
 
-      const unitsRes = await supabase
-        .from("units")
-        .select("item_id,status")
-        .in("item_id", ids);
+      let stats: Record<string, ItemStats> = {};
 
-      if (unitsRes.error) throw unitsRes.error;
+      if (ids.length > 0) {
+        const unitsRes = await supabase
+          .from("units")
+          .select("item_id,status")
+          .in("item_id", ids);
 
-      const by: Record<string, UnitStatus[]> = {};
-      for (const itId of ids) by[itId] = [];
+        if (unitsRes.error) throw unitsRes.error;
 
-      for (const u of unitsRes.data || []) {
-        const itemId = String((u as any).item_id || "");
-        const status = String((u as any).status || "available") as UnitStatus;
-        if (!by[itemId]) by[itemId] = [];
-        by[itemId].push(status);
+        const by: Record<string, UnitStatus[]> = {};
+        for (const itId of ids) by[itId] = [];
+
+        for (const u of unitsRes.data || []) {
+          const itemId = String((u as any).item_id || "");
+          const status = String(
+            (u as any).status || "available"
+          ) as UnitStatus;
+
+          if (!by[itemId]) by[itemId] = [];
+          by[itemId].push(status);
+        }
+
+        for (const itId of ids) {
+          stats[itId] = countByStatus(by[itId] || []);
+        }
       }
 
-      const stats: Record<string, ItemStats> = {};
-      for (const itId of ids) {
-        stats[itId] = countByStatus(by[itId] || []);
-      }
-
+      setItems(list);
       setStatsByItem(stats);
+
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem(
+          cacheKey,
+          JSON.stringify({
+            subId: sid,
+            items: list,
+            statsByItem: stats,
+          })
+        );
+      }
     } catch (e: any) {
       setErr(e?.message || "Failed to load");
     } finally {
@@ -271,7 +349,7 @@ export default function SubcategoryClientSerialized({
   }
 
   useEffect(() => {
-    load();
+    void load(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category, subcategory]);
 
@@ -314,6 +392,7 @@ export default function SubcategoryClientSerialized({
       return;
     }
 
+    setSearchPanelOpen(true);
     setSearchingImages(true);
     setImageResults([]);
 
@@ -373,6 +452,27 @@ export default function SubcategoryClientSerialized({
       const insUnits = await supabase.from("units").insert(unitsPayload);
       if (insUnits.error) throw insUnits.error;
 
+      const nextItems = sortItemsByBrand([...items, newItem]);
+      const nextStats = {
+        ...statsByItem,
+        [newItem.id]: {
+          total: q,
+          available: q,
+          inUse: 0,
+          maintenance: 0,
+          inKsa: 0,
+        },
+      };
+
+      setItems(nextItems);
+      setStatsByItem(nextStats);
+
+      writeFixturesCache(category, subcategory, {
+        subId,
+        items: nextItems,
+        statsByItem: nextStats,
+      });
+
       setBrand("");
       setModel("");
       setQty(1);
@@ -386,19 +486,6 @@ export default function SubcategoryClientSerialized({
       setTimeout(() => {
         setSaveMsg((prev) => (prev === "Item added" ? "" : prev));
       }, 1500);
-
-      setItems((prev) => sortItemsByBrand([...prev, newItem]));
-
-setStatsByItem((prev) => ({
-  ...prev,
-  [newItem.id]: {
-    total: q,
-    available: q,
-    inUse: 0,
-    maintenance: 0,
-    inKsa: 0,
-  },
-}));
     } catch (e: any) {
       setErr(e?.message || "Add failed");
     }
@@ -410,26 +497,33 @@ setStatsByItem((prev) => ({
     const nextName = prompt("Rename fixture:", current);
     if (!nextName) return;
 
+    const clean = nextName.trim();
+    if (!clean) return;
+
     try {
       const upd = await supabase
         .from("items")
-        .update({ name: nextName.trim() })
+        .update({ name: clean })
         .eq("id", itemId);
 
       if (upd.error) throw upd.error;
+
+      const nextItems = sortItemsByBrand(
+        items.map((it) => (it.id === itemId ? { ...it, name: clean } : it))
+      );
+
+      setItems(nextItems);
+
+      writeFixturesCache(category, subcategory, {
+        subId,
+        items: nextItems,
+        statsByItem,
+      });
 
       setSaveMsg("Item renamed");
       setTimeout(() => {
         setSaveMsg((prev) => (prev === "Item renamed" ? "" : prev));
       }, 1500);
-
-      setItems((prev) =>
-  sortItemsByBrand(
-    prev.map((it) =>
-      it.id === itemId ? { ...it, name: nextName.trim() } : it
-    )
-  )
-);
     } catch (e: any) {
       alert(e?.message || "Rename failed");
     }
@@ -446,24 +540,28 @@ setStatsByItem((prev) => ({
       const delItem = await supabase.from("items").delete().eq("id", itemId);
       if (delItem.error) throw delItem.error;
 
+      const nextItems = items.filter((it) => it.id !== itemId);
+      const nextStats = { ...statsByItem };
+      delete nextStats[itemId];
+
+      setItems(nextItems);
+      setStatsByItem(nextStats);
+
+      writeFixturesCache(category, subcategory, {
+        subId,
+        items: nextItems,
+        statsByItem: nextStats,
+      });
+
       setSaveMsg("Item deleted");
       setTimeout(() => {
         setSaveMsg((prev) => (prev === "Item deleted" ? "" : prev));
       }, 1500);
-
-      setItems((prev) => prev.filter((it) => it.id !== itemId));
-
-setStatsByItem((prev) => {
-  const next = { ...prev };
-  delete next[itemId];
-  return next;
-});
     } catch (e: any) {
       alert(e?.message || "Delete failed");
     }
   }
-
-  if (loading) {
+    if (loading) {
     return (
       <div className="max-w-[1100px] mx-auto">
         <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
@@ -480,7 +578,7 @@ setStatsByItem((prev) => {
           <div className="font-semibold">Error</div>
           <div className="text-sm text-red-600 mt-1">{err}</div>
           <button
-            onClick={load}
+            onClick={() => void load(true)}
             className="mt-4 px-2.5 py-1 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
           >
             Retry
@@ -559,7 +657,7 @@ setStatsByItem((prev) => {
               </button>
 
               {photoMenuOpen ? (
-                <div className="absolute right-0 z-50 mt-2 w-36 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
+                <div className="absolute right-0 top-full z-[9999] mt-2 w-36 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
                   <button
                     type="button"
                     onClick={() => {
@@ -577,6 +675,10 @@ setStatsByItem((prev) => {
                       setPhotoMenuOpen(false);
                       setSearchPanelOpen(true);
                       setImageSearch(fixtureName);
+
+                      setTimeout(() => {
+                        void searchOnlineImages();
+                      }, 50);
                     }}
                     className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
                   >
@@ -613,7 +715,7 @@ setStatsByItem((prev) => {
           ) : null}
 
           {searchPanelOpen ? (
-            <div className="mt-4 rounded-2xl border border-gray-200 p-3">
+            <div className="mt-4 rounded-2xl border border-gray-200 p-3 relative z-50 bg-white">
               <div className="mb-3 flex items-center justify-between gap-2">
                 <div className="text-[12px] font-semibold text-gray-900">
                   Search photo online
@@ -654,6 +756,12 @@ setStatsByItem((prev) => {
                   {searchingImages ? "Searching..." : "Search"}
                 </button>
               </div>
+
+              {searchingImages ? (
+                <div className="mt-3 text-xs text-gray-500">
+                  Searching images...
+                </div>
+              ) : null}
 
               {imageResults.length > 0 ? (
                 <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-6">
