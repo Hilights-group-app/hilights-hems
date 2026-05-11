@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -8,11 +9,25 @@ import { Trash2, ChevronDown } from "lucide-react";
 
 type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
+const FIXTURE_TYPES = [
+  "Moving Head profile",
+  "Moving Head Spot",
+  "Moving Head Beam",
+  "Moving Head Wash",
+  "Lamp Profile & Fresnel",
+  "LED Washer & Pars",
+  "LED Pixel line",
+  "Followspot",
+] as const;
+
+type FixtureType = (typeof FIXTURE_TYPES)[number];
+
 type ItemRow = {
   id: string;
   name: string;
   photo_url: string | null;
   subcategory_id: string;
+  fixture_type: string | null;
 };
 
 type ItemStats = {
@@ -47,10 +62,21 @@ async function fileToDataUrl(file: File): Promise<string> {
 
 function splitBrandModel(name: string) {
   const parts = name.split(" - ");
-  const brand = (parts[0] || "").trim();
-  const model = parts.slice(1).join(" - ").trim();
+  return {
+    brand: (parts[0] || "").trim(),
+    model: parts.slice(1).join(" - ").trim(),
+  };
+}
 
-  return { brand, model };
+function renderFixtureName(name: string) {
+  const parts = splitBrandModel(name);
+
+  return (
+    <>
+      <span className="font-bold">{parts.brand}</span>
+      {parts.model ? <span>{` ${parts.model}`}</span> : null}
+    </>
+  );
 }
 
 function sortItemsByBrand(items: ItemRow[]) {
@@ -67,10 +93,7 @@ function sortItemsByBrand(items: ItemRow[]) {
     return (aParts.model || a.name).localeCompare(
       bParts.model || b.name,
       undefined,
-      {
-        sensitivity: "base",
-        numeric: true,
-      }
+      { sensitivity: "base", numeric: true }
     );
   });
 }
@@ -88,13 +111,7 @@ function countByStatus(statuses: UnitStatus[]): ItemStats {
     else if (s === "in_ksa") inKsa++;
   }
 
-  return {
-    total: statuses.length,
-    available,
-    inUse,
-    maintenance,
-    inKsa,
-  };
+  return { total: statuses.length, available, inUse, maintenance, inKsa };
 }
 
 function cacheKeyFor(category: string, subcategory: string) {
@@ -127,9 +144,7 @@ function writeFixturesCache(
       cacheKeyFor(category, subcategory),
       JSON.stringify(data)
     );
-  } catch {
-    // ignore cache write errors
-  }
+  } catch {}
 }
 
 function StatPill({
@@ -164,12 +179,22 @@ function StatPill({
 function ItemPhoto({
   photo,
   name,
+  editable,
+  menuOpen,
+  onToggleMenu,
+  onUploadPhoto,
+  onSearchPhoto,
 }: {
   photo?: string | null;
   name: string;
+  editable?: boolean;
+  menuOpen?: boolean;
+  onToggleMenu?: () => void;
+  onUploadPhoto?: () => void;
+  onSearchPhoto?: () => void;
 }) {
   return (
-    <div className="flex h-14 w-14 min-w-[56px] items-center justify-center">
+    <div className="relative flex h-14 w-14 min-w-[56px] items-center justify-center">
       {photo ? (
         <img
           src={photo}
@@ -181,6 +206,51 @@ function ItemPhoto({
           No photo
         </div>
       )}
+
+      {editable ? (
+        <div className="absolute right-0 top-0 z-30" data-list-photo-menu="true">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onToggleMenu?.();
+            }}
+            className="flex h-4 w-4 items-center justify-center rounded-full bg-white/90 text-[10px] text-red-500 shadow hover:text-black"
+            title="Photo options"
+          >
+            ✎
+          </button>
+
+          {menuOpen ? (
+            <div className="absolute right-0 top-full z-[9999] mt-1 w-36 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onUploadPhoto?.();
+                }}
+                className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
+              >
+                Upload photo
+              </button>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onSearchPhoto?.();
+                }}
+                className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
+              >
+                Search photo
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -194,21 +264,17 @@ export default function SubcategoryClientSerialized({
 }) {
   const supabase = createClient();
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const listPhotoFileRef = useRef<HTMLInputElement | null>(null);
   const editable = canEditInventory();
 
-  const initialCache = readFixturesCache(category, subcategory);
-
-  const [loading, setLoading] = useState(!initialCache);
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const [subId, setSubId] = useState<string | null>(
-    initialCache?.subId || null
-  );
-  const [items, setItems] = useState<ItemRow[]>(initialCache?.items || []);
-  const [statsByItem, setStatsByItem] = useState<Record<string, ItemStats>>(
-    initialCache?.statsByItem || {}
-  );
+  const [subId, setSubId] = useState<string | null>(null);
+  const [items, setItems] = useState<ItemRow[]>([]);
+  const [statsByItem, setStatsByItem] = useState<Record<string, ItemStats>>({});
 
+  const [fixtureType, setFixtureType] = useState("");
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
   const [qty, setQty] = useState<number>(1);
@@ -221,6 +287,13 @@ export default function SubcategoryClientSerialized({
   const [imageResults, setImageResults] = useState<OnlineImage[]>([]);
   const [searchingImages, setSearchingImages] = useState(false);
 
+  const [listPhotoMenuItemId, setListPhotoMenuItemId] = useState<string | null>(
+    null
+  );
+  const [editingPhotoItemId, setEditingPhotoItemId] = useState<string | null>(
+    null
+  );
+
   const fixtureName = useMemo(() => {
     const b = brand.trim();
     const m = model.trim();
@@ -230,10 +303,40 @@ export default function SubcategoryClientSerialized({
     return m;
   }, [brand, model]);
 
+  const fixtureSearchName = useMemo(() => {
+    const b = brand.trim();
+    const m = model.trim();
+
+    if (b && m) return `${b} ${m}`;
+    if (b) return b;
+    return m;
+  }, [brand, model]);
+
   const canAdd = useMemo(
-    () => editable && fixtureName.trim().length > 0 && qty >= 1,
-    [editable, fixtureName, qty]
+    () =>
+      editable &&
+      fixtureType.trim().length > 0 &&
+      fixtureName.trim().length > 0 &&
+      qty >= 1,
+    [editable, fixtureType, fixtureName, qty]
   );
+
+  const groupedItems = useMemo(() => {
+    return FIXTURE_TYPES.map((type) => ({
+      type,
+      items: sortItemsByBrand(items.filter((it) => it.fixture_type === type)),
+    })).filter((group) => group.items.length > 0);
+  }, [items]);
+
+  const uncategorizedItems = useMemo(() => {
+    return sortItemsByBrand(
+      items.filter(
+        (it) =>
+          !it.fixture_type ||
+          !FIXTURE_TYPES.includes(it.fixture_type as FixtureType)
+      )
+    );
+  }, [items]);
 
   async function resolveSubcategoryId() {
     const catRes = await supabase
@@ -279,7 +382,7 @@ export default function SubcategoryClientSerialized({
       }
     }
 
-    if (!initialCache) setLoading(true);
+    setLoading(items.length === 0);
     await refreshData(cacheKey);
   }
 
@@ -289,10 +392,8 @@ export default function SubcategoryClientSerialized({
       setSubId(sid);
 
       const itemsRes = await supabase
-        .from("items_with_unit_stats")
-        .select(
-          "id,name,photo_url,subcategory_id,total,available,in_use,maintenance,in_ksa"
-        )
+        .from("items")
+        .select("id,name,photo_url,subcategory_id,fixture_type")
         .eq("subcategory_id", sid);
 
       if (itemsRes.error) throw itemsRes.error;
@@ -315,9 +416,7 @@ export default function SubcategoryClientSerialized({
 
         for (const u of unitsRes.data || []) {
           const itemId = String((u as any).item_id || "");
-          const status = String(
-            (u as any).status || "available"
-          ) as UnitStatus;
+          const status = String((u as any).status || "available") as UnitStatus;
 
           if (!by[itemId]) by[itemId] = [];
           by[itemId].push(status);
@@ -331,16 +430,10 @@ export default function SubcategoryClientSerialized({
       setItems(list);
       setStatsByItem(stats);
 
-      if (typeof window !== "undefined") {
-        sessionStorage.setItem(
-          cacheKey,
-          JSON.stringify({
-            subId: sid,
-            items: list,
-            statsByItem: stats,
-          })
-        );
-      }
+      sessionStorage.setItem(
+        cacheKey,
+        JSON.stringify({ subId: sid, items: list, statsByItem: stats })
+      );
     } catch (e: any) {
       setErr(e?.message || "Failed to load");
     } finally {
@@ -355,11 +448,16 @@ export default function SubcategoryClientSerialized({
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
-      const target = e.target as Node;
-      const menu = document.getElementById("add-photo-menu");
+      const target = e.target as HTMLElement;
+      const addMenu = document.getElementById("add-photo-menu");
+      const listMenu = target.closest("[data-list-photo-menu='true']");
 
-      if (menu && !menu.contains(target)) {
+      if (addMenu && !addMenu.contains(target)) {
         setPhotoMenuOpen(false);
+      }
+
+      if (!listMenu) {
+        setListPhotoMenuItemId(null);
       }
     }
 
@@ -385,8 +483,9 @@ export default function SubcategoryClientSerialized({
     }
   }
 
-  async function searchOnlineImages() {
-    const q = (imageSearch || fixtureName).trim();
+  async function searchOnlineImages(customQuery?: string) {
+    const q = (customQuery || imageSearch || fixtureSearchName).trim();
+
     if (!q) {
       alert("Write brand/model first");
       return;
@@ -398,8 +497,30 @@ export default function SubcategoryClientSerialized({
 
     try {
       const res = await fetch(`/api/google-image?q=${encodeURIComponent(q)}`);
+
+      if (!res.ok) {
+        const text = await res.text();
+        console.error("Image API error:", text);
+        alert("Image search API error");
+        return;
+      }
+
       const data = await res.json();
-      setImageResults(Array.isArray(data) ? data : []);
+
+      const results =
+        Array.isArray(data)
+          ? data
+          : Array.isArray(data?.images_results)
+          ? data.images_results
+          : Array.isArray(data?.items)
+          ? data.items
+          : [];
+
+      setImageResults(results);
+
+      if (results.length === 0) {
+        alert("No images found. Try another search keyword.");
+      }
     } catch (e) {
       console.error("Image search error:", e);
       alert("Failed to search images");
@@ -408,11 +529,74 @@ export default function SubcategoryClientSerialized({
     }
   }
 
+  async function updateItemPhoto(itemId: string, imageUrl: string) {
+    if (!editable) return;
+
+    const { error } = await supabase
+      .from("items")
+      .update({ photo_url: imageUrl })
+      .eq("id", itemId);
+
+    if (error) {
+      alert("Failed to update photo");
+      return;
+    }
+
+    const nextItems = items.map((it) =>
+      it.id === itemId ? { ...it, photo_url: imageUrl } : it
+    );
+
+    setItems(nextItems);
+
+    writeFixturesCache(category, subcategory, {
+      subId,
+      items: nextItems,
+      statsByItem,
+    });
+
+    setSaveMsg("Photo updated");
+    setTimeout(() => setSaveMsg(""), 1500);
+  }
+
+  async function onPickListItemPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!editable || !editingPhotoItemId) return;
+
+    const f = e.target.files?.[0];
+    if (!f) return;
+
+    try {
+      const dataUrl = await fileToDataUrl(f);
+      await updateItemPhoto(editingPhotoItemId, dataUrl);
+    } finally {
+      e.target.value = "";
+      setEditingPhotoItemId(null);
+    }
+  }
+
+  async function searchPhotoForItem(item: ItemRow) {
+    setEditingPhotoItemId(item.id);
+
+    const parts = splitBrandModel(item.name);
+    const searchName = `${parts.brand} ${parts.model}`.trim();
+
+    setImageSearch(searchName);
+    setSearchPanelOpen(true);
+    setImageResults([]);
+
+    void searchOnlineImages(searchName);
+  }
+
   function selectOnlinePhoto(img: OnlineImage) {
     const imageUrl = img.original || img.image || img.thumbnail;
     if (!imageUrl) return;
 
-    setPhoto(imageUrl);
+    if (editingPhotoItemId) {
+      void updateItemPhoto(editingPhotoItemId, imageUrl);
+      setEditingPhotoItemId(null);
+    } else {
+      setPhoto(imageUrl);
+    }
+
     setSearchPanelOpen(false);
     setImageResults([]);
     setSaveMsg("Online photo selected");
@@ -423,7 +607,9 @@ export default function SubcategoryClientSerialized({
     if (!editable || !subId) return;
 
     const nm = fixtureName.trim();
-    if (!nm) return;
+    const ft = fixtureType.trim();
+
+    if (!nm || !ft) return;
 
     const q = Math.max(1, Number(qty) || 1);
     setErr(null);
@@ -433,13 +619,15 @@ export default function SubcategoryClientSerialized({
         .from("items")
         .insert({
           subcategory_id: subId,
+          fixture_type: ft,
           name: nm,
           photo_url: photo || null,
         })
-        .select("id,name,photo_url,subcategory_id")
+        .select("id,name,photo_url,subcategory_id,fixture_type")
         .single();
 
       if (insItem.error) throw insItem.error;
+
       const newItem = insItem.data as ItemRow;
 
       const unitsPayload = Array.from({ length: q }, (_, i) => ({
@@ -473,6 +661,7 @@ export default function SubcategoryClientSerialized({
         statsByItem: nextStats,
       });
 
+      setFixtureType("");
       setBrand("");
       setModel("");
       setQty(1);
@@ -521,6 +710,7 @@ export default function SubcategoryClientSerialized({
       });
 
       setSaveMsg("Item renamed");
+
       setTimeout(() => {
         setSaveMsg((prev) => (prev === "Item renamed" ? "" : prev));
       }, 1500);
@@ -534,10 +724,15 @@ export default function SubcategoryClientSerialized({
     if (!confirm("Delete this fixture?")) return;
 
     try {
-      const delUnits = await supabase.from("units").delete().eq("item_id", itemId);
+      const delUnits = await supabase
+        .from("units")
+        .delete()
+        .eq("item_id", itemId);
+
       if (delUnits.error) throw delUnits.error;
 
       const delItem = await supabase.from("items").delete().eq("id", itemId);
+
       if (delItem.error) throw delItem.error;
 
       const nextItems = items.filter((it) => it.id !== itemId);
@@ -554,6 +749,7 @@ export default function SubcategoryClientSerialized({
       });
 
       setSaveMsg("Item deleted");
+
       setTimeout(() => {
         setSaveMsg((prev) => (prev === "Item deleted" ? "" : prev));
       }, 1500);
@@ -561,7 +757,169 @@ export default function SubcategoryClientSerialized({
       alert(e?.message || "Delete failed");
     }
   }
-    if (loading) {
+
+  function renderFixtureRow(it: ItemRow, isLast: boolean) {
+    const stats = statsByItem[it.id] || {
+      total: 0,
+      available: 0,
+      inUse: 0,
+      maintenance: 0,
+      inKsa: 0,
+    };
+
+    const detailsHref = `/inventory/${category}/${subcategory}/${it.id}`;
+
+    return (
+      <div
+        key={it.id}
+        className={!isLast ? "border-b border-gray-100 pb-4 mb-4" : ""}
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
+            <Link
+              href={detailsHref}
+              className="flex items-start gap-3 min-w-0 flex-1 group"
+            >
+              <ItemPhoto
+                photo={it.photo_url}
+                name={it.name}
+                editable={editable}
+                menuOpen={listPhotoMenuItemId === it.id}
+                onToggleMenu={() =>
+                  setListPhotoMenuItemId((prev) =>
+                    prev === it.id ? null : it.id
+                  )
+                }
+                onUploadPhoto={() => {
+                  setListPhotoMenuItemId(null);
+                  setEditingPhotoItemId(it.id);
+                  listPhotoFileRef.current?.click();
+                }}
+                onSearchPhoto={() => {
+                  setListPhotoMenuItemId(null);
+                  void searchPhotoForItem(it);
+                }}
+              />
+
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 min-w-0">
+                  <h2
+                    className="truncate text-[10px] sm:text-[11px] text-gray-900"
+                    style={{ lineHeight: 1.1 }}
+                  >
+                    {renderFixtureName(it.name)}
+                  </h2>
+
+                  {editable && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onRename(it.id, it.name);
+                      }}
+                      className="text-red-500 text-[12px] shrink-0 hover:text-black"
+                    >
+                      ✎
+                    </button>
+                  )}
+
+                  {editable && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onDelete(it.id);
+                      }}
+                      className="ml-auto text-red-500 shrink-0 hover:text-black sm:hidden"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  )}
+                </div>
+
+                <div className="mt-2 sm:hidden">
+                  <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      Total
+                    </div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      Available
+                    </div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      In Use
+                    </div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      Maintenance
+                    </div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      In KSA
+                    </div>
+
+                    <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.total}
+                    </div>
+                    <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.available}
+                    </div>
+                    <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.inUse}
+                    </div>
+                    <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.maintenance}
+                    </div>
+                    <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.inKsa}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-1 hidden sm:block">
+                  <div className="flex flex-wrap gap-2">
+                    <StatPill label="Total Qty" value={stats.total} />
+                    <StatPill
+                      label="Available Qty"
+                      value={stats.available}
+                      tone="green"
+                    />
+                    <StatPill
+                      label="In Use"
+                      value={stats.inUse}
+                      tone="blue"
+                    />
+                    <StatPill
+                      label="Maintenance"
+                      value={stats.maintenance}
+                      tone="yellow"
+                    />
+                    <StatPill
+                      label="In KSA"
+                      value={stats.inKsa}
+                      tone="purple"
+                    />
+                  </div>
+                </div>
+              </div>
+            </Link>
+          </div>
+
+          <div className="hidden sm:flex items-center gap-2 shrink-0">
+            {editable && (
+              <button
+                onClick={() => onDelete(it.id)}
+                className="px-2 py-1 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
+              >
+                Delete
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
     return (
       <div className="max-w-[1100px] mx-auto">
         <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
@@ -576,10 +934,12 @@ export default function SubcategoryClientSerialized({
       <div className="max-w-[1100px] mx-auto">
         <div className="bg-white border border-gray-200 rounded-2xl p-6 text-gray-900">
           <div className="font-semibold">Error</div>
+
           <div className="text-sm text-red-600 mt-1">{err}</div>
+
           <button
             onClick={() => void load(true)}
-            className="mt-4 px-2.5 py-1 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
+            className="mt-4 px-2.5 py-1 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
           >
             Retry
           </button>
@@ -605,11 +965,26 @@ export default function SubcategoryClientSerialized({
             </h1>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_96px_auto_auto] gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)_minmax(0,1fr)_96px_auto_auto] gap-3">
+            <select
+              value={fixtureType}
+              onChange={(e) => setFixtureType(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-black text-[12px] text-gray-900 bg-white"
+            >
+              <option value="">Select Type</option>
+
+              {FIXTURE_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+
             <input
               value={brand}
               onChange={(e) => {
                 setBrand(e.target.value);
+
                 if (!imageSearch) {
                   setImageSearch(`${e.target.value} ${model}`.trim());
                 }
@@ -622,6 +997,7 @@ export default function SubcategoryClientSerialized({
               value={model}
               onChange={(e) => {
                 setModel(e.target.value);
+
                 if (!imageSearch) {
                   setImageSearch(`${brand} ${e.target.value}`.trim());
                 }
@@ -632,7 +1008,9 @@ export default function SubcategoryClientSerialized({
 
             <input
               value={qty}
-              onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
+              onChange={(e) =>
+                setQty(Math.max(1, Number(e.target.value) || 1))
+              }
               type="number"
               min={1}
               className="w-full md:w-24 border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-black text-[12px] text-gray-900"
@@ -646,13 +1024,22 @@ export default function SubcategoryClientSerialized({
               onChange={onPickPhoto}
             />
 
+            <input
+              ref={listPhotoFileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={onPickListItemPhoto}
+            />
+
             <div id="add-photo-menu" className="relative">
               <button
                 type="button"
                 onClick={() => setPhotoMenuOpen((v) => !v)}
-                className="flex w-full md:w-auto items-center justify-center gap-1 px-2 py-1.5 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
+                className="flex w-full md:w-auto items-center justify-center gap-1 px-2 py-1.5 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
               >
                 {photo ? "Photo ✔" : "Add photo"}
+
                 <ChevronDown size={12} />
               </button>
 
@@ -674,10 +1061,10 @@ export default function SubcategoryClientSerialized({
                     onClick={() => {
                       setPhotoMenuOpen(false);
                       setSearchPanelOpen(true);
-                      setImageSearch(fixtureName);
+                      setImageSearch(fixtureSearchName);
 
                       setTimeout(() => {
-                        void searchOnlineImages();
+                        void searchOnlineImages(fixtureSearchName);
                       }, 50);
                     }}
                     className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
@@ -691,7 +1078,7 @@ export default function SubcategoryClientSerialized({
             <button
               onClick={onAdd}
               disabled={!canAdd}
-              className="w-full md:w-auto px-2 py-1.5 rounded-full border border-black text-[9px] font-medium text-white bg-black transition-all duration-150 ease-out hover:opacity-90 active:scale-[0.98] disabled:opacity-40"
+              className="w-full md:w-auto px-2 py-1.5 rounded-full border border-black text-[9px] font-medium text-white bg-black hover:opacity-90 disabled:opacity-40"
             >
               + Add
             </button>
@@ -704,6 +1091,7 @@ export default function SubcategoryClientSerialized({
                 alt="Selected"
                 className="h-14 w-14 rounded-lg object-cover border border-gray-200"
               />
+
               <button
                 type="button"
                 onClick={() => setPhoto(null)}
@@ -726,6 +1114,7 @@ export default function SubcategoryClientSerialized({
                   onClick={() => {
                     setSearchPanelOpen(false);
                     setImageResults([]);
+                    setEditingPhotoItemId(null);
                   }}
                   className="text-[10px] text-red-500 hover:text-black"
                 >
@@ -798,158 +1187,36 @@ export default function SubcategoryClientSerialized({
         </div>
       )}
 
-      {items.length === 0 ? (
-        <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
-          No fixtures yet.
+      {groupedItems.map((group) => (
+        <div
+          key={group.type}
+          className="bg-white border border-gray-200 rounded-2xl p-6"
+        >
+          <div className="mb-5">
+            <h2 className="text-[13px] font-semibold text-gray-900">
+              {group.type}
+            </h2>
+          </div>
+
+          {group.items.map((it, index) =>
+            renderFixtureRow(it, index === group.items.length - 1)
+          )}
         </div>
-      ) : (
+      ))}
+
+      {uncategorizedItems.length > 0 ? (
         <div className="bg-white border border-gray-200 rounded-2xl p-6">
-          {items.map((it, index) => {
-            const stats = statsByItem[it.id] || {
-              total: 0,
-              available: 0,
-              inUse: 0,
-              maintenance: 0,
-              inKsa: 0,
-            };
+          <div className="mb-5">
+            <h2 className="text-[13px] font-semibold text-gray-900">
+              Other Fixtures
+            </h2>
+          </div>
 
-            const isLast = index === items.length - 1;
-            const detailsHref = `/inventory/${category}/${subcategory}/${it.id}`;
-
-            return (
-              <div
-                key={it.id}
-                className={!isLast ? "border-b border-gray-100 pb-4 mb-4" : ""}
-              >
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
-                    <Link
-                      href={detailsHref}
-                      className="flex items-start gap-3 min-w-0 flex-1 group"
-                    >
-                      <ItemPhoto photo={it.photo_url} name={it.name} />
-
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <h2
-                            className="truncate text-[10px] sm:text-[11px] font-semibold text-gray-900 group-hover:text-black"
-                            style={{ lineHeight: 1.1 }}
-                          >
-                            {it.name}
-                          </h2>
-
-                          {editable && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                onRename(it.id, it.name);
-                              }}
-                              title="Rename"
-                              className="text-red-500 text-[12px] shrink-0 transition-colors hover:text-black"
-                            >
-                              ✎
-                            </button>
-                          )}
-
-                          {editable && (
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                onDelete(it.id);
-                              }}
-                              title="Delete"
-                              className="ml-auto text-red-500 shrink-0 transition-colors duration-200 hover:text-black sm:hidden"
-                            >
-                              <Trash2 size={15} />
-                            </button>
-                          )}
-                        </div>
-
-                        <div className="mt-2 sm:hidden">
-                          <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
-                            <div className="text-[8px] font-semibold text-gray-500">
-                              Total
-                            </div>
-                            <div className="text-[8px] font-semibold text-gray-500">
-                              Available
-                            </div>
-                            <div className="text-[8px] font-semibold text-gray-500">
-                              In Use
-                            </div>
-                            <div className="text-[8px] font-semibold text-gray-500">
-                              Maintenance
-                            </div>
-                            <div className="text-[8px] font-semibold text-gray-500">
-                              In KSA
-                            </div>
-
-                            <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
-                              {stats.total}
-                            </div>
-                            <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
-                              {stats.available}
-                            </div>
-                            <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
-                              {stats.inUse}
-                            </div>
-                            <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
-                              {stats.maintenance}
-                            </div>
-                            <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
-                              {stats.inKsa}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="mt-1 hidden sm:block">
-                          <div className="flex flex-wrap gap-2">
-                            <StatPill label="Total Qty" value={stats.total} />
-                            <StatPill
-                              label="Available Qty"
-                              value={stats.available}
-                              tone="green"
-                            />
-                            <StatPill
-                              label="In Use"
-                              value={stats.inUse}
-                              tone="blue"
-                            />
-                            <StatPill
-                              label="Maintenance"
-                              value={stats.maintenance}
-                              tone="yellow"
-                            />
-                            <StatPill
-                              label="In KSA"
-                              value={stats.inKsa}
-                              tone="purple"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </Link>
-                  </div>
-
-                  <div className="hidden sm:flex items-center gap-2 shrink-0">
-                    {editable && (
-                      <button
-                        onClick={() => onDelete(it.id)}
-                        className="px-2 py-1 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
-                      >
-                        Delete
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+          {uncategorizedItems.map((it, index) =>
+            renderFixtureRow(it, index === uncategorizedItems.length - 1)
+          )}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
