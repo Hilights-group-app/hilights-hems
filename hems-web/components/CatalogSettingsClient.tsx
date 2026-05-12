@@ -17,6 +17,7 @@ import Link from "next/link";
 const TYPE_LABEL: Record<SubcategoryType, string> = {
   matrix: "Matrix",
   fixture_units: "Serialized",
+  lighting: "Lighting",
   chain_hoist_units: "Chain Hoist",
   projector_units: "Projector",
   lens_units: "Lens",
@@ -43,11 +44,16 @@ export default function CatalogSettingsClient() {
   const [subType, setSubType] = useState<Record<string, SubcategoryType>>({});
 
   const typeOptions = useMemo(() => {
-    return (Object.keys(TYPE_LABEL) as SubcategoryType[]).map((t) => ({
-      value: t,
-      label: TYPE_LABEL[t],
-    }));
-  }, []);
+  return [
+    { value: "matrix" as SubcategoryType, label: "Matrix" },
+    { value: "fixture_units" as SubcategoryType, label: "Serialized" },
+    { value: "lighting" as SubcategoryType, label: "Lighting" },
+    { value: "chain_hoist_units" as SubcategoryType, label: "Chain Hoist" },
+    { value: "projector_units" as SubcategoryType, label: "Projector" },
+    { value: "lens_units" as SubcategoryType, label: "Lens" },
+    { value: "led_screen_units" as SubcategoryType, label: "LED Screen" },
+  ];
+}, []);
 
   async function refresh() {
     setLoading(true);

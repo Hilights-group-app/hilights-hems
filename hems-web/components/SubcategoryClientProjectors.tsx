@@ -29,13 +29,28 @@ function toStatus(v: any): UnitStatus {
   return "available";
 }
 
-async function fileToDataUrl(file: File): Promise<string> {
-  return await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Failed to read file"));
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.readAsDataURL(file);
-  });
+async function uploadPhoto(file: File): Promise<string> {
+  const supabase = createClient();
+
+  const ext = file.name.split(".").pop() || "jpg";
+
+  const fileName = `${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}.${ext}`;
+
+  const filePath = `projectors/${fileName}`;
+
+  const { error } = await supabase.storage
+    .from("equipment-photos")
+    .upload(filePath, file);
+
+  if (error) throw error;
+
+  const { data } = supabase.storage
+    .from("equipment-photos")
+    .getPublicUrl(filePath);
+
+  return data.publicUrl;
 }
 
 function StatPill({
@@ -256,8 +271,11 @@ export default function SubcategoryClientProjectors({
     if (!f) return;
 
     try {
-      const dataUrl = await fileToDataUrl(f);
-      setPhoto(dataUrl);
+      setSaveMsg("Uploading photo...");
+
+const imageUrl = await uploadPhoto(f);
+
+setPhoto(imageUrl);
     } catch (error: any) {
       alert(error?.message || "Failed to read photo");
     } finally {

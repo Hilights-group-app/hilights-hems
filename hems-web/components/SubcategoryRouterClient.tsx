@@ -12,6 +12,7 @@ import SubcategoryClientLedScreen from "@/components/SubcategoryClientLedScreen"
 import SubcategoryClientChainHoist from "@/components/SubcategoryClientChainHoist";
 import SubcategoryClientProjectors from "@/components/SubcategoryClientProjectors";
 import SubcategoryClientLenses from "@/components/SubcategoryClientLenses";
+import SubcategoryClientLighting from "@/components/SubcategoryClientLighting";
 
 import type { SubcategoryType } from "@/lib/catalogStore";
 
@@ -106,8 +107,18 @@ export default function SubcategoryRouterClient({
     return titleFromSlug(subcategory) || "Subcategory";
   }, [subcategory]);
 
-  let body = (
-    <SubcategoryClientSerialized category={category} subcategory={subcategory} />
+  let body =
+  category === "lighting" &&
+  subcategory === "lighting-fixtures" ? (
+    <SubcategoryClientLighting
+      category={category}
+      subcategory={subcategory}
+    />
+  ) : (
+    <SubcategoryClientSerialized
+      category={category}
+      subcategory={subcategory}
+    />
   );
 
   if (type === "matrix") {

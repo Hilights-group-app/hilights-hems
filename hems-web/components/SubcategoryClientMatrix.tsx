@@ -26,13 +26,28 @@ type MatrixModel = {
   created_at?: string;
 };
 
-async function fileToDataUrl(file: File): Promise<string> {
-  return await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Failed to read file"));
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.readAsDataURL(file);
-  });
+async function uploadPhoto(file: File): Promise<string> {
+  const supabase = createClient();
+
+  const ext = file.name.split(".").pop() || "jpg";
+
+  const fileName = `${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}.${ext}`;
+
+  const filePath = `matrix/${fileName}`;
+
+  const { error } = await supabase.storage
+    .from("equipment-photos")
+    .upload(filePath, file);
+
+  if (error) throw error;
+
+  const { data } = supabase.storage
+    .from("equipment-photos")
+    .getPublicUrl(filePath);
+
+  return data.publicUrl;
 }
 
 function clampQty(v: any) {
@@ -198,8 +213,11 @@ export default function SubcategoryClientMatrix({
     if (!f) return;
 
     try {
-      const dataUrl = await fileToDataUrl(f);
-      setNewPhoto(dataUrl);
+      setSaveMsg("Uploading photo...");
+
+const imageUrl = await uploadPhoto(f);
+
+setNewPhoto(imageUrl);
     } finally {
       e.target.value = "";
     }
@@ -335,12 +353,12 @@ export default function SubcategoryClientMatrix({
   async function changeModelPhoto(modelId: string, file: File) {
     if (!editable) return;
 
-    const dataUrl = await fileToDataUrl(file);
+    const imageUrl = await uploadPhoto(file);
 
-    const { error } = await supabase
-      .from("matrix_models")
-      .update({ photo_data: dataUrl })
-      .eq("id", modelId);
+const { error } = await supabase
+  .from("matrix_models")
+  .update({ photo_data: imageUrl })
+  .eq("id", modelId);
 
     if (error) {
       console.error("changeModelPhoto error", error);
@@ -354,12 +372,12 @@ export default function SubcategoryClientMatrix({
   async function changeRowPhoto(rowId: string, file: File) {
     if (!editable) return;
 
-    const dataUrl = await fileToDataUrl(file);
+    const imageUrl = await uploadPhoto(file);
 
-    const { error } = await supabase
-      .from("matrix_rows")
-      .update({ photo_data: dataUrl })
-      .eq("id", rowId);
+const { error } = await supabase
+  .from("matrix_rows")
+  .update({ photo_data: imageUrl })
+  .eq("id", rowId);
 
     if (error) {
       console.error("changeRowPhoto error", error);
@@ -371,7 +389,7 @@ export default function SubcategoryClientMatrix({
       prev.map((m) => ({
         ...m,
         matrix_rows: (m.matrix_rows ?? []).map((r) =>
-          r.id === rowId ? { ...r, photo_data: dataUrl } : r
+          r.id === rowId ? { ...r, photo_data: imageUrl } : r
         ),
       }))
     );

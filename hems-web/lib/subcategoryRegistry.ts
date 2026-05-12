@@ -18,15 +18,16 @@ export async function getSubcategoryType(
   const t = sub?.type;
 
   if (
-    t === "matrix" ||
-    t === "fixture_units" ||
-    t === "chain_hoist_units" ||
-    t === "projector_units" ||
-    t === "lens_units" ||
-    t === "led_screen_units"
-  ) {
-    return t;
-  }
+  t === "matrix" ||
+  t === "fixture_units" ||
+  t === "lighting" ||
+  t === "chain_hoist_units" ||
+  t === "projector_units" ||
+  t === "lens_units" ||
+  t === "led_screen_units"
+) {
+  return t;
+}
 
   return "fixture_units";
 }

@@ -6,11 +6,12 @@ TYPES
 export type SubcategoryType =
   | "matrix"
   | "fixture_units"
+  | "lighting"
   | "chain_hoist_units"
   | "projector_units"
   | "lens_units"
   | "led_screen_units";
-
+  
 export type Category = {
   id: string;
   name: string;

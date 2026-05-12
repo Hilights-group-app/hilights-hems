@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -8,11 +9,25 @@ import { Trash2, ChevronDown } from "lucide-react";
 
 type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
+const FIXTURE_TYPES = [
+  "Moving Head profile",
+  "Moving Head Spot",
+  "Moving Head Beam",
+  "Moving Head Wash",
+  "Lamp Profile & Fresnel",
+  "LED Washer & Pars",
+  "LED Pixel line",
+  "Followspot",
+] as const;
+
+type FixtureType = (typeof FIXTURE_TYPES)[number];
+
 type ItemRow = {
   id: string;
   name: string;
   photo_url: string | null;
   subcategory_id: string;
+  fixture_type: string | null;
 };
 
 type ItemStats = {
@@ -30,19 +45,19 @@ type OnlineImage = {
   thumbnail?: string;
 };
 
-type ItemsCache = {
+type FixturesCache = {
   subId: string | null;
   items: ItemRow[];
   statsByItem: Record<string, ItemStats>;
 };
 
-async function uploadPhoto(file: File) {
+async function uploadPhoto(file: File): Promise<string> {
   const supabase = createClient();
 
   const ext = file.name.split(".").pop() || "jpg";
-
-  const fileName =
-    `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  const fileName = `${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}.${ext}`;
 
   const filePath = `items/${fileName}`;
 
@@ -50,9 +65,7 @@ async function uploadPhoto(file: File) {
     .from("equipment-photos")
     .upload(filePath, file);
 
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 
   const { data } = supabase.storage
     .from("equipment-photos")
@@ -62,21 +75,22 @@ async function uploadPhoto(file: File) {
 }
 
 function splitBrandModel(name: string) {
-  const clean = name.trim();
-
-  if (clean.includes(" - ")) {
-    const parts = clean.split(" - ");
-    return {
-      brand: (parts[0] || "").trim(),
-      model: parts.slice(1).join(" - ").trim(),
-    };
-  }
-
-  const parts = clean.split(/\s+/);
+  const parts = name.split(" - ");
   return {
-    brand: parts[0] || "",
-    model: parts.slice(1).join(" "),
+    brand: (parts[0] || "").trim(),
+    model: parts.slice(1).join(" - ").trim(),
   };
+}
+
+function renderFixtureName(name: string) {
+  const parts = splitBrandModel(name);
+
+  return (
+    <>
+      <span className="font-bold">{parts.brand}</span>
+      {parts.model ? <span>{` ${parts.model}`}</span> : null}
+    </>
+  );
 }
 
 function sortItemsByBrand(items: ItemRow[]) {
@@ -98,24 +112,6 @@ function sortItemsByBrand(items: ItemRow[]) {
   });
 }
 
-function groupItemsByBrand(items: ItemRow[]) {
-  const sorted = sortItemsByBrand(items);
-  const groups: { brand: string; items: ItemRow[] }[] = [];
-
-  for (const item of sorted) {
-    const brand = splitBrandModel(item.name).brand || "Other";
-    const last = groups[groups.length - 1];
-
-    if (last && last.brand.toLowerCase() === brand.toLowerCase()) {
-      last.items.push(item);
-    } else {
-      groups.push({ brand, items: [item] });
-    }
-  }
-
-  return groups;
-}
-
 function countByStatus(statuses: UnitStatus[]): ItemStats {
   let available = 0;
   let inUse = 0;
@@ -133,25 +129,35 @@ function countByStatus(statuses: UnitStatus[]): ItemStats {
 }
 
 function cacheKeyFor(category: string, subcategory: string) {
-  return `hems:${category}:${subcategory}:serialized-items`;
+  return `hems:${category}:${subcategory}:fixtures`;
 }
 
-function readItemsCache(category: string, subcategory: string): ItemsCache | null {
+function readFixturesCache(
+  category: string,
+  subcategory: string
+): FixturesCache | null {
   if (typeof window === "undefined") return null;
 
   try {
     const raw = sessionStorage.getItem(cacheKeyFor(category, subcategory));
-    return raw ? (JSON.parse(raw) as ItemsCache) : null;
+    return raw ? (JSON.parse(raw) as FixturesCache) : null;
   } catch {
     return null;
   }
 }
 
-function writeItemsCache(category: string, subcategory: string, data: ItemsCache) {
+function writeFixturesCache(
+  category: string,
+  subcategory: string,
+  data: FixturesCache
+) {
   if (typeof window === "undefined") return;
 
   try {
-    sessionStorage.setItem(cacheKeyFor(category, subcategory), JSON.stringify(data));
+    sessionStorage.setItem(
+      cacheKeyFor(category, subcategory),
+      JSON.stringify(data)
+    );
   } catch {}
 }
 
@@ -176,7 +182,9 @@ function StatPill({
       : "bg-gray-100 text-black";
 
   return (
-    <span className={`px-2 py-1 rounded-lg text-[8px] font-semibold whitespace-nowrap ${cls}`}>
+    <span
+      className={`px-2 py-1 rounded-lg text-[8px] font-semibold whitespace-nowrap ${cls}`}
+    >
       {label}: {value}
     </span>
   );
@@ -202,7 +210,11 @@ function ItemPhoto({
   return (
     <div className="relative flex h-14 w-14 min-w-[56px] items-center justify-center">
       {photo ? (
-        <img src={photo} alt={name} className="h-full w-full rounded-lg object-cover bg-white" />
+        <img
+          src={photo}
+          alt={name}
+          className="h-full w-full rounded-lg object-cover bg-white"
+        />
       ) : (
         <div className="flex h-full w-full items-center justify-center rounded-lg bg-white text-[10px] text-gray-400">
           No photo
@@ -257,7 +269,7 @@ function ItemPhoto({
   );
 }
 
-export default function SubcategoryClientSerialized({
+export default function SubcategoryClientLighting({
   category,
   subcategory,
 }: {
@@ -276,26 +288,9 @@ export default function SubcategoryClientSerialized({
   const [items, setItems] = useState<ItemRow[]>([]);
   const [statsByItem, setStatsByItem] = useState<Record<string, ItemStats>>({});
 
+  const [fixtureType, setFixtureType] = useState("");
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
-  const itemName = useMemo(() => {
-  const b = brand.trim();
-  const m = model.trim();
-
-  if (b && m) return `${b} - ${m}`;
-  if (b) return b;
-  return m;
-}, [brand, model]);
-
-const itemSearchName = useMemo(() => {
-  const b = brand.trim();
-  const m = model.trim();
-
-  if (b && m) return `${b} ${m}`;
-  if (b) return b;
-  return m;
-}, [brand, model]);
-
   const [qty, setQty] = useState<number>(1);
   const [photo, setPhoto] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState("");
@@ -306,18 +301,63 @@ const itemSearchName = useMemo(() => {
   const [imageResults, setImageResults] = useState<OnlineImage[]>([]);
   const [searchingImages, setSearchingImages] = useState(false);
 
-  const [listPhotoMenuItemId, setListPhotoMenuItemId] = useState<string | null>(null);
-  const [editingPhotoItemId, setEditingPhotoItemId] = useState<string | null>(null);
-
-  const canAdd = useMemo(
-    () => editable && itemName.trim().length > 0 && qty >= 1,
-    [editable, itemName, qty]
+  const [listPhotoMenuItemId, setListPhotoMenuItemId] = useState<string | null>(
+    null
+  );
+  const [editingPhotoItemId, setEditingPhotoItemId] = useState<string | null>(
+    null
   );
 
-  const brandGroups = useMemo(() => groupItemsByBrand(items), [items]);
+  const fixtureName = useMemo(() => {
+    const b = brand.trim();
+    const m = model.trim();
+
+    if (b && m) return `${b} - ${m}`;
+    if (b) return b;
+    return m;
+  }, [brand, model]);
+
+  const fixtureSearchName = useMemo(() => {
+    const b = brand.trim();
+    const m = model.trim();
+
+    if (b && m) return `${b} ${m}`;
+    if (b) return b;
+    return m;
+  }, [brand, model]);
+
+  const canAdd = useMemo(
+    () =>
+      editable &&
+      fixtureType.trim().length > 0 &&
+      fixtureName.trim().length > 0 &&
+      qty >= 1,
+    [editable, fixtureType, fixtureName, qty]
+  );
+
+  const groupedItems = useMemo(() => {
+    return FIXTURE_TYPES.map((type) => ({
+      type,
+      items: sortItemsByBrand(items.filter((it) => it.fixture_type === type)),
+    })).filter((group) => group.items.length > 0);
+  }, [items]);
+
+  const uncategorizedItems = useMemo(() => {
+    return sortItemsByBrand(
+      items.filter(
+        (it) =>
+          !it.fixture_type ||
+          !FIXTURE_TYPES.includes(it.fixture_type as FixtureType)
+      )
+    );
+  }, [items]);
 
   async function resolveSubcategoryId() {
-    const catRes = await supabase.from("categories").select("id").eq("slug", category).single();
+    const catRes = await supabase
+      .from("categories")
+      .select("id")
+      .eq("slug", category)
+      .single();
 
     if (catRes.error || !catRes.data?.id) {
       throw new Error(`Category not found in DB for slug: ${category}`);
@@ -343,7 +383,7 @@ const itemSearchName = useMemo(() => {
     const cacheKey = cacheKeyFor(category, subcategory);
 
     if (!forceRefresh && typeof window !== "undefined") {
-      const cached = readItemsCache(category, subcategory);
+      const cached = readFixturesCache(category, subcategory);
 
       if (cached) {
         setSubId(cached.subId);
@@ -367,7 +407,7 @@ const itemSearchName = useMemo(() => {
 
       const itemsRes = await supabase
         .from("items")
-        .select("id,name,photo_url,subcategory_id")
+        .select("id,name,photo_url,subcategory_id,fixture_type")
         .eq("subcategory_id", sid);
 
       if (itemsRes.error) throw itemsRes.error;
@@ -378,7 +418,10 @@ const itemSearchName = useMemo(() => {
       let stats: Record<string, ItemStats> = {};
 
       if (ids.length > 0) {
-        const unitsRes = await supabase.from("units").select("item_id,status").in("item_id", ids);
+        const unitsRes = await supabase
+          .from("units")
+          .select("item_id,status")
+          .in("item_id", ids);
 
         if (unitsRes.error) throw unitsRes.error;
 
@@ -401,7 +444,10 @@ const itemSearchName = useMemo(() => {
       setItems(list);
       setStatsByItem(stats);
 
-      sessionStorage.setItem(cacheKey, JSON.stringify({ subId: sid, items: list, statsByItem: stats }));
+      sessionStorage.setItem(
+        cacheKey,
+        JSON.stringify({ subId: sid, items: list, statsByItem: stats })
+      );
     } catch (e: any) {
       setErr(e?.message || "Failed to load");
     } finally {
@@ -440,8 +486,9 @@ const itemSearchName = useMemo(() => {
     if (!f) return;
 
     try {
-      const dataUrl = await uploadPhoto(f);
-      setPhoto(dataUrl);
+      setSaveMsg("Uploading photo...");
+     const imageUrl = await uploadPhoto(f);
+     setPhoto(imageUrl);
       setSaveMsg("Photo selected");
       setTimeout(() => setSaveMsg(""), 1500);
     } catch (e: any) {
@@ -452,10 +499,10 @@ const itemSearchName = useMemo(() => {
   }
 
   async function searchOnlineImages(customQuery?: string) {
-    const q = (customQuery || imageSearch || itemSearchName).trim();
+    const q = (customQuery || imageSearch || fixtureSearchName).trim();
 
     if (!q) {
-      alert("Write item name first");
+      alert("Write brand/model first");
       return;
     }
 
@@ -487,8 +534,7 @@ const itemSearchName = useMemo(() => {
       setImageResults(results);
 
       if (results.length === 0) {
-        setSaveMsg("No images found. Try simpler keywords.");
-        setTimeout(() => setSaveMsg(""), 2500);
+        alert("No images found. Try another search keyword.");
       }
     } catch (e) {
       console.error("Image search error:", e);
@@ -497,10 +543,14 @@ const itemSearchName = useMemo(() => {
       setSearchingImages(false);
     }
   }
-    async function updateItemPhoto(itemId: string, imageUrl: string) {
+
+  async function updateItemPhoto(itemId: string, imageUrl: string) {
     if (!editable) return;
 
-    const { error } = await supabase.from("items").update({ photo_url: imageUrl }).eq("id", itemId);
+    const { error } = await supabase
+      .from("items")
+      .update({ photo_url: imageUrl })
+      .eq("id", itemId);
 
     if (error) {
       alert("Failed to update photo");
@@ -513,7 +563,7 @@ const itemSearchName = useMemo(() => {
 
     setItems(nextItems);
 
-    writeItemsCache(category, subcategory, {
+    writeFixturesCache(category, subcategory, {
       subId,
       items: nextItems,
       statsByItem,
@@ -524,27 +574,37 @@ const itemSearchName = useMemo(() => {
   }
 
   async function onPickListItemPhoto(e: React.ChangeEvent<HTMLInputElement>) {
-    if (!editable || !editingPhotoItemId) return;
+  if (!editable || !editingPhotoItemId) return;
 
-    const f = e.target.files?.[0];
-    if (!f) return;
+  const f = e.target.files?.[0];
+  if (!f) return;
 
-    try {
-      const dataUrl = await uploadPhoto(f);
-      await updateItemPhoto(editingPhotoItemId, dataUrl);
-    } finally {
-      e.target.value = "";
-      setEditingPhotoItemId(null);
-    }
+  try {
+    setSaveMsg("Uploading photo...");
+
+    const imageUrl = await uploadPhoto(f);
+    await updateItemPhoto(editingPhotoItemId, imageUrl);
+  } catch (error: any) {
+    console.error("Upload list item photo error:", error);
+    alert(error?.message || "Failed to upload photo");
+    setSaveMsg("");
+  } finally {
+    e.target.value = "";
+    setEditingPhotoItemId(null);
   }
+}
 
   async function searchPhotoForItem(item: ItemRow) {
     setEditingPhotoItemId(item.id);
-    setImageSearch(item.name);
+
+    const parts = splitBrandModel(item.name);
+    const searchName = `${parts.brand} ${parts.model}`.trim();
+
+    setImageSearch(searchName);
     setSearchPanelOpen(true);
     setImageResults([]);
 
-    void searchOnlineImages(item.name);
+    void searchOnlineImages(searchName);
   }
 
   function selectOnlinePhoto(img: OnlineImage) {
@@ -567,8 +627,10 @@ const itemSearchName = useMemo(() => {
   async function onAdd() {
     if (!editable || !subId) return;
 
-    const nm = itemName.trim();
-    if (!nm) return;
+    const nm = fixtureName.trim();
+    const ft = fixtureType.trim();
+
+    if (!nm || !ft) return;
 
     const q = Math.max(1, Number(qty) || 1);
     setErr(null);
@@ -578,10 +640,11 @@ const itemSearchName = useMemo(() => {
         .from("items")
         .insert({
           subcategory_id: subId,
+          fixture_type: ft,
           name: nm,
           photo_url: photo || null,
         })
-        .select("id,name,photo_url,subcategory_id")
+        .select("id,name,photo_url,subcategory_id,fixture_type")
         .single();
 
       if (insItem.error) throw insItem.error;
@@ -613,12 +676,13 @@ const itemSearchName = useMemo(() => {
       setItems(nextItems);
       setStatsByItem(nextStats);
 
-      writeItemsCache(category, subcategory, {
+      writeFixturesCache(category, subcategory, {
         subId,
         items: nextItems,
         statsByItem: nextStats,
       });
 
+      setFixtureType("");
       setBrand("");
       setModel("");
       setQty(1);
@@ -640,14 +704,18 @@ const itemSearchName = useMemo(() => {
   async function onRename(itemId: string, current: string) {
     if (!editable) return;
 
-    const nextName = prompt("Rename item:", current);
+    const nextName = prompt("Rename fixture:", current);
     if (!nextName) return;
 
     const clean = nextName.trim();
     if (!clean) return;
 
     try {
-      const upd = await supabase.from("items").update({ name: clean }).eq("id", itemId);
+      const upd = await supabase
+        .from("items")
+        .update({ name: clean })
+        .eq("id", itemId);
+
       if (upd.error) throw upd.error;
 
       const nextItems = sortItemsByBrand(
@@ -656,7 +724,7 @@ const itemSearchName = useMemo(() => {
 
       setItems(nextItems);
 
-      writeItemsCache(category, subcategory, {
+      writeFixturesCache(category, subcategory, {
         subId,
         items: nextItems,
         statsByItem,
@@ -674,13 +742,18 @@ const itemSearchName = useMemo(() => {
 
   async function onDelete(itemId: string) {
     if (!editable) return;
-    if (!confirm("Delete this item?")) return;
+    if (!confirm("Delete this fixture?")) return;
 
     try {
-      const delUnits = await supabase.from("units").delete().eq("item_id", itemId);
+      const delUnits = await supabase
+        .from("units")
+        .delete()
+        .eq("item_id", itemId);
+
       if (delUnits.error) throw delUnits.error;
 
       const delItem = await supabase.from("items").delete().eq("id", itemId);
+
       if (delItem.error) throw delItem.error;
 
       const nextItems = items.filter((it) => it.id !== itemId);
@@ -690,7 +763,7 @@ const itemSearchName = useMemo(() => {
       setItems(nextItems);
       setStatsByItem(nextStats);
 
-      writeItemsCache(category, subcategory, {
+      writeFixturesCache(category, subcategory, {
         subId,
         items: nextItems,
         statsByItem: nextStats,
@@ -706,7 +779,7 @@ const itemSearchName = useMemo(() => {
     }
   }
 
-  function renderItemRow(it: ItemRow, isLast: boolean) {
+  function renderFixtureRow(it: ItemRow, isLast: boolean) {
     const stats = statsByItem[it.id] || {
       total: 0,
       available: 0,
@@ -724,14 +797,19 @@ const itemSearchName = useMemo(() => {
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
-            <Link href={detailsHref} className="flex items-start gap-3 min-w-0 flex-1 group">
+            <Link
+              href={detailsHref}
+              className="flex items-start gap-3 min-w-0 flex-1 group"
+            >
               <ItemPhoto
                 photo={it.photo_url}
                 name={it.name}
                 editable={editable}
                 menuOpen={listPhotoMenuItemId === it.id}
                 onToggleMenu={() =>
-                  setListPhotoMenuItemId((prev) => (prev === it.id ? null : it.id))
+                  setListPhotoMenuItemId((prev) =>
+                    prev === it.id ? null : it.id
+                  )
                 }
                 onUploadPhoto={() => {
                   setListPhotoMenuItemId(null);
@@ -747,10 +825,10 @@ const itemSearchName = useMemo(() => {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 min-w-0">
                   <h2
-                    className="truncate text-[10px] sm:text-[11px] font-semibold text-gray-900"
+                    className="truncate text-[10px] sm:text-[11px] text-gray-900"
                     style={{ lineHeight: 1.1 }}
                   >
-                    {it.name}
+                    {renderFixtureName(it.name)}
                   </h2>
 
                   {editable && (
@@ -784,27 +862,63 @@ const itemSearchName = useMemo(() => {
 
                 <div className="mt-2 sm:hidden">
                   <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
-                    <div className="text-[8px] font-semibold text-gray-500">Total</div>
-                    <div className="text-[8px] font-semibold text-gray-500">Available</div>
-                    <div className="text-[8px] font-semibold text-gray-500">In Use</div>
-                    <div className="text-[8px] font-semibold text-gray-500">Maintenance</div>
-                    <div className="text-[8px] font-semibold text-gray-500">In KSA</div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      Total
+                    </div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      Available
+                    </div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      In Use
+                    </div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      Maintenance
+                    </div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      In KSA
+                    </div>
 
-                    <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">{stats.total}</div>
-                    <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">{stats.available}</div>
-                    <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold">{stats.inUse}</div>
-                    <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">{stats.maintenance}</div>
-                    <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold">{stats.inKsa}</div>
+                    <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.total}
+                    </div>
+                    <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.available}
+                    </div>
+                    <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.inUse}
+                    </div>
+                    <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.maintenance}
+                    </div>
+                    <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.inKsa}
+                    </div>
                   </div>
                 </div>
 
                 <div className="mt-1 hidden sm:block">
                   <div className="flex flex-wrap gap-2">
                     <StatPill label="Total Qty" value={stats.total} />
-                    <StatPill label="Available Qty" value={stats.available} tone="green" />
-                    <StatPill label="In Use" value={stats.inUse} tone="blue" />
-                    <StatPill label="Maintenance" value={stats.maintenance} tone="yellow" />
-                    <StatPill label="In KSA" value={stats.inKsa} tone="purple" />
+                    <StatPill
+                      label="Available Qty"
+                      value={stats.available}
+                      tone="green"
+                    />
+                    <StatPill
+                      label="In Use"
+                      value={stats.inUse}
+                      tone="blue"
+                    />
+                    <StatPill
+                      label="Maintenance"
+                      value={stats.maintenance}
+                      tone="yellow"
+                    />
+                    <StatPill
+                      label="In KSA"
+                      value={stats.inKsa}
+                      tone="purple"
+                    />
                   </div>
                 </div>
               </div>
@@ -829,8 +943,8 @@ const itemSearchName = useMemo(() => {
   if (loading) {
     return (
       <div className="max-w-[1100px] mx-auto">
-        <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
-          Loading items...
+        <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
+          Loading fixtures...
         </div>
       </div>
     );
@@ -841,7 +955,9 @@ const itemSearchName = useMemo(() => {
       <div className="max-w-[1100px] mx-auto">
         <div className="bg-white border border-gray-200 rounded-2xl p-6 text-gray-900">
           <div className="font-semibold">Error</div>
+
           <div className="text-sm text-red-600 mt-1">{err}</div>
+
           <button
             onClick={() => void load(true)}
             className="mt-4 px-2.5 py-1 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
@@ -858,42 +974,84 @@ const itemSearchName = useMemo(() => {
       {editable && (
         <div className="bg-white border border-gray-200 rounded-2xl p-6">
           <div className="flex items-center justify-between gap-4 mb-4">
-            <h1 style={{ fontSize: "14px", fontWeight: 600, color: "#111827", lineHeight: 1.1 }}>
-              Add Items
+            <h1
+              style={{
+                fontSize: "14px",
+                fontWeight: 600,
+                color: "#111827",
+                lineHeight: 1.1,
+              }}
+            >
+              Add Fixtures
             </h1>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_96px_auto_auto] gap-3">
-            <input
-  value={brand}
-  onChange={(e) => {
-    setBrand(e.target.value);
-    if (!imageSearch) setImageSearch(`${e.target.value} ${model}`.trim());
-  }}
-  placeholder="Brand"
-  className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-black text-[12px] text-gray-900"
-/>
+          <div className="grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)_minmax(0,1fr)_96px_auto_auto] gap-3">
+            <select
+              value={fixtureType}
+              onChange={(e) => setFixtureType(e.target.value)}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-black text-[12px] text-gray-900 bg-white"
+            >
+              <option value="">Select Type</option>
 
-<input
-  value={model}
-  onChange={(e) => {
-    setModel(e.target.value);
-    if (!imageSearch) setImageSearch(`${brand} ${e.target.value}`.trim());
-  }}
-  placeholder="Model"
-  className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-black text-[12px] text-gray-900"
-/>
+              {FIXTURE_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
+            </select>
+
+            <input
+              value={brand}
+              onChange={(e) => {
+                setBrand(e.target.value);
+
+                if (!imageSearch) {
+                  setImageSearch(`${e.target.value} ${model}`.trim());
+                }
+              }}
+              placeholder="Brand (e.g. Ayrton)"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-black text-[12px] text-gray-900"
+            />
+
+            <input
+              value={model}
+              onChange={(e) => {
+                setModel(e.target.value);
+
+                if (!imageSearch) {
+                  setImageSearch(`${brand} ${e.target.value}`.trim());
+                }
+              }}
+              placeholder="Model (e.g. Cobra)"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-black text-[12px] text-gray-900"
+            />
 
             <input
               value={qty}
-              onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
+              onChange={(e) =>
+                setQty(Math.max(1, Number(e.target.value) || 1))
+              }
               type="number"
               min={1}
               className="w-full md:w-24 border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-black text-[12px] text-gray-900"
             />
 
-            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPickPhoto} />
-            <input ref={listPhotoFileRef} type="file" accept="image/*" className="hidden" onChange={onPickListItemPhoto} />
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={onPickPhoto}
+            />
+
+            <input
+              ref={listPhotoFileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={onPickListItemPhoto}
+            />
 
             <div id="add-photo-menu" className="relative">
               <button
@@ -902,6 +1060,7 @@ const itemSearchName = useMemo(() => {
                 className="flex w-full md:w-auto items-center justify-center gap-1 px-2 py-1.5 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
               >
                 {photo ? "Photo ✔" : "Add photo"}
+
                 <ChevronDown size={12} />
               </button>
 
@@ -923,8 +1082,11 @@ const itemSearchName = useMemo(() => {
                     onClick={() => {
                       setPhotoMenuOpen(false);
                       setSearchPanelOpen(true);
-                      setImageSearch(itemSearchName);
-                      setTimeout(() => void searchOnlineImages(itemSearchName), 50);
+                      setImageSearch(fixtureSearchName);
+
+                      setTimeout(() => {
+                        void searchOnlineImages(fixtureSearchName);
+                      }, 50);
                     }}
                     className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
                   >
@@ -945,8 +1107,17 @@ const itemSearchName = useMemo(() => {
 
           {photo ? (
             <div className="mt-3 flex items-center gap-3">
-              <img src={photo} alt="Selected" className="h-14 w-14 rounded-lg object-cover border border-gray-200" />
-              <button type="button" onClick={() => setPhoto(null)} className="text-[10px] text-red-500 hover:text-black">
+              <img
+                src={photo}
+                alt="Selected"
+                className="h-14 w-14 rounded-lg object-cover border border-gray-200"
+              />
+
+              <button
+                type="button"
+                onClick={() => setPhoto(null)}
+                className="text-[10px] text-red-500 hover:text-black"
+              >
                 Remove photo
               </button>
             </div>
@@ -955,7 +1126,9 @@ const itemSearchName = useMemo(() => {
           {searchPanelOpen ? (
             <div className="mt-4 rounded-2xl border border-gray-200 p-3 relative z-50 bg-white">
               <div className="mb-3 flex items-center justify-between gap-2">
-                <div className="text-[12px] font-semibold text-gray-900">Search photo online</div>
+                <div className="text-[12px] font-semibold text-gray-900">
+                  Search photo online
+                </div>
 
                 <button
                   type="button"
@@ -994,7 +1167,11 @@ const itemSearchName = useMemo(() => {
                 </button>
               </div>
 
-              {searchingImages ? <div className="mt-3 text-xs text-gray-500">Searching images...</div> : null}
+              {searchingImages ? (
+                <div className="mt-3 text-xs text-gray-500">
+                  Searching images...
+                </div>
+              ) : null}
 
               {imageResults.length > 0 ? (
                 <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-6">
@@ -1012,7 +1189,11 @@ const itemSearchName = useMemo(() => {
                         className="overflow-hidden rounded-lg border border-gray-200 hover:border-blue-400"
                         title={img.title || "Select photo"}
                       >
-                        <img src={thumb} alt={img.title || "Online image"} className="aspect-square w-full object-cover" />
+                        <img
+                          src={thumb}
+                          alt={img.title || "Online image"}
+                          className="aspect-square w-full object-cover"
+                        />
                       </button>
                     );
                   })}
@@ -1021,27 +1202,42 @@ const itemSearchName = useMemo(() => {
             </div>
           ) : null}
 
-          {saveMsg ? <div className="mt-3 text-xs text-gray-500">{saveMsg}</div> : null}
+          {saveMsg ? (
+            <div className="mt-3 text-xs text-gray-500">{saveMsg}</div>
+          ) : null}
         </div>
       )}
 
-      {items.length === 0 ? (
-        <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
-          No items yet.
-        </div>
-      ) : (
-        brandGroups.map((group) => (
-          <div key={group.brand} className="bg-white border border-gray-200 rounded-2xl p-6">
-            <div className="mb-5">
-              <h2 className="text-[13px] font-semibold text-gray-900">{group.brand}</h2>
-            </div>
-
-            {group.items.map((it, index) =>
-              renderItemRow(it, index === group.items.length - 1)
-            )}
+      {groupedItems.map((group) => (
+        <div
+          key={group.type}
+          className="bg-white border border-gray-200 rounded-2xl p-6"
+        >
+          <div className="mb-5">
+            <h2 className="text-[13px] font-semibold text-gray-900">
+              {group.type}
+            </h2>
           </div>
-        ))
-      )}
+
+          {group.items.map((it, index) =>
+            renderFixtureRow(it, index === group.items.length - 1)
+          )}
+        </div>
+      ))}
+
+      {uncategorizedItems.length > 0 ? (
+        <div className="bg-white border border-gray-200 rounded-2xl p-6">
+          <div className="mb-5">
+            <h2 className="text-[13px] font-semibold text-gray-900">
+              Other Fixtures
+            </h2>
+          </div>
+
+          {uncategorizedItems.map((it, index) =>
+            renderFixtureRow(it, index === uncategorizedItems.length - 1)
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }
