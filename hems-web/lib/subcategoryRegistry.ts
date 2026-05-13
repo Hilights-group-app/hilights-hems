@@ -6,8 +6,8 @@ export async function getSubcategoryType(
   subSlug: string
 ): Promise<SubcategoryType> {
   if (typeof window === "undefined") {
-    return "fixture_units";
-  }
+  return "matrix";
+}
 
   const catalog = await readCatalog();
   const cats = catalog?.categories ?? [];

@@ -1,36 +1,59 @@
 "use client";
 
-console.log("MATRIX COMPONENT LOADED");
-
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
-import { Trash2, Pencil } from "lucide-react";
+import { Trash2, ChevronDown } from "lucide-react";
 
-type MatrixRow = {
-  id: string;
-  model_id: string;
-  size: string;
-  qty: number;
-  photo_data?: string | null;
-};
-
-type MatrixModel = {
+type MatrixItemRow = {
   id: string;
   category_id: string;
   subcategory_id: string;
   name: string;
-  model_type?: "length_based" | "component" | "rack";
-  photo_data?: string | null;
-  matrix_rows?: MatrixRow[];
-  created_at?: string;
+  photo_data: string | null;
+  item_type: "unit" | "cable" | null;
+  total_qty: number | null;
+  in_use_qty: number | null;
+  maintenance_qty: number | null;
+  in_ksa_qty: number | null;
 };
 
-async function uploadPhoto(file: File): Promise<string> {
+type CableRow = {
+  id: string;
+  item_id: string;
+  cable_length: string;
+  total_qty: number | null;
+  in_use_qty: number | null;
+  maintenance_qty: number | null;
+  in_ksa_qty: number | null;
+};
+
+type ItemStats = {
+  total: number;
+  available: number;
+  inUse: number;
+  maintenance: number;
+  inKsa: number;
+};
+
+type OnlineImage = {
+  title?: string;
+  image?: string;
+  original?: string;
+  thumbnail?: string;
+};
+
+type ItemsCache = {
+  categoryId: string | null;
+  subcategoryId: string | null;
+  items: MatrixItemRow[];
+  statsByItem: Record<string, ItemStats>;
+};
+
+async function uploadPhoto(file: File) {
   const supabase = createClient();
 
   const ext = file.name.split(".").pop() || "jpg";
-
   const fileName = `${Date.now()}-${Math.random()
     .toString(36)
     .slice(2)}.${ext}`;
@@ -56,157 +79,471 @@ function clampQty(v: any) {
   return Math.floor(n);
 }
 
-function getRowLabel(modelType?: string) {
-  if (modelType === "component") return "Item";
-  if (modelType === "rack") return "Component";
-  return "Specification";
+function statsFromItem(item: MatrixItemRow): ItemStats {
+  const total = clampQty(item.total_qty ?? 0);
+  const inUse = clampQty(item.in_use_qty ?? 0);
+  const maintenance = clampQty(item.maintenance_qty ?? 0);
+  const inKsa = clampQty(item.in_ksa_qty ?? 0);
+  const available = Math.max(0, total - inUse - maintenance - inKsa);
+
+  return { total, available, inUse, maintenance, inKsa };
 }
 
-function getRowPlaceholder(modelType?: string) {
-  if (modelType === "component") return "Enter item";
-  if (modelType === "rack") return "Enter component";
-  return "Enter specification";
+function cableStats(row: CableRow): ItemStats {
+  const total = clampQty(row.total_qty ?? 0);
+  const inUse = clampQty(row.in_use_qty ?? 0);
+  const maintenance = clampQty(row.maintenance_qty ?? 0);
+  const inKsa = clampQty(row.in_ksa_qty ?? 0);
+  const available = Math.max(0, total - inUse - maintenance - inKsa);
+
+  return { total, available, inUse, maintenance, inKsa };
+}
+
+function splitBrandModel(name: string) {
+  const clean = name.trim();
+
+  if (clean.includes(" - ")) {
+    const parts = clean.split(" - ");
+    return {
+      brand: (parts[0] || "").trim(),
+      model: parts.slice(1).join(" - ").trim(),
+    };
+  }
+
+  const parts = clean.split(/\s+/);
+  return {
+    brand: parts[0] || "",
+    model: parts.slice(1).join(" "),
+  };
+}
+
+function renderItemName(name: string, itemType?: "unit" | "cable" | null) {
+  if (itemType === "cable") {
+    return <span className="font-bold">{name}</span>;
+  }
+
+  const parts = splitBrandModel(name);
+
+  return (
+    <>
+      <span className="font-bold">{parts.brand}</span>
+      {parts.model ? <span>{` ${parts.model}`}</span> : null}
+    </>
+  );
+}
+
+function sortItemsByBrand(items: MatrixItemRow[]) {
+  return [...items].sort((a, b) => {
+    const aName =
+      a.item_type === "cable" ? a.name : splitBrandModel(a.name).brand;
+    const bName =
+      b.item_type === "cable" ? b.name : splitBrandModel(b.name).brand;
+
+    const brandCompare = aName.localeCompare(bName, undefined, {
+      sensitivity: "base",
+      numeric: true,
+    });
+
+    if (brandCompare !== 0) return brandCompare;
+
+    return a.name.localeCompare(b.name, undefined, {
+      sensitivity: "base",
+      numeric: true,
+    });
+  });
+}
+
+function groupItemsByBrand(items: MatrixItemRow[]) {
+  const sorted = sortItemsByBrand(items);
+  const groups: { brand: string; items: MatrixItemRow[] }[] = [];
+
+  for (const item of sorted) {
+    const brand =
+      item.item_type === "cable"
+        ? "Cables"
+        : splitBrandModel(item.name).brand || "Other";
+
+    const last = groups[groups.length - 1];
+
+    if (last && last.brand.toLowerCase() === brand.toLowerCase()) {
+      last.items.push(item);
+    } else {
+      groups.push({ brand, items: [item] });
+    }
+  }
+
+  return groups;
+}
+
+function cacheKeyFor(categoryId: string | null, subcategoryId: string | null) {
+  return `hems:${categoryId || "no-cat"}:${subcategoryId || "no-sub"}:matrix-v2`;
+}
+
+function readItemsCache(
+  categoryId: string | null,
+  subcategoryId: string | null
+): ItemsCache | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = sessionStorage.getItem(cacheKeyFor(categoryId, subcategoryId));
+    return raw ? (JSON.parse(raw) as ItemsCache) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeItemsCache(
+  categoryId: string | null,
+  subcategoryId: string | null,
+  data: ItemsCache
+) {
+  if (typeof window === "undefined") return;
+
+  try {
+    sessionStorage.setItem(
+      cacheKeyFor(categoryId, subcategoryId),
+      JSON.stringify(data)
+    );
+  } catch {}
+}
+
+function StatPill({
+  label,
+  value,
+  tone = "gray",
+}: {
+  label: string;
+  value: string | number;
+  tone?: "gray" | "green" | "blue" | "yellow" | "purple";
+}) {
+  const cls =
+    tone === "green"
+      ? "bg-green-100 text-black"
+      : tone === "blue"
+      ? "bg-blue-100 text-black"
+      : tone === "yellow"
+      ? "bg-yellow-100 text-black"
+      : tone === "purple"
+      ? "bg-purple-100 text-black"
+      : "bg-gray-100 text-black";
+
+  return (
+    <span
+      className={`px-2 py-1 rounded-lg text-[8px] font-semibold whitespace-nowrap ${cls}`}
+    >
+      {label}: {value}
+    </span>
+  );
+}
+
+function ItemPhoto({
+  photo,
+  name,
+  editable,
+  menuOpen,
+  onToggleMenu,
+  onUploadPhoto,
+  onSearchPhoto,
+  big = false,
+}: {
+  photo?: string | null;
+  name: string;
+  editable?: boolean;
+  menuOpen?: boolean;
+  onToggleMenu?: () => void;
+  onUploadPhoto?: () => void;
+  onSearchPhoto?: () => void;
+  big?: boolean;
+}) {
+  return (
+    <div
+      className={`relative flex items-center justify-center ${
+        big ? "h-14 w-14 min-w-[56px]" : "h-14 w-14 min-w-[56px]"
+      }`}
+    >
+      {photo ? (
+        <img
+          src={photo}
+          alt={name}
+          className="h-full w-full rounded-xl object-cover bg-white"
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center rounded-xl bg-white text-[10px] text-gray-400">
+          No photo
+        </div>
+      )}
+
+      {editable ? (
+        <div className="absolute right-0 top-0 z-30" data-list-photo-menu="true">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onToggleMenu?.();
+            }}
+            className="flex h-4 w-4 items-center justify-center rounded-full bg-white/90 text-[10px] text-red-500 shadow hover:text-black"
+            title="Photo options"
+          >
+            ✎
+          </button>
+
+          {menuOpen ? (
+            <div className="absolute left-0 top-full z-[9999] mt-1 w-36 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onUploadPhoto?.();
+                }}
+                className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
+              >
+                Upload photo
+              </button>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onSearchPhoto?.();
+                }}
+                className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
+              >
+                Search photo
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export default function SubcategoryClientMatrix({
-  categoryId,
-  subcategoryId,
+  category,
+  subcategory,
 }: {
-  categoryId: string | null;
-  subcategoryId: string | null;
+  category: string;
+  subcategory: string;
 }) {
   const supabase = createClient();
   const editable = canEditInventory();
 
-  const [models, setModels] = useState<MatrixModel[]>([]);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const listPhotoFileRef = useRef<HTMLInputElement | null>(null);
+
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const [categoryId, setCategoryId] = useState<string | null>(null);
+  const [subcategoryId, setSubcategoryId] = useState<string | null>(null);
+
+  const [items, setItems] = useState<MatrixItemRow[]>([]);
+  const [statsByItem, setStatsByItem] = useState<Record<string, ItemStats>>({});
+  const [cableRowsByItem, setCableRowsByItem] = useState<
+    Record<string, CableRow[]>
+  >({});
+
+  const [itemType, setItemType] = useState<"unit" | "cable">("unit");
+  const [brand, setBrand] = useState("");
+  const [model, setModel] = useState("");
+  const [cableModel, setCableModel] = useState("");
+  const [qty, setQty] = useState<number>(1);
+
+  const [photo, setPhoto] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState("");
 
-  const [resolvedCategoryId, setResolvedCategoryId] = useState<string | null>(
-    categoryId ?? null
-  );
+  const [photoMenuOpen, setPhotoMenuOpen] = useState(false);
+  const [searchPanelOpen, setSearchPanelOpen] = useState(false);
+  const [imageSearch, setImageSearch] = useState("");
+  const [imageResults, setImageResults] = useState<OnlineImage[]>([]);
+  const [searchingImages, setSearchingImages] = useState(false);
 
-  const [newName, setNewName] = useState("");
-  const [newPhoto, setNewPhoto] = useState<string | null>(null);
-  const [modelType, setModelType] = useState<"length_based" | "component" | "rack">(
-    "length_based"
-  );
-  const addPhotoRef = useRef<HTMLInputElement | null>(null);
+  const [listPhotoMenuItemId, setListPhotoMenuItemId] =
+    useState<string | null>(null);
+  const [editingPhotoItemId, setEditingPhotoItemId] =
+    useState<string | null>(null);
 
-  async function resolveCategoryId(subId: string) {
-    if (categoryId) {
-      setResolvedCategoryId(categoryId);
-      return categoryId;
+  const itemName = useMemo(() => {
+    if (itemType === "cable") return cableModel.trim();
+
+    const b = brand.trim();
+    const m = model.trim();
+
+    if (b && m) return `${b} - ${m}`;
+    if (b) return b;
+    return m;
+  }, [brand, model, cableModel, itemType]);
+
+  const itemSearchName = useMemo(() => {
+    if (itemType === "cable") return cableModel.trim();
+
+    const b = brand.trim();
+    const m = model.trim();
+
+    if (b && m) return `${b} ${m}`;
+    if (b) return b;
+    return m;
+  }, [brand, model, cableModel, itemType]);
+
+  const canAdd = useMemo(() => {
+    if (itemType === "cable") {
+      return editable && itemName.trim().length > 0;
     }
 
-    const { data, error } = await supabase
-      .from("subcategories")
-      .select("category_id")
-      .eq("id", subId)
+    return editable && itemName.trim().length > 0 && qty >= 1;
+  }, [editable, itemName, qty, itemType]);
+
+  const brandGroups = useMemo(() => {
+    return groupItemsByBrand(items);
+  }, [items]);
+
+  async function resolveIds() {
+    const catRes = await supabase
+      .from("categories")
+      .select("id")
+      .eq("slug", category)
       .single();
 
-    if (error || !data?.category_id) {
-      throw new Error("Failed to resolve category for this matrix subcategory.");
+    if (catRes.error || !catRes.data?.id) {
+      throw new Error("Category not found");
     }
 
-    setResolvedCategoryId(data.category_id as string);
-    return data.category_id as string;
+    const subRes = await supabase
+      .from("subcategories")
+      .select("id")
+      .eq("category_id", catRes.data.id)
+      .eq("slug", subcategory)
+      .single();
+
+    if (subRes.error || !subRes.data?.id) {
+      throw new Error("Subcategory not found");
+    }
+
+    return {
+      categoryId: catRes.data.id as string,
+      subcategoryId: subRes.data.id as string,
+    };
   }
 
-  async function loadModels(subId: string) {
-    setLoading(true);
-    setErrorMsg(null);
-
+  async function refreshData() {
     try {
-      const { data, error } = await supabase
+      const ids = await resolveIds();
+
+      setCategoryId(ids.categoryId);
+      setSubcategoryId(ids.subcategoryId);
+
+      const res = await supabase
         .from("matrix_models")
-        .select(
-          "id, category_id, subcategory_id, name, model_type, photo_data, created_at, matrix_rows(id, model_id, size, qty, photo_data)"
-        )
-        .eq("subcategory_id", subId)
-        .order("created_at", { ascending: false });
+        .select("*")
+        .eq("subcategory_id", ids.subcategoryId);
 
-      if (error) {
-        console.error("loadModels relation query error", error);
+      if (res.error) throw res.error;
 
-        const fallback = await supabase
-          .from("matrix_models")
-          .select("id, category_id, subcategory_id, name, model_type, photo_data, created_at")
-          .eq("subcategory_id", subId)
-          .order("created_at", { ascending: false });
+      const list = sortItemsByBrand((res.data || []) as MatrixItemRow[]);
 
-        if (fallback.error) {
-          console.error("loadModels fallback error", fallback.error);
-          setModels([]);
-          setErrorMsg(fallback.error.message || "Failed to load matrix models.");
-          setLoading(false);
-          return;
-        }
+      const stats: Record<string, ItemStats> = {};
 
-        const base = (fallback.data ?? []) as MatrixModel[];
-
-        const withRows = await Promise.all(
-          base.map(async (m) => {
-            const rres = await supabase
-              .from("matrix_rows")
-              .select("id, model_id, size, qty, photo_data")
-              .eq("model_id", m.id);
-
-            return {
-              ...m,
-              matrix_rows: (rres.data ?? []) as MatrixRow[],
-            };
-          })
-        );
-
-        setModels(withRows);
-        setLoading(false);
-        return;
+      for (const item of list) {
+        stats[item.id] = statsFromItem(item);
       }
 
-      setModels((data ?? []) as MatrixModel[]);
+      const cableItems = list.filter((x) => x.item_type === "cable");
+
+      if (cableItems.length > 0) {
+        const rowsRes = await supabase
+          .from("matrix_rows")
+          .select("*")
+          .in(
+            "item_id",
+            cableItems.map((x) => x.id)
+          );
+
+        if (rowsRes.error) throw rowsRes.error;
+
+        const grouped: Record<string, CableRow[]> = {};
+
+        for (const row of (rowsRes.data || []) as CableRow[]) {
+          if (!grouped[row.item_id]) grouped[row.item_id] = [];
+          grouped[row.item_id].push(row);
+        }
+
+        setCableRowsByItem(grouped);
+      } else {
+        setCableRowsByItem({});
+      }
+
+      setItems(list);
+      setStatsByItem(stats);
+
+      writeItemsCache(ids.categoryId, ids.subcategoryId, {
+        categoryId: ids.categoryId,
+        subcategoryId: ids.subcategoryId,
+        items: list,
+        statsByItem: stats,
+      });
     } catch (e: any) {
-      console.error("loadModels unexpected error", e);
-      setErrorMsg(e?.message || "Failed to load matrix models.");
-      setModels([]);
+      setErr(e?.message || "Failed to load");
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => {
-    let mounted = true;
+  async function load(force = false) {
+    setErr(null);
 
-    async function boot() {
-      if (!subcategoryId) {
-        setModels([]);
+    if (
+      !force &&
+      typeof window !== "undefined" &&
+      categoryId &&
+      subcategoryId
+    ) {
+      const cached = readItemsCache(categoryId, subcategoryId);
+
+      if (cached) {
+        setItems(cached.items || []);
+        setStatsByItem(cached.statsByItem || {});
         setLoading(false);
-        setResolvedCategoryId(categoryId ?? null);
+
+        void refreshData();
         return;
-      }
-
-      try {
-        const catId = await resolveCategoryId(subcategoryId);
-        if (!mounted) return;
-        setResolvedCategoryId(catId);
-        await loadModels(subcategoryId);
-      } catch (e: any) {
-        if (!mounted) return;
-        setErrorMsg(e?.message || "Failed to prepare matrix page.");
-        setLoading(false);
       }
     }
 
-    void boot();
+    setLoading(items.length === 0);
+    await refreshData();
+  }
 
-    return () => {
-      mounted = false;
-    };
-  }, [subcategoryId, categoryId]);
+  useEffect(() => {
+    void load(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [category, subcategory]);
 
-  async function onPickNewPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      const addMenu = document.getElementById("add-photo-menu");
+      const listMenu = target.closest("[data-list-photo-menu='true']");
+
+      if (addMenu && !addMenu.contains(target)) {
+        setPhotoMenuOpen(false);
+      }
+
+      if (!listMenu) {
+        setListPhotoMenuItemId(null);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+
+    return () =>
+      document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     if (!editable) return;
 
     const f = e.target.files?.[0];
@@ -214,785 +551,1016 @@ export default function SubcategoryClientMatrix({
 
     try {
       setSaveMsg("Uploading photo...");
-
-const imageUrl = await uploadPhoto(f);
-
-setNewPhoto(imageUrl);
+      const imageUrl = await uploadPhoto(f);
+      setPhoto(imageUrl);
+      setSaveMsg("Photo selected");
+      setTimeout(() => setSaveMsg(""), 1500);
+    } catch (e: any) {
+      alert(e?.message || "Photo failed");
+      setSaveMsg("");
     } finally {
       e.target.value = "";
     }
   }
 
-  async function addModel() {
-    if (!editable) {
-      setErrorMsg("You do not have permission to add models.");
+  async function searchOnlineImages(customQuery?: string) {
+    const q = (customQuery || imageSearch || itemSearchName).trim();
+
+    if (!q) {
+      alert("Write item name first");
       return;
     }
 
-    setErrorMsg(null);
-
-    if (!subcategoryId) {
-      setErrorMsg("Subcategory is not ready yet.");
-      return;
-    }
-
-    const clean = newName.trim();
-    if (!clean) {
-      setErrorMsg("Please enter model name.");
-      return;
-    }
-
-    setSubmitting(true);
+    setSearchPanelOpen(true);
+    setSearchingImages(true);
+    setImageResults([]);
 
     try {
-      const catId = resolvedCategoryId ?? (await resolveCategoryId(subcategoryId));
+      const res = await fetch(`/api/google-image?q=${encodeURIComponent(q)}`);
+      const data = await res.json();
 
-      const { data: created, error } = await supabase
-        .from("matrix_models")
-        .insert({
-          category_id: catId,
-          subcategory_id: subcategoryId,
-          name: clean,
-          model_type: modelType,
-          photo_data: modelType === "component" ? null : newPhoto || null,
-        })
-        .select("id, category_id, subcategory_id, name, model_type, photo_data, created_at")
-        .single();
+      const results = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.images_results)
+        ? data.images_results
+        : [];
 
-      if (error || !created) {
-        console.error("addModel error", error);
-        setErrorMsg(error?.message || "Failed to add model.");
-        return;
-      }
-
-      const firstRow = await supabase.from("matrix_rows").insert({
-        model_id: created.id,
-        size: "",
-        qty: 0,
-        photo_data: null,
-      });
-
-      if (firstRow.error) {
-        console.error("add first row error", firstRow.error);
-        setErrorMsg(firstRow.error.message || "Model added, but failed to create first row.");
-        return;
-      }
-
-      setNewName("");
-      setNewPhoto(null);
-      setModelType("length_based");
-      setSaveMsg("Model added");
-
-      setTimeout(() => {
-        setSaveMsg((prev) => (prev === "Model added" ? "" : prev));
-      }, 1500);
-
-      await loadModels(subcategoryId);
-    } catch (e: any) {
-      console.error("addModel unexpected error", e);
-      setErrorMsg(e?.message || "Failed to add model.");
+      setImageResults(results);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to search images");
     } finally {
-      setSubmitting(false);
+      setSearchingImages(false);
+    }
+  }
+  
+  async function updateItemPhoto(itemId: string, imageUrl: string) {
+    const { error } = await supabase
+      .from("matrix_models")
+      .update({ photo_data: imageUrl })
+      .eq("id", itemId);
+
+    if (error) {
+      alert("Failed to update photo");
+      return;
+    }
+
+    const nextItems = items.map((it) =>
+      it.id === itemId ? { ...it, photo_data: imageUrl } : it
+    );
+
+    setItems(nextItems);
+    setSaveMsg("Photo updated");
+    setTimeout(() => setSaveMsg(""), 1500);
+  }
+
+  async function onPickListItemPhoto(
+    e: React.ChangeEvent<HTMLInputElement>
+  ) {
+    if (!editingPhotoItemId) return;
+
+    const f = e.target.files?.[0];
+    if (!f) return;
+
+    try {
+      const imageUrl = await uploadPhoto(f);
+      await updateItemPhoto(editingPhotoItemId, imageUrl);
+    } catch (e: any) {
+      alert(e?.message || "Upload failed");
+    } finally {
+      e.target.value = "";
+      setEditingPhotoItemId(null);
     }
   }
 
-  async function renameModel(modelId: string, current: string) {
+  async function searchPhotoForItem(item: MatrixItemRow) {
+    setEditingPhotoItemId(item.id);
+
+    const searchName =
+      item.item_type === "cable"
+        ? item.name
+        : `${splitBrandModel(item.name).brand} ${
+            splitBrandModel(item.name).model
+          }`.trim();
+
+    setImageSearch(searchName);
+    setSearchPanelOpen(true);
+    setImageResults([]);
+
+    void searchOnlineImages(searchName);
+  }
+
+  function selectOnlinePhoto(img: OnlineImage) {
+    const imageUrl = img.original || img.image || img.thumbnail;
+    if (!imageUrl) return;
+
+    if (editingPhotoItemId) {
+      void updateItemPhoto(editingPhotoItemId, imageUrl);
+      setEditingPhotoItemId(null);
+    } else {
+      setPhoto(imageUrl);
+    }
+
+    setSearchPanelOpen(false);
+    setImageResults([]);
+    setSaveMsg("Photo selected");
+    setTimeout(() => setSaveMsg(""), 1500);
+  }
+
+  async function onAdd() {
+    if (!editable || !categoryId || !subcategoryId) return;
+
+    const nm = itemName.trim();
+    if (!nm) return;
+
+    const q = itemType === "cable" ? 0 : Math.max(1, Number(qty) || 1);
+
+    setErr(null);
+
+    try {
+      const ins = await supabase
+        .from("matrix_models")
+        .insert({
+          category_id: categoryId,
+          subcategory_id: subcategoryId,
+          name: nm,
+          item_type: itemType,
+          photo_data: photo || null,
+          total_qty: q,
+          in_use_qty: 0,
+          maintenance_qty: 0,
+          in_ksa_qty: 0,
+        })
+        .select("*")
+        .single();
+
+      if (ins.error) throw ins.error;
+
+      const newItem = ins.data as MatrixItemRow;
+      const nextItems = sortItemsByBrand([...items, newItem]);
+
+      const nextStats = {
+        ...statsByItem,
+        [newItem.id]: statsFromItem(newItem),
+      };
+
+      setItems(nextItems);
+      setStatsByItem(nextStats);
+
+      if (newItem.item_type === "cable") {
+        setCableRowsByItem((prev) => ({
+          ...prev,
+          [newItem.id]: [],
+        }));
+      }
+
+      writeItemsCache(categoryId, subcategoryId, {
+        categoryId,
+        subcategoryId,
+        items: nextItems,
+        statsByItem: nextStats,
+      });
+
+      setBrand("");
+      setModel("");
+      setCableModel("");
+      setQty(1);
+      setPhoto(null);
+      setImageSearch("");
+      setImageResults([]);
+      setSearchPanelOpen(false);
+      setPhotoMenuOpen(false);
+      setSaveMsg("Item added");
+
+      setTimeout(() => {
+        setSaveMsg((prev) => (prev === "Item added" ? "" : prev));
+      }, 1500);
+    } catch (e: any) {
+      setErr(e?.message || "Add failed");
+    }
+  }
+
+  async function addCableLength(itemId: string) {
     if (!editable) return;
 
-    const nextName = prompt("Model name:", current);
+    const length = prompt("Cable length example: 5m / 10m / 20m");
+    if (!length?.trim()) return;
+
+    const totalValue = prompt("Total Qty");
+    const total = clampQty(totalValue);
+
+    const { data, error } = await supabase
+      .from("matrix_rows")
+      .insert({
+        item_id: itemId,
+        model_id: itemId,
+        cable_length: length.trim(),
+        total_qty: total,
+        in_use_qty: 0,
+        maintenance_qty: 0,
+        in_ksa_qty: 0,
+      })
+      .select("*")
+      .single();
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    setCableRowsByItem((prev) => ({
+      ...prev,
+      [itemId]: [...(prev[itemId] || []), data as CableRow],
+    }));
+  }
+  
+  
+  
+  async function updateCableQty(
+  rowId: string,
+  itemId: string,
+  field: "total_qty" | "in_use_qty" | "maintenance_qty" | "in_ksa_qty",
+  current: number | null
+) {
+  if (!editable) return;
+
+  const nextValue = prompt("Edit quantity:", String(current ?? 0));
+  if (nextValue === null) return;
+
+  const clean = clampQty(nextValue);
+
+  const { error } = await supabase
+    .from("matrix_rows")
+    .update({ [field]: clean })
+    .eq("id", rowId);
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  setCableRowsByItem((prev) => ({
+    ...prev,
+    [itemId]: (prev[itemId] || []).map((row) =>
+      row.id === rowId ? { ...row, [field]: clean } : row
+    ),
+  }));
+}
+
+async function updateCableLength(rowId: string, itemId: string, current: string) {
+  if (!editable) return;
+
+  const nextLength = prompt("Edit cable length:", current);
+  if (!nextLength) return;
+
+  const clean = nextLength.trim();
+  if (!clean) return;
+
+  const { error } = await supabase
+    .from("matrix_rows")
+    .update({ cable_length: clean })
+    .eq("id", rowId);
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  setCableRowsByItem((prev) => ({
+    ...prev,
+    [itemId]: (prev[itemId] || []).map((row) =>
+      row.id === rowId ? { ...row, cable_length: clean } : row
+    ),
+  }));
+}
+  
+  async function onRename(itemId: string, current: string) {
+    if (!editable) return;
+
+    const nextName = prompt("Rename item:", current);
     if (!nextName) return;
 
     const clean = nextName.trim();
     if (!clean) return;
 
-    const { error } = await supabase
-      .from("matrix_models")
-      .update({ name: clean })
-      .eq("id", modelId);
+    try {
+      const upd = await supabase
+        .from("matrix_models")
+        .update({ name: clean })
+        .eq("id", itemId);
 
-    if (error) {
-      console.error("renameModel error", error);
-      alert("Rename failed");
-      return;
-    }
+      if (upd.error) throw upd.error;
 
-    if (subcategoryId) {
-      setSaveMsg("Model renamed");
+      const nextItems = sortItemsByBrand(
+        items.map((it) => (it.id === itemId ? { ...it, name: clean } : it))
+      );
+
+      setItems(nextItems);
+
+      if (categoryId && subcategoryId) {
+        writeItemsCache(categoryId, subcategoryId, {
+          categoryId,
+          subcategoryId,
+          items: nextItems,
+          statsByItem,
+        });
+      }
+
+      setSaveMsg("Item renamed");
+
       setTimeout(() => {
-        setSaveMsg((prev) => (prev === "Model renamed" ? "" : prev));
+        setSaveMsg((prev) => (prev === "Item renamed" ? "" : prev));
       }, 1500);
-
-      await loadModels(subcategoryId);
+    } catch (e: any) {
+      alert(e?.message || "Rename failed");
     }
   }
 
-  async function deleteModel(modelId: string) {
+  async function onDelete(itemId: string) {
     if (!editable) return;
-    if (!confirm("Delete this model?")) return;
+    if (!confirm("Delete this item?")) return;
 
-    const r = await supabase.from("matrix_rows").delete().eq("model_id", modelId);
-    if (r.error) console.warn("delete rows warn", r.error);
+    try {
+      const del = await supabase
+        .from("matrix_models")
+        .delete()
+        .eq("id", itemId);
 
-    const { error } = await supabase.from("matrix_models").delete().eq("id", modelId);
-    if (error) {
-      console.error("deleteModel error", error);
-      alert("Delete failed");
-      return;
-    }
+      if (del.error) throw del.error;
 
-    if (subcategoryId) {
-      setSaveMsg("Model deleted");
+      const nextItems = items.filter((it) => it.id !== itemId);
+      const nextStats = { ...statsByItem };
+      delete nextStats[itemId];
+
+      const nextCableRows = { ...cableRowsByItem };
+      delete nextCableRows[itemId];
+
+      setItems(nextItems);
+      setStatsByItem(nextStats);
+      setCableRowsByItem(nextCableRows);
+
+      if (categoryId && subcategoryId) {
+        writeItemsCache(categoryId, subcategoryId, {
+          categoryId,
+          subcategoryId,
+          items: nextItems,
+          statsByItem: nextStats,
+        });
+      }
+
+      setSaveMsg("Item deleted");
+
       setTimeout(() => {
-        setSaveMsg((prev) => (prev === "Model deleted" ? "" : prev));
+        setSaveMsg((prev) => (prev === "Item deleted" ? "" : prev));
       }, 1500);
-
-      await loadModels(subcategoryId);
+    } catch (e: any) {
+      alert(e?.message || "Delete failed");
     }
   }
 
-  async function changeModelPhoto(modelId: string, file: File) {
-    if (!editable) return;
+  function renderItemRow(it: MatrixItemRow, isLast: boolean) {
+    const stats = statsByItem[it.id] || statsFromItem(it);
 
-    const imageUrl = await uploadPhoto(file);
+    if (it.item_type === "cable") {
+      return (
+        <div
+          key={it.id}
+          className={!isLast ? "border-b border-gray-100 pb-8 mb-8" : ""}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-center gap-7 min-w-0">
+              <ItemPhoto
+                photo={it.photo_data}
+                name={it.name}
+                editable={editable}
+                big
+                menuOpen={listPhotoMenuItemId === it.id}
+                onToggleMenu={() =>
+                  setListPhotoMenuItemId((prev) =>
+                    prev === it.id ? null : it.id
+                  )
+                }
+                onUploadPhoto={() => {
+                  setListPhotoMenuItemId(null);
+                  setEditingPhotoItemId(it.id);
+                  listPhotoFileRef.current?.click();
+                }}
+                onSearchPhoto={() => {
+                  setListPhotoMenuItemId(null);
+                  void searchPhotoForItem(it);
+                }}
+              />
 
-const { error } = await supabase
-  .from("matrix_models")
-  .update({ photo_data: imageUrl })
-  .eq("id", modelId);
+              <div className="relative min-w-0">
+                <h2
+                  className="truncate text-[12px] sm:text-[18px] font-black uppercase tracking-tight text-gray-900"
+                  style={{ lineHeight: 1.05 }}
+                >
+                  {renderItemName(it.name, it.item_type)}
+                </h2>
 
-    if (error) {
-      console.error("changeModelPhoto error", error);
-      alert("Failed to update photo");
-      return;
+                {editable ? (
+  <button
+    type="button"
+    onClick={(e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onRename(it.id, it.name);
+    }}
+    className="absolute -top-4 right-0 text-red-500 text-[12px] hover:text-black"
+    title="Rename"
+  >
+    ✎
+  </button>
+) : null}
+              </div>
+            </div>
+
+            {editable ? (
+              <button
+                onClick={() => onDelete(it.id)}
+                className="px-3 py-1.5 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
+              >
+                Delete
+              </button>
+            ) : null}
+          </div>
+
+          <div className="mt-5 overflow-x-auto">
+            <div className="rounded-2xl border border-gray-200 overflow-hidden min-w-0">
+              <div className="grid grid-cols-[80px_repeat(5,48px)_20px] sm:grid-cols-[160px_repeat(5,130px)_32px] bg-gray-50 px-2 sm:px-6 py-2 text-[7px] sm:text-[10px] font-bold text-gray-600 items-center gap-1">
+                <div className="text-left">Length</div>
+                <div className="text-center">Total</div>
+                <div className="text-center">Available</div>
+                <div className="text-center">In Use</div>
+                <div className="text-center">Maintenance</div>
+                <div className="text-center">In KSA</div>
+                <div />
+              </div>
+
+              {(cableRowsByItem[it.id] || []).length === 0 ? (
+                <div className="px-2 sm:px-6 py-3 text-[10px] sm:text-[12px] text-gray-400">
+                  No cable lengths yet.
+                </div>
+              ) : (
+                (cableRowsByItem[it.id] || []).map((row) => {
+                  const s = cableStats(row);
+
+                  return (
+                    <div
+                      key={row.id}
+                      className="grid grid-cols-[80px_repeat(5,48px)_20px] sm:grid-cols-[160px_repeat(5,130px)_32px] items-center gap-1 px-2 sm:px-6 py-1 text-[7px] sm:text-[10px] text-gray-900 border-t border-gray-100"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => updateCableLength(row.id, it.id, row.cable_length)}
+                        className="text-left font-bold hover:text-red-500"
+                      >
+                        {row.cable_length}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateCableQty(row.id, it.id, "total_qty", row.total_qty)
+                        }
+                        className="text-center hover:text-red-500"
+                      >
+                        {s.total}
+                      </button>
+
+                      <div className="text-center">
+                        <span className="inline-flex min-w-5 sm:min-w-7 justify-center rounded-md sm:rounded-lg bg-green-100 px-1 sm:px-2 py-0.5 sm:py-1 font-bold">
+                          {s.available}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateCableQty(row.id, it.id, "in_use_qty", row.in_use_qty)
+                        }
+                        className="text-center"
+                      >
+                        <span className="inline-flex min-w-5 sm:min-w-7 justify-center rounded-md sm:rounded-lg bg-blue-100 px-1 sm:px-2 py-0.5 sm:py-1 font-bold hover:text-red-500">
+                          {s.inUse}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateCableQty(
+                            row.id,
+                            it.id,
+                            "maintenance_qty",
+                            row.maintenance_qty
+                          )
+                        }
+                        className="text-center"
+                      >
+                        <span className="inline-flex min-w-5 sm:min-w-7 justify-center rounded-md sm:rounded-lg bg-yellow-100 px-1 sm:px-2 py-0.5 sm:py-1 font-bold hover:text-red-500">
+                          {s.maintenance}
+                        </span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateCableQty(row.id, it.id, "in_ksa_qty", row.in_ksa_qty)
+                        }
+                        className="text-center"
+                      >
+                        <span className="inline-flex min-w-5 sm:min-w-7 justify-center rounded-md sm:rounded-lg bg-purple-100 px-1 sm:px-2 py-0.5 sm:py-1 font-bold hover:text-red-500">
+                          {s.inKsa}
+                        </span>
+                      </button>
+
+                      {editable ? (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!confirm("Delete cable length?")) return;
+
+                            const { error } = await supabase
+                              .from("matrix_rows")
+                              .delete()
+                              .eq("id", row.id);
+
+                            if (error) {
+                              alert(error.message);
+                              return;
+                            }
+
+                            setCableRowsByItem((prev) => ({
+                              ...prev,
+                              [it.id]: (prev[it.id] || []).filter(
+                                (x) => x.id !== row.id
+                              ),
+                            }));
+                          }}
+                          className="flex h-5 w-5 sm:h-7 sm:w-7 items-center justify-center rounded-full text-red-500 hover:bg-red-50 hover:text-black"
+                        >
+                          <Trash2 size={12} className="sm:hidden" />
+                          <Trash2 size={15} className="hidden sm:block" />
+                        </button>
+                      ) : (
+                        <div />
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {editable ? (
+            <button
+              type="button"
+              onClick={() => addCableLength(it.id)}
+              className="mt-2 text-[10px] font-medium text-red-500 hover:text-black"
+            >
+              + Add cable length
+            </button>
+          ) : null}
+        </div>
+      );
     }
 
-    if (subcategoryId) await loadModels(subcategoryId);
-  }
+    return (
+      <div
+        key={it.id}
+        className={!isLast ? "border-b border-gray-100 pb-4 mb-4" : ""}
+      >
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
+            <div className="flex items-start gap-3 min-w-0 flex-1">
+              <ItemPhoto
+                photo={it.photo_data}
+                name={it.name}
+                editable={editable}
+                menuOpen={listPhotoMenuItemId === it.id}
+                onToggleMenu={() =>
+                  setListPhotoMenuItemId((prev) =>
+                    prev === it.id ? null : it.id
+                  )
+                }
+                onUploadPhoto={() => {
+                  setListPhotoMenuItemId(null);
+                  setEditingPhotoItemId(it.id);
+                  listPhotoFileRef.current?.click();
+                }}
+                onSearchPhoto={() => {
+                  setListPhotoMenuItemId(null);
+                  void searchPhotoForItem(it);
+                }}
+              />
 
-  async function changeRowPhoto(rowId: string, file: File) {
-    if (!editable) return;
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 min-w-0">
+                  <h2
+                    className="truncate text-[10px] sm:text-[11px] text-gray-900"
+                    style={{ lineHeight: 1.1 }}
+                  >
+                    {renderItemName(it.name, it.item_type)}
+                  </h2>
 
-    const imageUrl = await uploadPhoto(file);
+                  {editable && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onRename(it.id, it.name);
+                      }}
+                      className="text-red-500 text-[12px] shrink-0 hover:text-black"
+                    >
+                      ✎
+                    </button>
+                  )}
 
-const { error } = await supabase
-  .from("matrix_rows")
-  .update({ photo_data: imageUrl })
-  .eq("id", rowId);
+                  {editable && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onDelete(it.id);
+                      }}
+                      className="ml-auto text-red-500 shrink-0 hover:text-black sm:hidden"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  )}
+                </div>
 
-    if (error) {
-      console.error("changeRowPhoto error", error);
-      alert("Failed to update row photo");
-      return;
-    }
+                <div className="mt-2 sm:hidden">
+                  <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      Total
+                    </div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      Available
+                    </div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      In Use
+                    </div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      Maintenance
+                    </div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      In KSA
+                    </div>
 
-    setModels((prev) =>
-      prev.map((m) => ({
-        ...m,
-        matrix_rows: (m.matrix_rows ?? []).map((r) =>
-          r.id === rowId ? { ...r, photo_data: imageUrl } : r
-        ),
-      }))
-    );
-  }
+                    <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.total}
+                    </div>
+                    <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.available}
+                    </div>
+                    <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.inUse}
+                    </div>
+                    <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.maintenance}
+                    </div>
+                    <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.inKsa}
+                    </div>
+                  </div>
+                </div>
 
-  async function addRow(modelId: string) {
-    if (!editable) return;
+                <div className="mt-1 hidden sm:block">
+                  <div className="flex flex-wrap gap-2">
+                    <StatPill label="Total Qty" value={stats.total} />
+                    <StatPill
+                      label="Available Qty"
+                      value={stats.available}
+                      tone="green"
+                    />
+                    <StatPill label="In Use" value={stats.inUse} tone="blue" />
+                    <StatPill
+                      label="Maintenance"
+                      value={stats.maintenance}
+                      tone="yellow"
+                    />
+                    <StatPill
+                      label="In KSA"
+                      value={stats.inKsa}
+                      tone="purple"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
 
-    const { error } = await supabase.from("matrix_rows").insert({
-      model_id: modelId,
-      size: "",
-      qty: 0,
-      photo_data: null,
-    });
-
-    if (error) {
-      console.error("addRow error", error);
-      alert("Failed to add row");
-      return;
-    }
-
-    if (subcategoryId) {
-      setSaveMsg("Row added");
-      setTimeout(() => {
-        setSaveMsg((prev) => (prev === "Row added" ? "" : prev));
-      }, 1500);
-
-      await loadModels(subcategoryId);
-    }
-  }
-
-  async function updateRow(
-    rowId: string,
-    patch: Partial<Pick<MatrixRow, "size" | "qty">>
-  ) {
-    if (!editable) return;
-
-    const payload: Partial<Pick<MatrixRow, "size" | "qty">> = {};
-    if (patch.size !== undefined) payload.size = patch.size;
-    if (patch.qty !== undefined) payload.qty = clampQty(patch.qty);
-
-    const { error } = await supabase.from("matrix_rows").update(payload).eq("id", rowId);
-
-    if (error) {
-      console.error("updateRow error", error);
-      alert("Update failed");
-      return;
-    }
-
-    setModels((prev) =>
-      prev.map((m) => ({
-        ...m,
-        matrix_rows: (m.matrix_rows ?? []).map((r) =>
-          r.id === rowId ? { ...r, ...payload } : r
-        ),
-      }))
-    );
-  }
-
-  async function deleteRow(rowId: string) {
-    if (!editable) return;
-    if (!confirm("Delete this row?")) return;
-
-    const { error } = await supabase.from("matrix_rows").delete().eq("id", rowId);
-
-    if (error) {
-      console.error("deleteRow error", error);
-      alert("Delete row failed");
-      return;
-    }
-
-    setModels((prev) =>
-      prev.map((m) => ({
-        ...m,
-        matrix_rows: (m.matrix_rows ?? []).filter((r) => r.id !== rowId),
-      }))
+          <div className="hidden sm:flex items-center gap-2 shrink-0">
+            {editable && (
+              <button
+                onClick={() => onDelete(it.id)}
+                className="px-2 py-1 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
+              >
+                Delete
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
     );
   }
 
   if (loading) {
     return (
       <div className="max-w-[1100px] mx-auto">
-        <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
-          Loading models...
+        <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
+          Loading items...
+        </div>
+      </div>
+    );
+  }
+
+  if (err) {
+    return (
+      <div className="max-w-[1100px] mx-auto">
+        <div className="bg-white border border-gray-200 rounded-2xl p-6 text-gray-900">
+          <div className="font-semibold">Error</div>
+          <div className="text-sm text-red-600 mt-1">{err}</div>
+
+          <button
+            onClick={() => void load(true)}
+            className="mt-4 px-2.5 py-1 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
+          >
+            Retry
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-[1100px] mx-auto space-y-3 text-black">
+    <div className="max-w-[1100px] mx-auto space-y-3">
       {editable && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-6">
-          <div className="flex items-center justify-between gap-4 mb-4">
-            <h1
-              style={{
-                fontSize: "14px",
-                fontWeight: 600,
-                color: "#111827",
-                lineHeight: 1.1,
-              }}
-            >
-              Add Model
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-sm">
+          <div className="mb-4">
+            <h1 className="text-[13px] font-semibold leading-tight text-gray-900">
+              Add Items
             </h1>
+            <p className="mt-1 text-[10px] text-gray-500">
+              Add units or cables with optional photo.
+            </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-[160px_minmax(0,1fr)_auto_auto] gap-3">
+          <div
+            className={
+              itemType === "unit"
+                ? "grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_1fr_76px_116px_76px] md:items-center"
+                : "grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_116px_76px] md:items-center"
+            }
+          >
             <select
-              value={modelType}
-              onChange={(e) =>
-                setModelType(e.target.value as "length_based" | "component" | "rack")
-              }
-              className="border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-black text-[12px] text-gray-900"
+              value={itemType}
+              onChange={(e) => setItemType(e.target.value as "unit" | "cable")}
+              className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
             >
-              <option value="length_based">Length Based</option>
-              <option value="component">Component</option>
-              <option value="rack">Rack</option>
+              <option value="unit">Units</option>
+              <option value="cable">Cable</option>
             </select>
 
-            <input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              placeholder="Model name"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-black text-[12px] text-gray-900"
-            />
-
-            {modelType !== "component" && (
+            {itemType === "unit" ? (
               <>
                 <input
-                  ref={addPhotoRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={onPickNewPhoto}
+                  value={brand}
+                  onChange={(e) => {
+                    setBrand(e.target.value);
+                    if (!imageSearch) {
+                      setImageSearch(`${e.target.value} ${model}`.trim());
+                    }
+                  }}
+                  placeholder="Brand"
+                  className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
                 />
 
-                <button
-                  type="button"
-                  onClick={() => addPhotoRef.current?.click()}
-                  className="w-full md:w-auto px-2 py-1.5 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
-                >
-                  {newPhoto ? "Photo ✔" : "Upload Photo"}
-                </button>
+                <input
+                  value={model}
+                  onChange={(e) => {
+                    setModel(e.target.value);
+                    if (!imageSearch) {
+                      setImageSearch(`${brand} ${e.target.value}`.trim());
+                    }
+                  }}
+                  placeholder="Model"
+                  className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+                />
+
+                <input
+                  value={qty}
+                  onChange={(e) =>
+                    setQty(Math.max(1, Number(e.target.value) || 1))
+                  }
+                  type="number"
+                  min={1}
+                  placeholder="Qty"
+                  className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+                />
               </>
+            ) : (
+              <input
+                value={cableModel}
+                onChange={(e) => {
+                  setCableModel(e.target.value);
+                  if (!imageSearch) setImageSearch(e.target.value);
+                }}
+                placeholder="Cable model"
+                className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+              />
             )}
 
-            <button
-              type="button"
-              onClick={addModel}
-              className="w-full md:w-auto px-2 py-1.5 rounded-full border border-black text-[9px] font-medium text-white bg-black transition-all duration-150 ease-out hover:opacity-90 active:scale-[0.98]"
-            >
-              {submitting ? "Adding..." : "+ Add"}
-            </button>
-          </div>
-
-          {(errorMsg || saveMsg) && (
-            <div className={`mt-3 text-xs ${errorMsg ? "text-red-600" : "text-gray-500"}`}>
-              {errorMsg || saveMsg}
-            </div>
-          )}
-        </div>
-      )}
-
-      {models.length === 0 ? (
-        <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
-          No models yet.
-        </div>
-      ) : (
-        <div className="bg-white border border-gray-200 rounded-2xl p-6">
-          {models.map((m, index) => {
-            const isLast = index === models.length - 1;
-
-            return (
-              <div key={m.id} className={!isLast ? "pb-4 mb-4" : ""}>
-                <ModelCard
-                  model={m}
-                  editable={editable}
-                  onRename={() => renameModel(m.id, m.name)}
-                  onDelete={() => deleteModel(m.id)}
-                  onAddRow={() => addRow(m.id)}
-                  onUpdateRow={(rowId, patch) => updateRow(rowId, patch)}
-                  onDeleteRow={(rowId) => deleteRow(rowId)}
-                  onPickPhoto={(file) => changeModelPhoto(m.id, file)}
-                  onPickRowPhoto={(rowId, file) => changeRowPhoto(rowId, file)}
-                />
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {!loading && !subcategoryId && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 text-sm text-red-600">
-          Could not resolve this subcategory in database.
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ModelCard({
-  model,
-  editable,
-  onRename,
-  onDelete,
-  onAddRow,
-  onUpdateRow,
-  onDeleteRow,
-  onPickPhoto,
-  onPickRowPhoto,
-}: {
-  model: MatrixModel;
-  editable: boolean;
-  onRename: () => void;
-  onDelete: () => void;
-  onAddRow: () => void;
-  onUpdateRow: (rowId: string, patch: Partial<Pick<MatrixRow, "size" | "qty">>) => void;
-  onDeleteRow: (rowId: string) => void;
-  onPickPhoto: (file: File) => Promise<void>;
-  onPickRowPhoto: (rowId: string, file: File) => Promise<void>;
-}) {
-  const fileRef = useRef<HTMLInputElement | null>(null);
-  const rows = model.matrix_rows ?? [];
-
-  async function onChange(e: React.ChangeEvent<HTMLInputElement>) {
-    if (!editable) return;
-
-    const f = e.target.files?.[0];
-    if (!f) return;
-    try {
-      await onPickPhoto(f);
-    } finally {
-      e.target.value = "";
-    }
-  }
-
-  return (
-    <div className="text-black bg-white border border-gray-200 rounded-2xl p-4">
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={onChange}
-      />
-
-      <div className="mb-4">
-        <div className="flex items-start gap-3">
-          {model.model_type !== "component" && (
-            <div className="relative h-[40px] w-[40px] min-w-[40px] sm:h-[56px] sm:w-[56px] sm:min-w-[56px]">
-              <ProjectPhotoBlock photo={model.photo_data} name={model.name} />
-
-              {editable && (
-                <button
-                  type="button"
-                  title="Change photo"
-                  onClick={() => fileRef.current?.click()}
-                  className="absolute top-0 right-0 z-20 translate-x-1/4 -translate-y-1/4 text-red-500 transition-colors hover:text-black"
-                >
-                  <Pencil size={13} strokeWidth={2} />
-                </button>
-              )}
-            </div>
-          )}
-
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 min-w-0">
-              <h2
-                className="truncate text-[10px] sm:text-[14px] font-semibold text-gray-900"
-                style={{ lineHeight: 1.1 }}
-              >
-                {model.name}
-              </h2>
-
-              {editable && (
-                <button
-                  type="button"
-                  title="Rename"
-                  onClick={onRename}
-                  className="text-red-500 text-[12px] shrink-0 transition-colors hover:text-black"
-                >
-                  ✎
-                </button>
-              )}
-
-              {editable && (
-                <button
-                  type="button"
-                  title="Delete"
-                  onClick={onDelete}
-                  className="ml-auto text-red-500 text-[13px] shrink-0 transition-colors hover:text-black"
-                >
-                  <Trash2 size={15} strokeWidth={2} />
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-xl">
-        <div className="grid grid-cols-12 gap-2 text-[9px] sm:text-[10px] font-medium text-gray-600 px-1 pb-2 border-b border-gray-200">
-          <div className="col-span-8">{getRowLabel(model.model_type)}</div>
-          <div className="col-span-2 text-right">Qty</div>
-          <div className="col-span-2"></div>
-        </div>
-
-        {rows.map((r, index) => (
-          <MatrixRowItem
-            key={r.id}
-            row={r}
-            modelType={model.model_type}
-            editable={editable}
-            onUpdateRow={onUpdateRow}
-            onDeleteRow={onDeleteRow}
-            onPickRowPhoto={onPickRowPhoto}
-            isLast={index === rows.length - 1}
-          />
-        ))}
-
-        {editable && (
-          <div className="pt-3">
-            <button
-              type="button"
-              onClick={onAddRow}
-              className="px-2 py-1 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
-            >
-              + Add Row
-            </button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function MatrixRowItem({
-  row,
-  modelType,
-  editable,
-  onUpdateRow,
-  onDeleteRow,
-  onPickRowPhoto,
-  isLast,
-}: {
-  row: MatrixRow;
-  modelType?: "length_based" | "component" | "rack";
-  editable: boolean;
-  onUpdateRow: (rowId: string, patch: Partial<Pick<MatrixRow, "size" | "qty">>) => void;
-  onDeleteRow: (rowId: string) => void;
-  onPickRowPhoto: (rowId: string, file: File) => Promise<void>;
-  isLast: boolean;
-}) {
-  const [localSize, setLocalSize] = useState(row.size ?? "");
-  const [localQty, setLocalQty] = useState<number>(row.qty ?? 0);
-  const rowPhotoRef = useRef<HTMLInputElement | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-
-  // sync
-  useEffect(() => setLocalSize(row.size ?? ""), [row.size]);
-  useEffect(() => setLocalQty(row.qty ?? 0), [row.qty]);
-
-  // auto save size
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if (editable && localSize !== (row.size ?? "")) {
-        onUpdateRow(row.id, { size: localSize });
-      }
-    }, 500);
-    return () => clearTimeout(t);
-  }, [localSize]);
-
-  // auto save qty
-  useEffect(() => {
-    const t = setTimeout(() => {
-      if (editable && localQty !== (row.qty ?? 0)) {
-        onUpdateRow(row.id, { qty: localQty });
-      }
-    }, 500);
-    return () => clearTimeout(t);
-  }, [localQty]);
-
-  // auto resize textarea
-  useEffect(() => {
-    if (!textareaRef.current) return;
-    textareaRef.current.style.height = "auto";
-    textareaRef.current.style.height = textareaRef.current.scrollHeight + "px";
-  }, [localSize]);
-
-  async function onChangeRowPhoto(e: React.ChangeEvent<HTMLInputElement>) {
-    if (!editable) return;
-    const f = e.target.files?.[0];
-    if (!f) return;
-
-    try {
-      await onPickRowPhoto(row.id, f);
-    } finally {
-      e.target.value = "";
-    }
-  }
-
-  return (
-    <div
-      className={`grid grid-cols-12 gap-2 items-start py-2 ${
-        !isLast ? "border-b border-gray-100" : ""
-      }`}
-    >
-      {/* SPECIFICATION */}
-      <div className="col-span-8">
-        {modelType === "component" ? (
-          <div className="flex items-start gap-3">
             <input
-              ref={rowPhotoRef}
+              ref={fileRef}
               type="file"
               accept="image/*"
               className="hidden"
-              onChange={onChangeRowPhoto}
+              onChange={onPickPhoto}
             />
 
-            {/* PHOTO */}
-            <div className="relative h-[34px] w-[34px] min-w-[34px] sm:h-[44px] sm:w-[44px]">
-              <RowPhotoBlock photo={row.photo_data} name={row.size || "row"} />
+            <input
+              ref={listPhotoFileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={onPickListItemPhoto}
+            />
 
-              {editable && (
-                <button
-                  type="button"
-                  onClick={() => rowPhotoRef.current?.click()}
-                  className="absolute top-0 right-0 translate-x-1/4 -translate-y-1/4 text-red-500 hover:text-black"
-                >
-                  ✎
-                </button>
-              )}
+            <div id="add-photo-menu" className="relative">
+              <button
+                type="button"
+                onClick={() => setPhotoMenuOpen((v) => !v)}
+                className="flex h-11 w-full items-center justify-center gap-1 rounded-2xl border border-gray-300 bg-white px-4 text-[12px] font-medium text-gray-700 shadow-sm transition hover:bg-red-50 hover:border-red-200 hover:text-red-700"
+              >
+                {photo ? "Photo ✔" : "Add photo"}
+                <ChevronDown size={13} />
+              </button>
+
+              {photoMenuOpen ? (
+                <div className="absolute right-0 top-full z-[9999] mt-2 w-40 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPhotoMenuOpen(false);
+                      fileRef.current?.click();
+                    }}
+                    className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
+                  >
+                    Upload photo
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPhotoMenuOpen(false);
+                      setSearchPanelOpen(true);
+                      setImageSearch(itemSearchName);
+                      setTimeout(
+                        () => void searchOnlineImages(itemSearchName),
+                        50
+                      );
+                    }}
+                    className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
+                  >
+                    Search photo
+                  </button>
+                </div>
+              ) : null}
             </div>
 
-            {/* TEXTAREA */}
-            <textarea
-              ref={textareaRef}
-              value={localSize}
-              readOnly={!editable}
-              onChange={(e) => setLocalSize(e.target.value)}
-              placeholder={getRowPlaceholder(modelType)}
-              rows={1}
-              className="flex-1 resize-none bg-transparent outline-none text-[10px] sm:text-[12px] text-black leading-tight"
-            />
+            <button
+              onClick={onAdd}
+              disabled={!canAdd}
+              className="h-11 w-full rounded-2xl border border-black bg-black px-4 text-[12px] font-medium text-white shadow-sm transition hover:opacity-90 disabled:opacity-40"
+            >
+              + Add
+            </button>
           </div>
-        ) : (
-          <textarea
-            ref={textareaRef}
-            value={localSize}
-            readOnly={!editable}
-            onChange={(e) => setLocalSize(e.target.value)}
-            placeholder={getRowPlaceholder(modelType)}
-            rows={1}
-            className="w-full resize-none bg-transparent outline-none text-[10px] sm:text-[12px] text-black leading-tight"
-          />
-        )}
-      </div>
 
-      {/* QTY */}
-      <div className="col-span-2 flex justify-end">
-        <input
-          type="number"
-          min={0}
-          value={String(localQty)}
-          readOnly={!editable}
-          onChange={(e) => setLocalQty(clampQty(e.target.value))}
-          className="w-10 sm:w-12 text-right bg-transparent outline-none text-[10px] sm:text-[12px]"
-        />
-      </div>
+          {photo ? (
+            <div className="mt-3 flex items-center gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-2">
+              <img
+                src={photo}
+                alt="Selected"
+                className="h-12 w-12 rounded-xl object-cover border border-gray-200 bg-white"
+              />
 
-      {/* DELETE */}
-      <div className="col-span-2 flex justify-end items-center">
-        {editable && (
-          <Trash2
-            size={14}
-            className="cursor-pointer text-red-500 hover:text-black"
-            onClick={() => onDeleteRow(row.id)}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
+              <button
+                type="button"
+                onClick={() => setPhoto(null)}
+                className="text-[10px] font-medium text-red-500 hover:text-black"
+              >
+                Remove photo
+              </button>
+            </div>
+          ) : null}
 
-function ProjectPhotoBlock({
-  photo,
-  name,
-}: {
-  photo?: string | null;
-  name: string;
-}) {
-  const [hover, setHover] = useState(false);
+          {searchPanelOpen ? (
+            <div className="mt-4 rounded-2xl border border-gray-200 p-3 relative z-50 bg-white">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="text-[12px] font-semibold text-gray-900">
+                  Search photo online
+                </div>
 
-  return (
-    <div
-      className="w-full h-full relative overflow-visible"
-      style={{ zIndex: hover ? 50 : 1 }}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-    >
-      {photo ? (
-        <img
-          src={photo}
-          alt={name}
-          className="w-full h-full object-cover rounded-[8px] block bg-white"
-        />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchPanelOpen(false);
+                    setImageResults([]);
+                    setEditingPhotoItemId(null);
+                  }}
+                  className="text-[10px] text-red-500 hover:text-black"
+                >
+                  Close
+                </button>
+              </div>
+
+              <div className="flex gap-2">
+                <input
+                  value={imageSearch}
+                  onChange={(e) => setImageSearch(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void searchOnlineImages();
+                    }
+                  }}
+                  placeholder="Search image..."
+                  className="h-10 flex-1 rounded-xl border border-gray-300 px-3 text-[12px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => void searchOnlineImages()}
+                  disabled={searchingImages}
+                  className="h-10 rounded-xl bg-black px-3 text-[11px] font-medium text-white disabled:opacity-40"
+                >
+                  {searchingImages ? "Searching..." : "Search"}
+                </button>
+              </div>
+
+              {searchingImages ? (
+                <div className="mt-3 text-xs text-gray-500">
+                  Searching images...
+                </div>
+              ) : null}
+
+              {imageResults.length > 0 ? (
+                <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-6">
+                  {imageResults.map((img, index) => {
+                    const imageUrl = img.original || img.image || img.thumbnail;
+                    const thumb = img.thumbnail || imageUrl;
+
+                    if (!imageUrl || !thumb) return null;
+
+                    return (
+                      <button
+                        key={`${imageUrl}-${index}`}
+                        type="button"
+                        onClick={() => selectOnlinePhoto(img)}
+                        className="overflow-hidden rounded-lg border border-gray-200 hover:border-blue-400"
+                        title={img.title || "Select photo"}
+                      >
+                        <img
+                          src={thumb}
+                          alt={img.title || "Online image"}
+                          className="aspect-square w-full object-cover"
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          {saveMsg ? (
+            <div className="mt-3 text-xs text-gray-500">{saveMsg}</div>
+          ) : null}
+        </div>
+      )}
+
+      {items.length === 0 ? (
+        <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
+          No items yet.
+        </div>
       ) : (
-        <div className="w-full h-full rounded-[8px] bg-white flex items-center justify-center text-[8px] sm:text-[10px] text-gray-400">
-          No photo
-        </div>
-      )}
-
-      {hover && photo && (
-        <div
-          style={{
-            position: "absolute",
-            top: "0",
-            left: "70px",
-            width: "240px",
-            height: "240px",
-            background: "#ffffff",
-            border: "1px solid #e5e7eb",
-            borderRadius: "12px",
-            padding: "8px",
-            boxShadow: "0 15px 35px rgba(0,0,0,0.2)",
-            zIndex: 9999,
-          }}
-        >
-          <img
-            src={photo}
-            alt={name}
-            style={{
-              width: "100%",
-              height: "100%",
-              objectFit: "contain",
-              borderRadius: "8px",
-              display: "block",
-              background: "#ffffff",
-            }}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function RowPhotoBlock({
-  photo,
-  name,
-}: {
-  photo?: string | null;
-  name: string;
-}) {
-  const [hover, setHover] = useState(false);
-
-  return (
-    <div
-      className="w-full h-full relative overflow-visible"
-      style={{ zIndex: hover ? 50 : 1 }}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-    >
-      {photo ? (
-        <img
-          src={photo}
-          alt={name}
-          className="w-full h-full object-cover rounded-[8px] block bg-white"
-        />
-      ) : (
-        <div className="w-full h-full rounded-[8px] bg-white flex items-center justify-center text-[7px] sm:text-[9px] text-gray-400 border border-gray-200">
-          No
-        </div>
-      )}
-
-      {hover && photo && (
-        <div
-          style={{
-            position: "absolute",
-            top: "0",
-            left: "56px",
-            width: "220px",
-            height: "220px",
-            background: "#ffffff",
-            border: "1px solid #e5e7eb",
-            borderRadius: "12px",
-            padding: "8px",
-            boxShadow: "0 15px 35px rgba(0,0,0,0.2)",
-            zIndex: 9999,
-          }}
-        >
-          <img
-            src={photo}
-            alt={name}
-            style={{
-              width: "100%",
-              height: "100%",
-              objectFit: "contain",
-              borderRadius: "8px",
-              display: "block",
-              background: "#ffffff",
-            }}
-          />
-        </div>
+        brandGroups.map((group) => (
+          <div
+            key={group.brand}
+            className="bg-white border border-gray-200 rounded-2xl p-6 sm:p-8"
+          >
+            {group.items.map((it, index) =>
+              renderItemRow(it, index === group.items.length - 1)
+            )}
+          </div>
+        ))
       )}
     </div>
   );

@@ -124,9 +124,9 @@ export default function SubcategoryRouterClient({
   if (type === "matrix") {
     body = (
       <SubcategoryClientMatrix
-        categoryId={categoryId}
-        subcategoryId={subcategoryId}
-      />
+  category={category}
+  subcategory={subcategory}
+/>
     );
   } else if (type === "led_screen_units") {
     body = (

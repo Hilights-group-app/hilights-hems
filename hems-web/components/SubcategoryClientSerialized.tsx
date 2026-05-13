@@ -40,9 +40,9 @@ async function uploadPhoto(file: File) {
   const supabase = createClient();
 
   const ext = file.name.split(".").pop() || "jpg";
-
-  const fileName =
-    `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+  const fileName = `${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}.${ext}`;
 
   const filePath = `items/${fileName}`;
 
@@ -50,9 +50,7 @@ async function uploadPhoto(file: File) {
     .from("equipment-photos")
     .upload(filePath, file);
 
-  if (error) {
-    throw error;
-  }
+  if (error) throw error;
 
   const { data } = supabase.storage
     .from("equipment-photos")
@@ -77,6 +75,17 @@ function splitBrandModel(name: string) {
     brand: parts[0] || "",
     model: parts.slice(1).join(" "),
   };
+}
+
+function renderItemName(name: string) {
+  const parts = splitBrandModel(name);
+
+  return (
+    <>
+      <span className="font-bold">{parts.brand}</span>
+      {parts.model ? <span>{` ${parts.model}`}</span> : null}
+    </>
+  );
 }
 
 function sortItemsByBrand(items: ItemRow[]) {
@@ -176,7 +185,9 @@ function StatPill({
       : "bg-gray-100 text-black";
 
   return (
-    <span className={`px-2 py-1 rounded-lg text-[8px] font-semibold whitespace-nowrap ${cls}`}>
+    <span
+      className={`px-2 py-1 rounded-lg text-[8px] font-semibold whitespace-nowrap ${cls}`}
+    >
       {label}: {value}
     </span>
   );
@@ -202,7 +213,11 @@ function ItemPhoto({
   return (
     <div className="relative flex h-14 w-14 min-w-[56px] items-center justify-center">
       {photo ? (
-        <img src={photo} alt={name} className="h-full w-full rounded-lg object-cover bg-white" />
+        <img
+          src={photo}
+          alt={name}
+          className="h-full w-full rounded-lg object-cover bg-white"
+        />
       ) : (
         <div className="flex h-full w-full items-center justify-center rounded-lg bg-white text-[10px] text-gray-400">
           No photo
@@ -278,24 +293,6 @@ export default function SubcategoryClientSerialized({
 
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
-  const itemName = useMemo(() => {
-  const b = brand.trim();
-  const m = model.trim();
-
-  if (b && m) return `${b} - ${m}`;
-  if (b) return b;
-  return m;
-}, [brand, model]);
-
-const itemSearchName = useMemo(() => {
-  const b = brand.trim();
-  const m = model.trim();
-
-  if (b && m) return `${b} ${m}`;
-  if (b) return b;
-  return m;
-}, [brand, model]);
-
   const [qty, setQty] = useState<number>(1);
   const [photo, setPhoto] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState("");
@@ -309,6 +306,24 @@ const itemSearchName = useMemo(() => {
   const [listPhotoMenuItemId, setListPhotoMenuItemId] = useState<string | null>(null);
   const [editingPhotoItemId, setEditingPhotoItemId] = useState<string | null>(null);
 
+  const itemName = useMemo(() => {
+    const b = brand.trim();
+    const m = model.trim();
+
+    if (b && m) return `${b} - ${m}`;
+    if (b) return b;
+    return m;
+  }, [brand, model]);
+
+  const itemSearchName = useMemo(() => {
+    const b = brand.trim();
+    const m = model.trim();
+
+    if (b && m) return `${b} ${m}`;
+    if (b) return b;
+    return m;
+  }, [brand, model]);
+
   const canAdd = useMemo(
     () => editable && itemName.trim().length > 0 && qty >= 1,
     [editable, itemName, qty]
@@ -317,7 +332,11 @@ const itemSearchName = useMemo(() => {
   const brandGroups = useMemo(() => groupItemsByBrand(items), [items]);
 
   async function resolveSubcategoryId() {
-    const catRes = await supabase.from("categories").select("id").eq("slug", category).single();
+    const catRes = await supabase
+      .from("categories")
+      .select("id")
+      .eq("slug", category)
+      .single();
 
     if (catRes.error || !catRes.data?.id) {
       throw new Error(`Category not found in DB for slug: ${category}`);
@@ -359,8 +378,7 @@ const itemSearchName = useMemo(() => {
     setLoading(items.length === 0);
     await refreshData(cacheKey);
   }
-
-  async function refreshData(cacheKey: string) {
+    async function refreshData(cacheKey: string) {
     try {
       const sid = await resolveSubcategoryId();
       setSubId(sid);
@@ -378,7 +396,10 @@ const itemSearchName = useMemo(() => {
       let stats: Record<string, ItemStats> = {};
 
       if (ids.length > 0) {
-        const unitsRes = await supabase.from("units").select("item_id,status").in("item_id", ids);
+        const unitsRes = await supabase
+          .from("units")
+          .select("item_id,status")
+          .in("item_id", ids);
 
         if (unitsRes.error) throw unitsRes.error;
 
@@ -401,7 +422,10 @@ const itemSearchName = useMemo(() => {
       setItems(list);
       setStatsByItem(stats);
 
-      sessionStorage.setItem(cacheKey, JSON.stringify({ subId: sid, items: list, statsByItem: stats }));
+      sessionStorage.setItem(
+        cacheKey,
+        JSON.stringify({ subId: sid, items: list, statsByItem: stats })
+      );
     } catch (e: any) {
       setErr(e?.message || "Failed to load");
     } finally {
@@ -440,12 +464,14 @@ const itemSearchName = useMemo(() => {
     if (!f) return;
 
     try {
-      const dataUrl = await uploadPhoto(f);
-      setPhoto(dataUrl);
+      setSaveMsg("Uploading photo...");
+      const imageUrl = await uploadPhoto(f);
+      setPhoto(imageUrl);
       setSaveMsg("Photo selected");
       setTimeout(() => setSaveMsg(""), 1500);
     } catch (e: any) {
       alert(e?.message || "Photo failed");
+      setSaveMsg("");
     } finally {
       e.target.value = "";
     }
@@ -497,10 +523,14 @@ const itemSearchName = useMemo(() => {
       setSearchingImages(false);
     }
   }
-    async function updateItemPhoto(itemId: string, imageUrl: string) {
+
+  async function updateItemPhoto(itemId: string, imageUrl: string) {
     if (!editable) return;
 
-    const { error } = await supabase.from("items").update({ photo_url: imageUrl }).eq("id", itemId);
+    const { error } = await supabase
+      .from("items")
+      .update({ photo_url: imageUrl })
+      .eq("id", itemId);
 
     if (error) {
       alert("Failed to update photo");
@@ -530,8 +560,13 @@ const itemSearchName = useMemo(() => {
     if (!f) return;
 
     try {
-      const dataUrl = await uploadPhoto(f);
-      await updateItemPhoto(editingPhotoItemId, dataUrl);
+      setSaveMsg("Uploading photo...");
+      const imageUrl = await uploadPhoto(f);
+      await updateItemPhoto(editingPhotoItemId, imageUrl);
+    } catch (error: any) {
+      console.error("Upload list item photo error:", error);
+      alert(error?.message || "Failed to upload photo");
+      setSaveMsg("");
     } finally {
       e.target.value = "";
       setEditingPhotoItemId(null);
@@ -540,11 +575,15 @@ const itemSearchName = useMemo(() => {
 
   async function searchPhotoForItem(item: ItemRow) {
     setEditingPhotoItemId(item.id);
-    setImageSearch(item.name);
+
+    const parts = splitBrandModel(item.name);
+    const searchName = `${parts.brand} ${parts.model}`.trim();
+
+    setImageSearch(searchName);
     setSearchPanelOpen(true);
     setImageResults([]);
 
-    void searchOnlineImages(item.name);
+    void searchOnlineImages(searchName);
   }
 
   function selectOnlinePhoto(img: OnlineImage) {
@@ -647,7 +686,11 @@ const itemSearchName = useMemo(() => {
     if (!clean) return;
 
     try {
-      const upd = await supabase.from("items").update({ name: clean }).eq("id", itemId);
+      const upd = await supabase
+        .from("items")
+        .update({ name: clean })
+        .eq("id", itemId);
+
       if (upd.error) throw upd.error;
 
       const nextItems = sortItemsByBrand(
@@ -677,7 +720,11 @@ const itemSearchName = useMemo(() => {
     if (!confirm("Delete this item?")) return;
 
     try {
-      const delUnits = await supabase.from("units").delete().eq("item_id", itemId);
+      const delUnits = await supabase
+        .from("units")
+        .delete()
+        .eq("item_id", itemId);
+
       if (delUnits.error) throw delUnits.error;
 
       const delItem = await supabase.from("items").delete().eq("id", itemId);
@@ -724,14 +771,19 @@ const itemSearchName = useMemo(() => {
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
-            <Link href={detailsHref} className="flex items-start gap-3 min-w-0 flex-1 group">
+            <Link
+              href={detailsHref}
+              className="flex items-start gap-3 min-w-0 flex-1 group"
+            >
               <ItemPhoto
                 photo={it.photo_url}
                 name={it.name}
                 editable={editable}
                 menuOpen={listPhotoMenuItemId === it.id}
                 onToggleMenu={() =>
-                  setListPhotoMenuItemId((prev) => (prev === it.id ? null : it.id))
+                  setListPhotoMenuItemId((prev) =>
+                    prev === it.id ? null : it.id
+                  )
                 }
                 onUploadPhoto={() => {
                   setListPhotoMenuItemId(null);
@@ -747,10 +799,10 @@ const itemSearchName = useMemo(() => {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 min-w-0">
                   <h2
-                    className="truncate text-[10px] sm:text-[11px] font-semibold text-gray-900"
+                    className="truncate text-[10px] sm:text-[11px] text-gray-900"
                     style={{ lineHeight: 1.1 }}
                   >
-                    {it.name}
+                    {renderItemName(it.name)}
                   </h2>
 
                   {editable && (
@@ -790,11 +842,21 @@ const itemSearchName = useMemo(() => {
                     <div className="text-[8px] font-semibold text-gray-500">Maintenance</div>
                     <div className="text-[8px] font-semibold text-gray-500">In KSA</div>
 
-                    <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">{stats.total}</div>
-                    <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">{stats.available}</div>
-                    <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold">{stats.inUse}</div>
-                    <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">{stats.maintenance}</div>
-                    <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold">{stats.inKsa}</div>
+                    <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.total}
+                    </div>
+                    <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.available}
+                    </div>
+                    <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.inUse}
+                    </div>
+                    <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.maintenance}
+                    </div>
+                    <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold">
+                      {stats.inKsa}
+                    </div>
                   </div>
                 </div>
 
@@ -842,6 +904,7 @@ const itemSearchName = useMemo(() => {
         <div className="bg-white border border-gray-200 rounded-2xl p-6 text-gray-900">
           <div className="font-semibold">Error</div>
           <div className="text-sm text-red-600 mt-1">{err}</div>
+
           <button
             onClick={() => void load(true)}
             className="mt-4 px-2.5 py-1 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
@@ -856,57 +919,74 @@ const itemSearchName = useMemo(() => {
   return (
     <div className="max-w-[1100px] mx-auto space-y-3">
       {editable && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-6">
-          <div className="flex items-center justify-between gap-4 mb-4">
-            <h1 style={{ fontSize: "14px", fontWeight: 600, color: "#111827", lineHeight: 1.1 }}>
+        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-sm">
+          <div className="mb-4">
+            <h1 className="text-[13px] font-semibold leading-tight text-gray-900">
               Add Items
             </h1>
+            <p className="mt-1 text-[10px] text-gray-500">
+              Add brand, model, quantity and optional photo.
+            </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_96px_auto_auto] gap-3">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_76px_116px_76px] md:items-center">
             <input
-  value={brand}
-  onChange={(e) => {
-    setBrand(e.target.value);
-    if (!imageSearch) setImageSearch(`${e.target.value} ${model}`.trim());
-  }}
-  placeholder="Brand"
-  className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-black text-[12px] text-gray-900"
-/>
+              value={brand}
+              onChange={(e) => {
+                setBrand(e.target.value);
+                if (!imageSearch) setImageSearch(`${e.target.value} ${model}`.trim());
+              }}
+              placeholder="Brand"
+              className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+            />
 
-<input
-  value={model}
-  onChange={(e) => {
-    setModel(e.target.value);
-    if (!imageSearch) setImageSearch(`${brand} ${e.target.value}`.trim());
-  }}
-  placeholder="Model"
-  className="w-full border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-black text-[12px] text-gray-900"
-/>
+            <input
+              value={model}
+              onChange={(e) => {
+                setModel(e.target.value);
+                if (!imageSearch) setImageSearch(`${brand} ${e.target.value}`.trim());
+              }}
+              placeholder="Model"
+              className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+            />
 
             <input
               value={qty}
               onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
               type="number"
               min={1}
-              className="w-full md:w-24 border border-gray-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-black text-[12px] text-gray-900"
+              placeholder="Qty"
+              className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
             />
 
-            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPickPhoto} />
-            <input ref={listPhotoFileRef} type="file" accept="image/*" className="hidden" onChange={onPickListItemPhoto} />
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={onPickPhoto}
+            />
+
+            <input
+              ref={listPhotoFileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={onPickListItemPhoto}
+            />
 
             <div id="add-photo-menu" className="relative">
               <button
                 type="button"
                 onClick={() => setPhotoMenuOpen((v) => !v)}
-                className="flex w-full md:w-auto items-center justify-center gap-1 px-2 py-1.5 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
+                className="flex h-11 w-full items-center justify-center gap-1 rounded-2xl border border-gray-300 bg-white px-4 text-[12px] font-medium text-gray-700 shadow-sm transition hover:bg-red-50 hover:border-red-200 hover:text-red-700"
               >
                 {photo ? "Photo ✔" : "Add photo"}
-                <ChevronDown size={12} />
+                <ChevronDown size={13} />
               </button>
 
               {photoMenuOpen ? (
-                <div className="absolute right-0 top-full z-[9999] mt-2 w-36 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
+                <div className="absolute right-0 top-full z-[9999] mt-2 w-40 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
                   <button
                     type="button"
                     onClick={() => {
@@ -937,16 +1017,25 @@ const itemSearchName = useMemo(() => {
             <button
               onClick={onAdd}
               disabled={!canAdd}
-              className="w-full md:w-auto px-2 py-1.5 rounded-full border border-black text-[9px] font-medium text-white bg-black hover:opacity-90 disabled:opacity-40"
+              className="h-11 w-full rounded-2xl border border-black bg-black px-4 text-[12px] font-medium text-white shadow-sm transition hover:opacity-90 disabled:opacity-40"
             >
               + Add
             </button>
           </div>
 
           {photo ? (
-            <div className="mt-3 flex items-center gap-3">
-              <img src={photo} alt="Selected" className="h-14 w-14 rounded-lg object-cover border border-gray-200" />
-              <button type="button" onClick={() => setPhoto(null)} className="text-[10px] text-red-500 hover:text-black">
+            <div className="mt-3 flex items-center gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-2">
+              <img
+                src={photo}
+                alt="Selected"
+                className="h-12 w-12 rounded-xl object-cover border border-gray-200 bg-white"
+              />
+
+              <button
+                type="button"
+                onClick={() => setPhoto(null)}
+                className="text-[10px] font-medium text-red-500 hover:text-black"
+              >
                 Remove photo
               </button>
             </div>
@@ -955,7 +1044,9 @@ const itemSearchName = useMemo(() => {
           {searchPanelOpen ? (
             <div className="mt-4 rounded-2xl border border-gray-200 p-3 relative z-50 bg-white">
               <div className="mb-3 flex items-center justify-between gap-2">
-                <div className="text-[12px] font-semibold text-gray-900">Search photo online</div>
+                <div className="text-[12px] font-semibold text-gray-900">
+                  Search photo online
+                </div>
 
                 <button
                   type="button"
@@ -981,20 +1072,22 @@ const itemSearchName = useMemo(() => {
                     }
                   }}
                   placeholder="Search image..."
-                  className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-[12px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
+                  className="h-10 flex-1 rounded-xl border border-gray-300 px-3 text-[12px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
                 />
 
                 <button
                   type="button"
                   onClick={() => void searchOnlineImages()}
                   disabled={searchingImages}
-                  className="rounded-lg bg-black px-3 py-2 text-[11px] font-medium text-white disabled:opacity-40"
+                  className="h-10 rounded-xl bg-black px-3 text-[11px] font-medium text-white disabled:opacity-40"
                 >
                   {searchingImages ? "Searching..." : "Search"}
                 </button>
               </div>
 
-              {searchingImages ? <div className="mt-3 text-xs text-gray-500">Searching images...</div> : null}
+              {searchingImages ? (
+                <div className="mt-3 text-xs text-gray-500">Searching images...</div>
+              ) : null}
 
               {imageResults.length > 0 ? (
                 <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-6">
@@ -1012,7 +1105,11 @@ const itemSearchName = useMemo(() => {
                         className="overflow-hidden rounded-lg border border-gray-200 hover:border-blue-400"
                         title={img.title || "Select photo"}
                       >
-                        <img src={thumb} alt={img.title || "Online image"} className="aspect-square w-full object-cover" />
+                        <img
+                          src={thumb}
+                          alt={img.title || "Online image"}
+                          className="aspect-square w-full object-cover"
+                        />
                       </button>
                     );
                   })}
@@ -1021,7 +1118,9 @@ const itemSearchName = useMemo(() => {
             </div>
           ) : null}
 
-          {saveMsg ? <div className="mt-3 text-xs text-gray-500">{saveMsg}</div> : null}
+          {saveMsg ? (
+            <div className="mt-3 text-xs text-gray-500">{saveMsg}</div>
+          ) : null}
         </div>
       )}
 
@@ -1031,9 +1130,15 @@ const itemSearchName = useMemo(() => {
         </div>
       ) : (
         brandGroups.map((group) => (
-          <div key={group.brand} className="bg-white border border-gray-200 rounded-2xl p-6">
-            <div className="mb-5">
-              <h2 className="text-[13px] font-semibold text-gray-900">{group.brand}</h2>
+          <div
+            key={group.brand}
+            className="bg-white border border-gray-200 rounded-2xl p-6"
+          >
+            <div className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
+              <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+              <h2 className="text-[8px] font-semibold uppercase tracking-wide text-gray-500">
+                {group.brand}
+              </h2>
             </div>
 
             {group.items.map((it, index) =>
