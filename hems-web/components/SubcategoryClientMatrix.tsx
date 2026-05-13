@@ -986,9 +986,9 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
             ) : null}
           </div>
 
-          <div className="mt-5 overflow-x-auto">
+          <div className="mt-5 overflow-x-auto pr-0">
             <div className="rounded-2xl border border-gray-200 overflow-hidden min-w-0">
-              <div className="grid grid-cols-[80px_repeat(5,48px)_20px] sm:grid-cols-[160px_repeat(5,130px)_32px] bg-gray-50 px-2 sm:px-6 py-2 text-[7px] sm:text-[10px] font-bold text-gray-600 items-center gap-1">
+              <div className="grid grid-cols-[74px_repeat(5,45px)_20px] md:grid-cols-[160px_repeat(5,130px)_32px] bg-gray-100 items-center gap-[2px] px-2 lg:px-6 py-1.5 lg:py-4 text-[7px] lg:text-[10px] font-bold text-gray-600">
                 <div className="text-left">Length</div>
                 <div className="text-center">Total</div>
                 <div className="text-center">Available</div>
@@ -999,7 +999,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
               </div>
 
               {(cableRowsByItem[it.id] || []).length === 0 ? (
-                <div className="px-2 sm:px-6 py-3 text-[10px] sm:text-[12px] text-gray-400">
+                <div className="px-2 lg:px-6 py-3 text-[10px] lg:text-[12px] text-gray-400">
                   No cable lengths yet.
                 </div>
               ) : (
@@ -1009,7 +1009,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                   return (
                     <div
                       key={row.id}
-                      className="grid grid-cols-[80px_repeat(5,48px)_20px] sm:grid-cols-[160px_repeat(5,130px)_32px] items-center gap-1 px-2 sm:px-6 py-1 text-[7px] sm:text-[10px] text-gray-900 border-t border-gray-100"
+                      className="grid grid-cols-[74px_repeat(5,45px)_20px] md:grid-cols-[160px_repeat(5,130px)_32px] items-center gap-[2px] px-2 lg:px-6 py-1.5 lg:py-4 text-[7px] lg:text-[10px] text-gray-900 border-t border-gray-100"
                     >
                       <button
                         type="button"
@@ -1030,7 +1030,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                       </button>
 
                       <div className="text-center">
-                        <span className="inline-flex min-w-5 sm:min-w-7 justify-center rounded-md sm:rounded-lg bg-green-100 px-1 sm:px-2 py-0.5 sm:py-1 font-bold">
+                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-green-100 px-1 lg:px-2 py-0.5 lg:py-1 font-bold">
                           {s.available}
                         </span>
                       </div>
@@ -1042,7 +1042,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                         }
                         className="text-center"
                       >
-                        <span className="inline-flex min-w-5 sm:min-w-7 justify-center rounded-md sm:rounded-lg bg-blue-100 px-1 sm:px-2 py-0.5 sm:py-1 font-bold hover:text-red-500">
+                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-blue-100 px-1 lg:px-2 py-0.5 lg:py-1 font-bold hover:text-red-500">
                           {s.inUse}
                         </span>
                       </button>
@@ -1059,7 +1059,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                         }
                         className="text-center"
                       >
-                        <span className="inline-flex min-w-5 sm:min-w-7 justify-center rounded-md sm:rounded-lg bg-yellow-100 px-1 sm:px-2 py-0.5 sm:py-1 font-bold hover:text-red-500">
+                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-yellow-100 px-1 lg:px-2 py-0.5 lg:py-1 font-bold hover:text-red-500">
                           {s.maintenance}
                         </span>
                       </button>
@@ -1071,7 +1071,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                         }
                         className="text-center"
                       >
-                        <span className="inline-flex min-w-5 sm:min-w-7 justify-center rounded-md sm:rounded-lg bg-purple-100 px-1 sm:px-2 py-0.5 sm:py-1 font-bold hover:text-red-500">
+                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-purple-100 px-1 lg:px-2 py-0.5 lg:py-1 font-bold hover:text-red-500">
                           {s.inKsa}
                         </span>
                       </button>
@@ -1099,10 +1099,10 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                               ),
                             }));
                           }}
-                          className="flex h-5 w-5 sm:h-7 sm:w-7 items-center justify-center rounded-full text-red-500 hover:bg-red-50 hover:text-black"
+                          className="flex h-5 w-5 lg:h-7 lg:w-7 items-center justify-center rounded-full text-red-500 hover:bg-red-50 hover:text-black"
                         >
-                          <Trash2 size={12} className="sm:hidden" />
-                          <Trash2 size={15} className="hidden sm:block" />
+                          <Trash2 size={11} className="lg:hidden" />
+                          <Trash2 size={15} className="hidden lg:block" />
                         </button>
                       ) : (
                         <div />
@@ -1189,7 +1189,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                       }}
                       className="ml-auto text-red-500 shrink-0 hover:text-black sm:hidden"
                     >
-                      <Trash2 size={15} />
+                      <Trash2 className="h-3.5 w-3.5 sm:h-[15px] sm:w-[15px]" />
                     </button>
                   )}
                 </div>
@@ -1554,7 +1554,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
         brandGroups.map((group) => (
           <div
             key={group.brand}
-            className="bg-white border border-gray-200 rounded-2xl p-6 sm:p-8"
+            className="bg-white border border-gray-200 rounded-2xl p-2 sm:p-4"
           >
             {group.items.map((it, index) =>
               renderItemRow(it, index === group.items.length - 1)
