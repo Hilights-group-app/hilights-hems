@@ -25,7 +25,7 @@ export default function SubcategoryRouterClient({
 }) {
   const supabase = createClient();
 
-  const [type, setType] = useState<SubcategoryType>("fixture_units");
+  const [type, setType] = useState<SubcategoryType | null>(null);
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [subcategoryId, setSubcategoryId] = useState<string | null>(null);
 
@@ -106,6 +106,16 @@ export default function SubcategoryRouterClient({
   const title = useMemo(() => {
     return titleFromSlug(subcategory) || "Subcategory";
   }, [subcategory]);
+
+  if (type === null) {
+  return (
+    <SubcategoryShellClient title={title}>
+      <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
+        Loading...
+      </div>
+    </SubcategoryShellClient>
+  );
+}
 
   let body =
   category === "lighting" &&

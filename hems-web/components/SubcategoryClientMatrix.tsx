@@ -181,7 +181,7 @@ function groupItemsByBrand(items: MatrixItemRow[]) {
 }
 
 function cacheKeyFor(categoryId: string | null, subcategoryId: string | null) {
-  return `hems:${categoryId || "no-cat"}:${subcategoryId || "no-sub"}:matrix-v2`;
+  return `hems:${categoryId || "no-cat"}:${subcategoryId || "no-sub"}:matrix-v3`;
 }
 
 function readItemsCache(
@@ -348,7 +348,7 @@ export default function SubcategoryClientMatrix({
   const fileRef = useRef<HTMLInputElement | null>(null);
   const listPhotoFileRef = useRef<HTMLInputElement | null>(null);
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const [categoryId, setCategoryId] = useState<string | null>(null);
