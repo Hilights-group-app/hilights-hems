@@ -12,6 +12,7 @@ type MatrixItemRow = {
   name: string;
   photo_data: string | null;
   item_type: "unit" | "cable" | "rack" | null;
+  block_name?: string | null;
   total_qty: number | null;
   in_use_qty: number | null;
   maintenance_qty: number | null;
@@ -132,23 +133,27 @@ function renderItemName(name: string, itemType?: "unit" | "cable" | "rack" | nul
   );
 }
 
+function fallbackBlockName(item: MatrixItemRow) {
+  if (item.item_type === "cable") return "Cables";
+  if (item.item_type === "rack") return "Racks";
+  return splitBrandModel(item.name).brand || "Other";
+}
+
+function itemBlockName(item: MatrixItemRow) {
+  return (item.block_name || "").trim() || fallbackBlockName(item);
+}
+
 function sortItemsByBrand(items: MatrixItemRow[]) {
   return [...items].sort((a, b) => {
-    const aName =
-      a.item_type === "cable" || a.item_type === "rack"
-        ? a.name
-        : splitBrandModel(a.name).brand;
-    const bName =
-      b.item_type === "cable" || b.item_type === "rack"
-        ? b.name
-        : splitBrandModel(b.name).brand;
+    const aBlock = itemBlockName(a);
+    const bBlock = itemBlockName(b);
 
-    const brandCompare = aName.localeCompare(bName, undefined, {
+    const blockCompare = aBlock.localeCompare(bBlock, undefined, {
       sensitivity: "base",
       numeric: true,
     });
 
-    if (brandCompare !== 0) return brandCompare;
+    if (blockCompare !== 0) return blockCompare;
 
     return a.name.localeCompare(b.name, undefined, {
       sensitivity: "base",
@@ -162,13 +167,7 @@ function groupItemsByBrand(items: MatrixItemRow[]) {
   const groups: { brand: string; items: MatrixItemRow[] }[] = [];
 
   for (const item of sorted) {
-    const brand =
-      item.item_type === "cable"
-        ? "Cables"
-        : item.item_type === "rack"
-        ? "Racks"
-        : splitBrandModel(item.name).brand || "Other";
-
+    const brand = itemBlockName(item);
     const last = groups[groups.length - 1];
 
     if (last && last.brand.toLowerCase() === brand.toLowerCase()) {
@@ -218,10 +217,12 @@ function StatPill({
   label,
   value,
   tone = "gray",
+  onClick,
 }: {
   label: string;
   value: string | number;
   tone?: "gray" | "green" | "blue" | "yellow" | "purple";
+  onClick?: () => void;
 }) {
   const cls =
     tone === "green"
@@ -234,13 +235,19 @@ function StatPill({
       ? "bg-purple-100 text-black"
       : "bg-gray-100 text-black";
 
-  return (
-    <span
-      className={`px-2 py-1 rounded-lg text-[8px] font-semibold whitespace-nowrap ${cls}`}
-    >
-      {label}: {value}
-    </span>
-  );
+  const className = `px-2 py-1 rounded-lg text-[8px] font-semibold whitespace-nowrap ${cls} ${
+    onClick ? "hover:ring-1 hover:ring-red-300" : ""
+  }`;
+
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className={className}>
+        {label}: {value}
+      </button>
+    );
+  }
+
+  return <span className={className}>{label}: {value}</span>;
 }
 
 function ItemPhoto({
@@ -357,6 +364,8 @@ export default function SubcategoryClientMatrix({
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
   const [cableModel, setCableModel] = useState("");
+  const [blockName, setBlockName] = useState("");
+  const [newBlockName, setNewBlockName] = useState("");
   const [qty, setQty] = useState<number>(1);
 
   const [photo, setPhoto] = useState<string | null>(null);
@@ -396,8 +405,12 @@ export default function SubcategoryClientMatrix({
   }, [brand, model, cableModel, itemType]);
 
   const canAdd = useMemo(() => {
-    if (itemType === "cable" || itemType === "rack") {
+    if (itemType === "cable") {
       return editable && itemName.trim().length > 0;
+    }
+
+    if (itemType === "rack") {
+      return editable && itemName.trim().length > 0 && qty >= 1;
     }
 
     return editable && itemName.trim().length > 0 && qty >= 1;
@@ -406,6 +419,20 @@ export default function SubcategoryClientMatrix({
   const brandGroups = useMemo(() => {
     return groupItemsByBrand(items);
   }, [items]);
+
+  const blockOptions = useMemo(() => {
+    const names = items
+      .map((item) => itemBlockName(item))
+      .filter((name) => name.trim().length > 0);
+
+    return Array.from(new Set(names)).sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base", numeric: true })
+    );
+  }, [items]);
+
+  const finalBlockName = useMemo(() => {
+    return newBlockName.trim() || blockName.trim();
+  }, [newBlockName, blockName]);
 
   async function resolveIds() {
     const catRes = await supabase
@@ -681,7 +708,13 @@ export default function SubcategoryClientMatrix({
     const nm = itemName.trim();
     if (!nm) return;
 
-    const q = itemType === "cable" || itemType === "rack" ? 0 : Math.max(1, Number(qty) || 1);
+    const q = itemType === "cable" ? 0 : Math.max(1, Number(qty) || 1);
+    const cleanBlockName = finalBlockName ||
+      (itemType === "cable"
+        ? "Cables"
+        : itemType === "rack"
+        ? "Racks"
+        : splitBrandModel(nm).brand || "Other");
 
     setErr(null);
 
@@ -693,6 +726,7 @@ export default function SubcategoryClientMatrix({
           subcategory_id: subcategoryId,
           name: nm,
           item_type: itemType,
+          block_name: cleanBlockName,
           photo_data: photo || null,
           total_qty: q,
           in_use_qty: 0,
@@ -732,6 +766,8 @@ export default function SubcategoryClientMatrix({
       setBrand("");
       setModel("");
       setCableModel("");
+      setBlockName(cleanBlockName);
+      setNewBlockName("");
       setQty(1);
       setPhoto(null);
       setImageSearch("");
@@ -847,6 +883,51 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
   }));
 }
   
+  async function updateItemQty(
+    itemId: string,
+    field: "total_qty" | "in_use_qty" | "maintenance_qty" | "in_ksa_qty",
+    current: number | null
+  ) {
+    if (!editable) return;
+
+    const nextValue = prompt("Edit quantity:", String(current ?? 0));
+    if (nextValue === null) return;
+
+    const clean = clampQty(nextValue);
+
+    const { error } = await supabase
+      .from("matrix_models")
+      .update({ [field]: clean })
+      .eq("id", itemId);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    const nextItems = items.map((item) =>
+      item.id === itemId ? { ...item, [field]: clean } : item
+    );
+
+    const updatedItem = nextItems.find((item) => item.id === itemId);
+    const nextStats = {
+      ...statsByItem,
+      ...(updatedItem ? { [itemId]: statsFromItem(updatedItem) } : {}),
+    };
+
+    setItems(nextItems);
+    setStatsByItem(nextStats);
+
+    if (categoryId && subcategoryId) {
+      writeItemsCache(categoryId, subcategoryId, {
+        categoryId,
+        subcategoryId,
+        items: nextItems,
+        statsByItem: nextStats,
+      });
+    }
+  }
+
   async function onRename(itemId: string, current: string) {
     if (!editable) return;
 
@@ -932,42 +1013,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
   }
 
   function renderItemRow(it: MatrixItemRow, isLast: boolean) {
-    const rackRows = cableRowsByItem[it.id] || [];
-    const rackTotal = rackRows.reduce(
-      (sum, row) => sum + clampQty(row.total_qty ?? 0),
-      0
-    );
-
-    const rackInUse = rackRows.reduce(
-  (sum, row) => sum + clampQty(row.in_use_qty ?? 0),
-  0
-);
-
-const rackMaintenance = rackRows.reduce(
-  (sum, row) => sum + clampQty(row.maintenance_qty ?? 0),
-  0
-);
-
-const rackInKsa = rackRows.reduce(
-  (sum, row) => sum + clampQty(row.in_ksa_qty ?? 0),
-  0
-);
-
-const rackAvailable = Math.max(
-  0,
-  rackTotal - rackInUse - rackMaintenance - rackInKsa
-);
-
-const stats =
-  it.item_type === "rack"
-    ? {
-        total: rackTotal,
-        available: rackAvailable,
-        inUse: rackInUse,
-        maintenance: rackMaintenance,
-        inKsa: rackInKsa,
-      }
-    : statsByItem[it.id] || statsFromItem(it);
+    const stats = statsByItem[it.id] || statsFromItem(it);
 
     if (it.item_type === "rack") {
       return (
@@ -1046,31 +1092,68 @@ const stats =
             <div className="text-[8px] font-semibold text-gray-500">Maintenance</div>
             <div className="text-[8px] font-semibold text-gray-500">In KSA</div>
 
-            <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">
+            <button
+              type="button"
+              onClick={() => updateItemQty(it.id, "total_qty", it.total_qty)}
+              className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
+            >
               {stats.total}
-            </div>
+            </button>
             <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
               {stats.available}
             </div>
-            <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold">
+            <button
+              type="button"
+              onClick={() => updateItemQty(it.id, "in_use_qty", it.in_use_qty)}
+              className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
+            >
               {stats.inUse}
-            </div>
-            <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                updateItemQty(it.id, "maintenance_qty", it.maintenance_qty)
+              }
+              className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
+            >
               {stats.maintenance}
-            </div>
-            <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold">
+            </button>
+            <button
+              type="button"
+              onClick={() => updateItemQty(it.id, "in_ksa_qty", it.in_ksa_qty)}
+              className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
+            >
               {stats.inKsa}
-            </div>
+            </button>
           </div>
         </div>
 
         <div className="mt-1 hidden sm:block">
           <div className="flex flex-wrap gap-2">
-            <StatPill label="Total Qty" value={stats.total} />
+            <StatPill
+              label="Total Qty"
+              value={stats.total}
+              onClick={() => updateItemQty(it.id, "total_qty", it.total_qty)}
+            />
             <StatPill label="Available Qty" value={stats.available} tone="green" />
-            <StatPill label="In Use" value={stats.inUse} tone="blue" />
-            <StatPill label="Maintenance" value={stats.maintenance} tone="yellow" />
-            <StatPill label="In KSA" value={stats.inKsa} tone="purple" />
+            <StatPill
+              label="In Use"
+              value={stats.inUse}
+              tone="blue"
+              onClick={() => updateItemQty(it.id, "in_use_qty", it.in_use_qty)}
+            />
+            <StatPill
+              label="Maintenance"
+              value={stats.maintenance}
+              tone="yellow"
+              onClick={() => updateItemQty(it.id, "maintenance_qty", it.maintenance_qty)}
+            />
+            <StatPill
+              label="In KSA"
+              value={stats.inKsa}
+              tone="purple"
+              onClick={() => updateItemQty(it.id, "in_ksa_qty", it.in_ksa_qty)}
+            />
           </div>
         </div>
       </div>
@@ -1474,42 +1557,73 @@ const stats =
                       In KSA
                     </div>
 
-                    <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => updateItemQty(it.id, "total_qty", it.total_qty)}
+                      className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
+                    >
                       {stats.total}
-                    </div>
+                    </button>
                     <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
                       {stats.available}
                     </div>
-                    <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold">
+                    <button
+                      type="button"
+                      onClick={() => updateItemQty(it.id, "in_use_qty", it.in_use_qty)}
+                      className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
+                    >
                       {stats.inUse}
-                    </div>
-                    <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateItemQty(it.id, "maintenance_qty", it.maintenance_qty)
+                      }
+                      className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
+                    >
                       {stats.maintenance}
-                    </div>
-                    <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold">
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateItemQty(it.id, "in_ksa_qty", it.in_ksa_qty)}
+                      className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
+                    >
                       {stats.inKsa}
-                    </div>
+                    </button>
                   </div>
                 </div>
 
                 <div className="mt-1 hidden sm:block">
                   <div className="flex flex-wrap gap-2">
-                    <StatPill label="Total Qty" value={stats.total} />
+                    <StatPill
+              label="Total Qty"
+              value={stats.total}
+              onClick={() => updateItemQty(it.id, "total_qty", it.total_qty)}
+            />
                     <StatPill
                       label="Available Qty"
                       value={stats.available}
                       tone="green"
                     />
-                    <StatPill label="In Use" value={stats.inUse} tone="blue" />
+                    <StatPill
+              label="In Use"
+              value={stats.inUse}
+              tone="blue"
+              onClick={() => updateItemQty(it.id, "in_use_qty", it.in_use_qty)}
+            />
                     <StatPill
                       label="Maintenance"
                       value={stats.maintenance}
                       tone="yellow"
+                      onClick={() =>
+                        updateItemQty(it.id, "maintenance_qty", it.maintenance_qty)
+                      }
                     />
                     <StatPill
                       label="In KSA"
                       value={stats.inKsa}
                       tone="purple"
+                      onClick={() => updateItemQty(it.id, "in_ksa_qty", it.in_ksa_qty)}
                     />
                   </div>
                 </div>
@@ -1569,15 +1683,17 @@ const stats =
               Add Items
             </h1>
             <p className="mt-1 text-[10px] text-gray-500">
-              Add units or cables with optional photo.
+              Add units, cables, or racks with optional photo and block name.
             </p>
           </div>
 
           <div
             className={
               itemType === "unit"
-                ? "grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_1fr_76px_116px_76px] md:items-center"
-                : "grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_116px_76px] md:items-center"
+                ? "grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_1fr_76px_1fr_1fr_116px_76px] md:items-center"
+                : itemType === "rack"
+                ? "grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_76px_1fr_1fr_116px_76px] md:items-center"
+                : "grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_1fr_1fr_116px_76px] md:items-center"
             }
           >
             <select
@@ -1630,16 +1746,57 @@ const stats =
                 />
               </>
             ) : (
-              <input
-                value={cableModel}
-                onChange={(e) => {
-                  setCableModel(e.target.value);
-                  if (!imageSearch) setImageSearch(e.target.value);
-                }}
-                placeholder={itemType === "rack" ? "Rack name" : "Cable model"}
-                className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
-              />
+              <>
+                <input
+                  value={cableModel}
+                  onChange={(e) => {
+                    setCableModel(e.target.value);
+                    if (!imageSearch) setImageSearch(e.target.value);
+                  }}
+                  placeholder={itemType === "rack" ? "Rack name" : "Cable model"}
+                  className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+                />
+
+                {itemType === "rack" ? (
+                  <input
+                    value={qty}
+                    onChange={(e) =>
+                      setQty(Math.max(1, Number(e.target.value) || 1))
+                    }
+                    type="number"
+                    min={1}
+                    placeholder="Qty"
+                    className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+                  />
+                ) : null}
+              </>
             )}
+
+            <select
+              value={blockName}
+              onChange={(e) => {
+                setBlockName(e.target.value);
+                if (e.target.value) setNewBlockName("");
+              }}
+              className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+            >
+              <option value="">Select block</option>
+              {blockOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+
+            <input
+              value={newBlockName}
+              onChange={(e) => {
+                setNewBlockName(e.target.value);
+                if (e.target.value.trim()) setBlockName("");
+              }}
+              placeholder="New block name"
+              className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+            />
 
             <input
               ref={fileRef}
@@ -1821,6 +1978,14 @@ const stats =
             key={group.brand}
             className="bg-white border border-gray-200 rounded-2xl p-2 sm:p-4"
           >
+            <div className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
+              <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+
+              <h2 className="text-[8px] font-semibold uppercase tracking-wide text-gray-500">
+                {group.brand}
+              </h2>
+            </div>
+
             {group.items.map((it, index) =>
               renderItemRow(it, index === group.items.length - 1)
             )}
