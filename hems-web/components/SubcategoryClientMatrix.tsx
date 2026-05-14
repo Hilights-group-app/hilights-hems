@@ -11,7 +11,7 @@ type MatrixItemRow = {
   subcategory_id: string;
   name: string;
   photo_data: string | null;
-  item_type: "unit" | "cable" | null;
+  item_type: "unit" | "cable" | "rack" | null;
   total_qty: number | null;
   in_use_qty: number | null;
   maintenance_qty: number | null;
@@ -117,8 +117,8 @@ function splitBrandModel(name: string) {
   };
 }
 
-function renderItemName(name: string, itemType?: "unit" | "cable" | null) {
-  if (itemType === "cable") {
+function renderItemName(name: string, itemType?: "unit" | "cable" | "rack" | null) {
+  if (itemType === "cable" || itemType === "rack") {
     return <span className="font-bold">{name}</span>;
   }
 
@@ -135,9 +135,13 @@ function renderItemName(name: string, itemType?: "unit" | "cable" | null) {
 function sortItemsByBrand(items: MatrixItemRow[]) {
   return [...items].sort((a, b) => {
     const aName =
-      a.item_type === "cable" ? a.name : splitBrandModel(a.name).brand;
+      a.item_type === "cable" || a.item_type === "rack"
+        ? a.name
+        : splitBrandModel(a.name).brand;
     const bName =
-      b.item_type === "cable" ? b.name : splitBrandModel(b.name).brand;
+      b.item_type === "cable" || b.item_type === "rack"
+        ? b.name
+        : splitBrandModel(b.name).brand;
 
     const brandCompare = aName.localeCompare(bName, undefined, {
       sensitivity: "base",
@@ -161,6 +165,8 @@ function groupItemsByBrand(items: MatrixItemRow[]) {
     const brand =
       item.item_type === "cable"
         ? "Cables"
+        : item.item_type === "rack"
+        ? "Racks"
         : splitBrandModel(item.name).brand || "Other";
 
     const last = groups[groups.length - 1];
@@ -347,7 +353,7 @@ export default function SubcategoryClientMatrix({
     Record<string, CableRow[]>
   >({});
 
-  const [itemType, setItemType] = useState<"unit" | "cable">("unit");
+  const [itemType, setItemType] = useState<"unit" | "cable" | "rack">("unit");
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
   const [cableModel, setCableModel] = useState("");
@@ -368,7 +374,7 @@ export default function SubcategoryClientMatrix({
     useState<string | null>(null);
 
   const itemName = useMemo(() => {
-    if (itemType === "cable") return cableModel.trim();
+    if (itemType === "cable" || itemType === "rack") return cableModel.trim();
 
     const b = brand.trim();
     const m = model.trim();
@@ -379,7 +385,7 @@ export default function SubcategoryClientMatrix({
   }, [brand, model, cableModel, itemType]);
 
   const itemSearchName = useMemo(() => {
-    if (itemType === "cable") return cableModel.trim();
+    if (itemType === "cable" || itemType === "rack") return cableModel.trim();
 
     const b = brand.trim();
     const m = model.trim();
@@ -390,7 +396,7 @@ export default function SubcategoryClientMatrix({
   }, [brand, model, cableModel, itemType]);
 
   const canAdd = useMemo(() => {
-    if (itemType === "cable") {
+    if (itemType === "cable" || itemType === "rack") {
       return editable && itemName.trim().length > 0;
     }
 
@@ -451,7 +457,9 @@ export default function SubcategoryClientMatrix({
         stats[item.id] = statsFromItem(item);
       }
 
-      const cableItems = list.filter((x) => x.item_type === "cable");
+      const cableItems = list.filter(
+        (x) => x.item_type === "cable" || x.item_type === "rack"
+      );
 
       if (cableItems.length > 0) {
         const rowsRes = await supabase
@@ -637,7 +645,7 @@ export default function SubcategoryClientMatrix({
     setEditingPhotoItemId(item.id);
 
     const searchName =
-      item.item_type === "cable"
+      item.item_type === "cable" || item.item_type === "rack"
         ? item.name
         : `${splitBrandModel(item.name).brand} ${
             splitBrandModel(item.name).model
@@ -673,7 +681,7 @@ export default function SubcategoryClientMatrix({
     const nm = itemName.trim();
     if (!nm) return;
 
-    const q = itemType === "cable" ? 0 : Math.max(1, Number(qty) || 1);
+    const q = itemType === "cable" || itemType === "rack" ? 0 : Math.max(1, Number(qty) || 1);
 
     setErr(null);
 
@@ -707,7 +715,7 @@ export default function SubcategoryClientMatrix({
       setItems(nextItems);
       setStatsByItem(nextStats);
 
-      if (newItem.item_type === "cable") {
+      if (newItem.item_type === "cable" || newItem.item_type === "rack") {
         setCableRowsByItem((prev) => ({
           ...prev,
           [newItem.id]: [],
@@ -743,7 +751,12 @@ export default function SubcategoryClientMatrix({
   async function addCableLength(itemId: string) {
     if (!editable) return;
 
-    const length = prompt("Cable length example: 5m / 10m / 20m");
+    const parentItem = items.find((x) => x.id === itemId);
+    const isRack = parentItem?.item_type === "rack";
+
+    const length = prompt(
+      isRack ? "Rack item name example: MA Lighting 8 PORT NODE" : "Cable length example: 5m / 10m / 20m"
+    );
     if (!length?.trim()) return;
 
     const totalValue = prompt("Total Qty");
@@ -919,7 +932,242 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
   }
 
   function renderItemRow(it: MatrixItemRow, isLast: boolean) {
-    const stats = statsByItem[it.id] || statsFromItem(it);
+    const rackRows = cableRowsByItem[it.id] || [];
+    const rackTotal = rackRows.reduce(
+      (sum, row) => sum + clampQty(row.total_qty ?? 0),
+      0
+    );
+
+    const rackInUse = rackRows.reduce(
+  (sum, row) => sum + clampQty(row.in_use_qty ?? 0),
+  0
+);
+
+const rackMaintenance = rackRows.reduce(
+  (sum, row) => sum + clampQty(row.maintenance_qty ?? 0),
+  0
+);
+
+const rackInKsa = rackRows.reduce(
+  (sum, row) => sum + clampQty(row.in_ksa_qty ?? 0),
+  0
+);
+
+const rackAvailable = Math.max(
+  0,
+  rackTotal - rackInUse - rackMaintenance - rackInKsa
+);
+
+const stats =
+  it.item_type === "rack"
+    ? {
+        total: rackTotal,
+        available: rackAvailable,
+        inUse: rackInUse,
+        maintenance: rackMaintenance,
+        inKsa: rackInKsa,
+      }
+    : statsByItem[it.id] || statsFromItem(it);
+
+    if (it.item_type === "rack") {
+      return (
+        <div
+          key={it.id}
+          className={!isLast ? "border-b border-gray-100 pb-6 mb-6" : ""}
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+  <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
+    <div className="flex items-start gap-3 min-w-0 flex-1">
+      <ItemPhoto
+        photo={it.photo_data}
+        name={it.name}
+        editable={editable}
+        big
+        menuOpen={listPhotoMenuItemId === it.id}
+        onToggleMenu={() =>
+          setListPhotoMenuItemId((prev) =>
+            prev === it.id ? null : it.id
+          )
+        }
+        onUploadPhoto={() => {
+          setListPhotoMenuItemId(null);
+          setEditingPhotoItemId(it.id);
+          listPhotoFileRef.current?.click();
+        }}
+        onSearchPhoto={() => {
+          setListPhotoMenuItemId(null);
+          void searchPhotoForItem(it);
+        }}
+      />
+
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2 min-w-0">
+          <h2
+            className="truncate text-[10px] sm:text-[11px] text-gray-900"
+            style={{ lineHeight: 1.1 }}
+          >
+            <span className="font-bold">{it.name}</span>
+          </h2>
+
+          {editable && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onRename(it.id, it.name);
+              }}
+              className="text-red-500 text-[12px] shrink-0 hover:text-black"
+            >
+              ✎
+            </button>
+          )}
+
+          {editable && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onDelete(it.id);
+              }}
+              className="ml-auto text-red-500 shrink-0 hover:text-black sm:hidden"
+            >
+              <Trash2 className="h-3.5 w-3.5 sm:h-[15px] sm:w-[15px]" />
+            </button>
+          )}
+        </div>
+
+        <div className="mt-2 sm:hidden">
+          <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
+            <div className="text-[8px] font-semibold text-gray-500">Total</div>
+            <div className="text-[8px] font-semibold text-gray-500">Available</div>
+            <div className="text-[8px] font-semibold text-gray-500">In Use</div>
+            <div className="text-[8px] font-semibold text-gray-500">Maintenance</div>
+            <div className="text-[8px] font-semibold text-gray-500">In KSA</div>
+
+            <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">
+              {stats.total}
+            </div>
+            <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
+              {stats.available}
+            </div>
+            <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold">
+              {stats.inUse}
+            </div>
+            <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
+              {stats.maintenance}
+            </div>
+            <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold">
+              {stats.inKsa}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-1 hidden sm:block">
+          <div className="flex flex-wrap gap-2">
+            <StatPill label="Total Qty" value={stats.total} />
+            <StatPill label="Available Qty" value={stats.available} tone="green" />
+            <StatPill label="In Use" value={stats.inUse} tone="blue" />
+            <StatPill label="Maintenance" value={stats.maintenance} tone="yellow" />
+            <StatPill label="In KSA" value={stats.inKsa} tone="purple" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div className="hidden sm:flex items-center gap-2 shrink-0">
+    {editable && (
+      <button
+        onClick={() => onDelete(it.id)}
+        className="px-2 py-1 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
+      >
+        Delete
+      </button>
+    )}
+  </div>
+</div>
+
+          <div className="mt-4 w-full sm:w-[410px] rounded-2xl border border-gray-200 overflow-hidden bg-white">
+            {(cableRowsByItem[it.id] || []).length === 0 ? (
+              <div className="px-4 py-3 text-[11px] text-gray-400">
+                No rack items yet.
+              </div>
+            ) : (
+              (cableRowsByItem[it.id] || []).map((row) => (
+                <div
+                  key={row.id}
+                  className="grid grid-cols-[1fr_64px_24px] items-center gap-2 px-4 py-2 text-[6px] sm:text-[8px] border-t first:border-t-0 border-gray-100"
+                >
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateCableLength(row.id, it.id, row.cable_length)
+                    }
+                    className="truncate text-left font-semibold text-gray-900 hover:text-red-500"
+                    title={row.cable_length}
+                  >
+                    {row.cable_length}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateCableQty(row.id, it.id, "total_qty", row.total_qty)
+                    }
+                    className="text-right font-bold text-gray-900 hover:text-red-500 whitespace-nowrap"
+                  >
+                    Qty: {row.total_qty ?? 0}
+                  </button>
+
+                  {editable ? (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!confirm("Delete rack item?")) return;
+
+                        const { error } = await supabase
+                          .from("matrix_rows")
+                          .delete()
+                          .eq("id", row.id);
+
+                        if (error) {
+                          alert(error.message);
+                          return;
+                        }
+
+                        setCableRowsByItem((prev) => ({
+                          ...prev,
+                          [it.id]: (prev[it.id] || []).filter(
+                            (x) => x.id !== row.id
+                          ),
+                        }));
+                      }}
+                      className="flex h-5 w-5 items-center justify-center rounded-full text-red-500 hover:bg-red-50 hover:text-black"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  ) : (
+                    <div />
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+
+          {editable ? (
+            <button
+              type="button"
+              onClick={() => addCableLength(it.id)}
+              className="mt-2 text-[10px] font-medium text-red-500 hover:text-black"
+            >
+              + Add rack item
+            </button>
+          ) : null}
+        </div>
+      );
+    }
 
     if (it.item_type === "cable") {
       return (
@@ -977,12 +1225,26 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
             </div>
 
             {editable ? (
-              <button
-                onClick={() => onDelete(it.id)}
-                className="px-3 py-1.5 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
-              >
-                Delete
-              </button>
+              <>
+                <button
+                  onClick={() => onDelete(it.id)}
+                  className="hidden sm:block px-3 py-1.5 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
+                >
+                  Delete
+                </button>
+
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onDelete(it.id);
+                  }}
+                  className="sm:hidden text-red-500 shrink-0 hover:text-black"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </>
             ) : null}
           </div>
 
@@ -1009,7 +1271,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                   return (
                     <div
                       key={row.id}
-                      className="grid grid-cols-[74px_repeat(5,45px)_20px] md:grid-cols-[160px_repeat(5,130px)_32px] items-center gap-[2px] px-2 lg:px-6 py-1.5 lg:py-4 text-[7px] lg:text-[10px] text-gray-900 border-t border-gray-100"
+                      className="grid grid-cols-[74px_repeat(5,45px)_20px] md:grid-cols-[160px_repeat(5,130px)_32px] items-center gap-[2px] px-2 lg:px-6 py-[2px] lg:py-1 text-[7px] lg:text-[10px] text-gray-900 border-t border-gray-100"
                     >
                       <button
                         type="button"
@@ -1320,11 +1582,14 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
           >
             <select
               value={itemType}
-              onChange={(e) => setItemType(e.target.value as "unit" | "cable")}
+              onChange={(e) =>
+                setItemType(e.target.value as "unit" | "cable" | "rack")
+              }
               className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
             >
               <option value="unit">Units</option>
               <option value="cable">Cable</option>
+              <option value="rack">Rack</option>
             </select>
 
             {itemType === "unit" ? (
@@ -1371,7 +1636,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                   setCableModel(e.target.value);
                   if (!imageSearch) setImageSearch(e.target.value);
                 }}
-                placeholder="Cable model"
+                placeholder={itemType === "rack" ? "Rack name" : "Cable model"}
                 className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
               />
             )}
