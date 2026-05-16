@@ -229,6 +229,38 @@ function MobileStat({
   );
 }
 
+function ModelMobileStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "gray" | "green" | "blue" | "yellow" | "purple";
+}) {
+  const cls =
+    tone === "gray"
+      ? "border-gray-200 bg-gray-50 text-gray-900"
+      : tone === "green"
+      ? "border-green-200 bg-green-50 text-green-950"
+      : tone === "blue"
+      ? "border-blue-200 bg-blue-50 text-blue-950"
+      : tone === "yellow"
+      ? "border-yellow-200 bg-yellow-50 text-yellow-950"
+      : "border-purple-200 bg-purple-50 text-purple-950";
+
+  return (
+    <div className={`rounded-xl border px-2 py-1.5 text-center ${cls}`}>
+      <div className="truncate text-[8px] font-bold uppercase tracking-wide opacity-70">
+        {label}
+      </div>
+      <div className="mt-0.5 whitespace-nowrap text-[9px] font-black leading-none">
+        {formatSqm(value)} SQM
+      </div>
+    </div>
+  );
+}
+
 function PhotoBox({
   photo,
   name,
@@ -1566,6 +1598,12 @@ function LedModelCard({
     })
   );
 
+  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
+
+  function toggleExpandedRow(rowId: string) {
+    setExpandedRows((prev) => ({ ...prev, [rowId]: !prev[rowId] }));
+  }
+
   const totalDisplay = rows.reduce(
     (sum, row) => sum + toSqm(clampQty(row.qty), row.size),
     0
@@ -1660,12 +1698,12 @@ function LedModelCard({
       </div>
 
       <div className="mt-2 sm:hidden">
-        <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
-          <MobileStat label="Total" value={totalDisplay} tone="gray" />
-          <MobileStat label="Available" value={availableDisplay} tone="green" />
-          <MobileStat label="In Use" value={inUseDisplay} tone="blue" />
-          <MobileStat label="Maintenance" value={maintenanceDisplay} tone="yellow" />
-          <MobileStat label="In KSA" value={inKsaDisplay} tone="purple" />
+        <div className="grid grid-cols-5 gap-x-1.5 gap-y-1 text-center">
+          <ModelMobileStat label="Total" value={totalDisplay} tone="gray" />
+          <ModelMobileStat label="Available" value={availableDisplay} tone="green" />
+          <ModelMobileStat label="In Use" value={inUseDisplay} tone="blue" />
+          <ModelMobileStat label="Maintenance" value={maintenanceDisplay} tone="yellow" />
+          <ModelMobileStat label="In KSA" value={inKsaDisplay} tone="purple" />
         </div>
       </div>
 
@@ -1778,38 +1816,76 @@ function LedModelCard({
   ) : null}
 </div>
 
-                    <div className="grid grid-cols-5 gap-x-1 gap-y-1 text-center">
-                      <button
-                        type="button"
-                        onClick={() => promptEditQty(r, "qty", "Total Qty", r.qty)}
-                        className="hover:text-red-500"
-                      >
-                        <MobileStat label="Total" value={toSqm(r.qty, r.size)} tone="gray" />
-                      </button>
-                      <MobileStat
-                        label="Available"
-                        value={toSqm(r.available_qty, r.size)}
-                        tone="green"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => promptEditQty(r, "in_use_qty", "In Use", r.in_use_qty)}
-                        className="hover:text-red-500"
-                      >
-                        <MobileStat label="In Use" value={toSqm(r.in_use_qty, r.size)} tone="blue" />
-                      </button>
-                      <MobileStat
-                        label="Maintenance"
-                        value={toSqm(r.maintenance_qty, r.size)}
-                        tone="yellow"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => promptEditQty(r, "in_ksa_qty", "In KSA", r.in_ksa_qty)}
-                        className="hover:text-red-500"
-                      >
-                        <MobileStat label="In KSA" value={toSqm(r.in_ksa_qty, r.size)} tone="purple" />
-                      </button>
+                    <div className="space-y-1">
+                      <div className="grid grid-cols-[1fr_1fr_1fr_24px] gap-x-1 gap-y-1 text-center">
+                        <button
+                          type="button"
+                          onClick={() => promptEditQty(r, "qty", "Total Qty", r.qty)}
+                          className="hover:text-red-500"
+                        >
+                          <MobileStat label="Total" value={toSqm(r.qty, r.size)} tone="gray" />
+                        </button>
+
+                        <MobileStat
+                          label="Available"
+                          value={toSqm(r.available_qty, r.size)}
+                          tone="green"
+                        />
+
+                        <MobileStat
+                          label="Maintenance"
+                          value={toSqm(r.maintenance_qty, r.size)}
+                          tone="yellow"
+                        />
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleExpandedRow(r.id);
+                          }}
+                          className="flex h-full min-h-[28px] items-center justify-center rounded-md bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-500"
+                          title={expandedRows[r.id] ? "Hide details" : "Show details"}
+                        >
+                          <ChevronDown
+                            size={13}
+                            className={`transition-transform ${expandedRows[r.id] ? "rotate-180" : ""}`}
+                          />
+                        </button>
+                      </div>
+
+                      {expandedRows[r.id] ? (
+                        <div className="grid grid-cols-2 gap-x-1 gap-y-1 text-center">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              promptEditQty(r, "in_use_qty", "In Use", r.in_use_qty)
+                            }
+                            className="hover:text-red-500"
+                          >
+                            <MobileStat
+                              label="In Use"
+                              value={toSqm(r.in_use_qty, r.size)}
+                              tone="blue"
+                            />
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              promptEditQty(r, "in_ksa_qty", "In KSA", r.in_ksa_qty)
+                            }
+                            className="hover:text-red-500"
+                          >
+                            <MobileStat
+                              label="In KSA"
+                              value={toSqm(r.in_ksa_qty, r.size)}
+                              tone="purple"
+                            />
+                          </button>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -1964,13 +2040,13 @@ function DesktopEditableCabinetRow({
         className="text-center"
       >
         <span className="inline-flex min-w-7 justify-center rounded-lg bg-blue-100 px-2 py-1 font-bold hover:text-red-500">
-          {formatSqm(toSqm(row.in_use_qty, row.size))}SQM
+          {formatSqm(toSqm(row.in_use_qty, row.size))} SQM
         </span>
       </button>
 
       <div className="text-center">
         <span className="inline-flex min-w-7 justify-center rounded-lg bg-yellow-100 px-2 py-1 font-bold">
-          {formatSqm(toSqm(row.maintenance_qty, row.size))}SQM
+          {formatSqm(toSqm(row.maintenance_qty, row.size))} SQM
         </span>
       </div>
 
@@ -1980,7 +2056,7 @@ function DesktopEditableCabinetRow({
         className="text-center"
       >
         <span className="inline-flex min-w-7 justify-center rounded-lg bg-purple-100 px-2 py-1 font-bold hover:text-red-500">
-          {formatSqm(toSqm(row.in_ksa_qty, row.size))}SQM
+          {formatSqm(toSqm(row.in_ksa_qty, row.size))} SQM
         </span>
       </button>
 
