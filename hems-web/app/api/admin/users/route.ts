@@ -37,27 +37,11 @@ export async function GET() {
   }
 
   try {
-    const { data: authData, error: authListError } =
-      await supabaseAdmin.auth.admin.listUsers();
-
-    if (authListError) {
-      return NextResponse.json(
-        { error: authListError.message || "Failed to list auth users." },
-        { status: 500 }
-      );
-    }
-
-    const authUsers = authData?.users ?? [];
-    const ids = authUsers.map((u) => u.id);
-
-    if (ids.length === 0) {
-      return NextResponse.json({ users: [] });
-    }
-
     const { data: profiles, error: profilesError } = await supabaseAdmin
       .from("profiles")
-      .select("id, full_name, role, department, avatar_url")
-      .in("id", ids);
+      .select("id, full_name, role, department, created_at")
+      .order("created_at", { ascending: false })
+      .limit(100);
 
     if (profilesError) {
       return NextResponse.json(
@@ -66,27 +50,15 @@ export async function GET() {
       );
     }
 
-    const profileMap = new Map((profiles ?? []).map((p: any) => [p.id, p]));
-
-    const users = authUsers
-      .map((u) => {
-        const p: any = profileMap.get(u.id);
-
-        return {
-          id: u.id,
-          email: u.email ?? "",
-          created_at: u.created_at ?? "",
-          full_name: p?.full_name ?? "",
-          role: (p?.role ?? "viewer") as UserRole,
-          department: (p?.department ?? "") as Department | "",
-          avatar_url: p?.avatar_url ?? "",
-        };
-      })
-      .sort((a, b) => {
-        const ad = new Date(a.created_at || 0).getTime();
-        const bd = new Date(b.created_at || 0).getTime();
-        return bd - ad;
-      });
+    const users = (profiles ?? []).map((p: any) => ({
+      id: p.id,
+      email: "",
+      created_at: p.created_at ?? "",
+      full_name: p.full_name ?? "",
+      role: (p.role ?? "viewer") as UserRole,
+      department: (p.department ?? "") as Department | "",
+      avatar_url: p.avatar_url ?? "",
+    }));
 
     return NextResponse.json({ users });
   } catch (error: any) {

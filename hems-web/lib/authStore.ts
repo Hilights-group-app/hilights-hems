@@ -77,10 +77,10 @@ export function isHead(): boolean {
 
 export function canEditInventory(): boolean {
   const role = getUserRole();
+
   return (
     role === "admin" ||
-    role === "warehouse_manager" ||
-    role === "head"
+    role === "warehouse_manager"
   );
 }
 

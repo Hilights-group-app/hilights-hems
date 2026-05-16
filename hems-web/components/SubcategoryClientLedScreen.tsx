@@ -199,8 +199,8 @@ function MobileStat({
       <div className="mb-1 truncate text-[8px] font-semibold text-gray-500">
         {label}
       </div>
-      <div className={`rounded-md px-1 py-0.5 text-[9px] font-semibold text-black ${cls}`}>
-        {formatSqm(value)}
+      <div className={`rounded-md px-[1px] py-0.5 text-[6px] font-semibold text-black whitespace-nowrap ${cls}`}>
+        {formatSqm(value)} SQM
       </div>
     </div>
   );
@@ -224,7 +224,7 @@ function PhotoBox({
   onSearchPhoto?: () => void;
 }) {
   return (
-    <div className="relative flex h-14 w-14 min-w-[56px] items-center justify-center rounded-xl bg-white">
+    <div className="relative flex h-11 w-11 min-w-[44px] items-center justify-center rounded-xl bg-white">
       {photo ? (
         <img
           src={photo}
@@ -1307,7 +1307,6 @@ export default function SubcategoryClientLedScreen({
                 brand={m.parsed.brand}
                 modelName={m.parsed.model}
                 editable={editable}
-                isOpen={openModelId === m.id}
                 rowPhotoMenuId={rowPhotoMenuId}
                 onToggleRowPhotoMenu={(rowId) =>
                   setRowPhotoMenuId((prev) => (prev === rowId ? null : rowId))
@@ -1318,7 +1317,6 @@ export default function SubcategoryClientLedScreen({
                   rowPhotoFileRef.current?.click();
                 }}
                 onSearchRowPhoto={(row) => startSearchForRowPhoto(row)}
-                onToggle={() => setOpenModelId((prev) => (prev === m.id ? null : m.id))}
                 onRename={() => renameModel(m.id, m.name)}
                 onDelete={() => deleteModel(m.id)}
                 onAddRow={() => openAddCabinetPopup(m.id)}
@@ -1506,12 +1504,10 @@ function LedModelCard({
   brand,
   modelName,
   editable,
-  isOpen,
   rowPhotoMenuId,
   onToggleRowPhotoMenu,
   onUploadRowPhoto,
   onSearchRowPhoto,
-  onToggle,
   onRename,
   onDelete,
   onAddRow,
@@ -1523,12 +1519,10 @@ function LedModelCard({
   brand: string;
   modelName: string;
   editable: boolean;
-  isOpen: boolean;
   rowPhotoMenuId: string | null;
   onToggleRowPhotoMenu: (rowId: string) => void;
   onUploadRowPhoto: (row: MatrixRow) => void;
   onSearchRowPhoto: (row: MatrixRow) => void;
-  onToggle: () => void;
   onRename: () => void;
   onDelete: () => void;
   onAddRow: () => void;
@@ -1559,124 +1553,138 @@ function LedModelCard({
     0
   );
 
+  async function promptEditSize(row: MatrixRow) {
+    if (!editable) return;
+    const nextSize = prompt("Edit cabinet size:", row.size);
+    if (nextSize === null) return;
+
+    const clean = normalizeText(nextSize);
+    if (!clean) return;
+
+    await onSaveRowDirect(row, { size: clean });
+  }
+
+  async function promptEditQty(
+    row: MatrixRow,
+    field: "qty" | "in_use_qty" | "in_ksa_qty",
+    label: string,
+    current: number
+  ) {
+    if (!editable) return;
+    const nextValue = prompt(`Edit ${label}:`, String(current ?? 0));
+    if (nextValue === null) return;
+
+    await onSaveRowDirect(row, { [field]: clampQty(nextValue) } as Partial<MatrixRow>);
+  }
+
   return (
     <div className="py-2">
-      <button type="button" onClick={onToggle} className="w-full text-left">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2 min-w-0">
-                <h2
-                  className="truncate text-[10px] sm:text-[11px] text-gray-900"
-                  style={{ lineHeight: 1.1 }}
-                >
-                  <span className="font-bold">{brand}</span>
-                  {modelName ? <span>{` ${modelName}`}</span> : null}
-                </h2>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+  <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
+    <div className="min-w-0 flex-1">
+      <div className="flex items-start justify-between gap-2 min-w-0">
+        <div className="relative min-w-0 inline-block pr-5">
+          <h2
+            className="truncate text-[13px] sm:text-[15px] text-gray-900"
+            style={{ lineHeight: 1.1 }}
+          >
+            <span className="font-bold">{brand}</span>
+            {modelName ? <span>{` ${modelName}`}</span> : null}
+          </h2>
 
-                <ChevronDown
-                  size={14}
-                  className={`shrink-0 text-gray-500 transition-transform ${
-                    isOpen ? "rotate-180" : ""
-                  }`}
-                />
-              </div>
-
-              <div className="mt-2 sm:hidden">
-                <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
-                  <MobileStat label="Total" value={totalDisplay} tone="gray" />
-                  <MobileStat label="Available" value={availableDisplay} tone="green" />
-                  <MobileStat label="In Use" value={inUseDisplay} tone="blue" />
-                  <MobileStat label="Maintenance" value={maintenanceDisplay} tone="yellow" />
-                  <MobileStat label="In KSA" value={inKsaDisplay} tone="purple" />
-                </div>
-              </div>
-
-              <div className="mt-1 hidden sm:block">
-                <div className="flex flex-wrap gap-2">
-                  <SmallStat label="Total" value={totalDisplay} tone="gray" />
-                  <SmallStat label="Available" value={availableDisplay} tone="green" />
-                  <SmallStat label="In Use" value={inUseDisplay} tone="blue" />
-                  <SmallStat label="Maintenance" value={maintenanceDisplay} tone="yellow" />
-                  <SmallStat label="In KSA" value={inKsaDisplay} tone="purple" />
-                </div>
-              </div>
-            </div>
-          </div>
+          {editable ? (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onRename();
+              }}
+              className="absolute -top-3 right-0 text-red-500 text-[12px] hover:text-black"
+              title="Rename model"
+            >
+              ✎
+            </button>
+          ) : null}
         </div>
-      </button>
 
-      {isOpen && (
-        <div className="mt-4 rounded-2xl border border-gray-200 overflow-hidden bg-white">
-          <div className="mb-0 flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
-            <div className="text-[10px] font-semibold text-gray-500">
-              Cabinet Sizes
-            </div>
+        {editable ? (
+          <button
+            type="button"
+            onClick={onDelete}
+            className="flex h-6 w-6 items-center justify-center rounded-full text-red-500 hover:bg-red-50 hover:text-black shrink-0"
+          >
+            <Trash2 size={14} />
+          </button>
+        ) : null}
+      </div>
 
-            {editable && (
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={onRename}
-                  className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[10px]"
-                >
-                  Rename
-                </button>
-                <button
-                  type="button"
-                  onClick={onDelete}
-                  className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[10px] text-red-500"
-                >
-                  Delete
-                </button>
-                <button
-                  type="button"
-                  onClick={onAddRow}
-                  className="rounded-full bg-black px-3 py-1 text-[10px] text-white"
-                >
-                  + Cabinet
-                </button>
-              </div>
-            )}
+      <div className="mt-2 sm:hidden">
+        <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
+          <MobileStat label="Total" value={totalDisplay} tone="gray" />
+          <MobileStat label="Available" value={availableDisplay} tone="green" />
+          <MobileStat label="In Use" value={inUseDisplay} tone="blue" />
+          <MobileStat label="Maintenance" value={maintenanceDisplay} tone="yellow" />
+          <MobileStat label="In KSA" value={inKsaDisplay} tone="purple" />
+        </div>
+      </div>
+
+      <div className="mt-1 hidden sm:block">
+        <div className="flex flex-wrap gap-2">
+          <SmallStat label="Total" value={totalDisplay} tone="gray" />
+          <SmallStat label="Available" value={availableDisplay} tone="green" />
+          <SmallStat label="In Use" value={inUseDisplay} tone="blue" />
+          <SmallStat label="Maintenance" value={maintenanceDisplay} tone="yellow" />
+          <SmallStat label="In KSA" value={inKsaDisplay} tone="purple" />
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+      <div className="mt-4 rounded-2xl border border-gray-200 overflow-hidden bg-white">
+        <div className="hidden sm:block">
+          <div className="grid grid-cols-[64px_1.4fr_repeat(5,96px)_28px] bg-gray-100 px-3 py-2 text-[10px] font-bold text-gray-600 items-center gap-1">
+            <div>Photo</div>
+            <div>Cabinet Size</div>
+            <div className="text-center">Total</div>
+            <div className="text-center">Available</div>
+            <div className="text-center">In Use</div>
+            <div className="text-center">Maintenance</div>
+            <div className="text-center">In KSA</div>
+            <div />
           </div>
 
-          <div className="hidden sm:block">
-            <div className="grid grid-cols-[64px_1.4fr_repeat(5,96px)_28px] bg-gray-100 px-3 py-2 text-[10px] font-bold text-gray-600 items-center gap-1">
-              <div>Photo</div>
-              <div>Cabinet Size</div>
-              <div className="text-center">Total</div>
-              <div className="text-center">Available</div>
-              <div className="text-center">In Use</div>
-              <div className="text-center">Maintenance</div>
-              <div className="text-center">In KSA</div>
-              <div />
+          {rows.length === 0 ? (
+            <div className="px-3 py-3 text-[10px] text-gray-400">
+              No cabinet sizes yet.
             </div>
+          ) : (
+            rows.map((r) => (
+              <DesktopEditableCabinetRow
+                key={r.id}
+                row={r}
+                editable={editable}
+                rowPhotoMenuId={rowPhotoMenuId}
+                onToggleRowPhotoMenu={onToggleRowPhotoMenu}
+                onUploadRowPhoto={onUploadRowPhoto}
+                onSearchRowPhoto={onSearchRowPhoto}
+                onSaveRowDirect={onSaveRowDirect}
+                onDeleteRow={onDeleteRow}
+              />
+            ))
+          )}
+        </div>
 
-            {rows.length === 0 ? (
-              <div className="px-3 py-3 text-[10px] text-gray-400">
-                No cabinet sizes yet.
-              </div>
-            ) : (
-              rows.map((r) => (
-                <DesktopEditableCabinetRow
-                  key={r.id}
-                  row={r}
-                  editable={editable}
-                  rowPhotoMenuId={rowPhotoMenuId}
-                  onToggleRowPhotoMenu={onToggleRowPhotoMenu}
-                  onUploadRowPhoto={onUploadRowPhoto}
-                  onSearchRowPhoto={onSearchRowPhoto}
-                  onSaveRowDirect={onSaveRowDirect}
-                  onDeleteRow={onDeleteRow}
-                />
-              ))
-            )}
-          </div>
-
-          <div className="space-y-2 p-2 sm:hidden">
-            {rows.map((r) => (
-              <div key={r.id} className="rounded-2xl border border-gray-100 bg-white p-2">
-                <div className="flex gap-3">
+        <div className="space-y-2 p-2 sm:hidden">
+          {rows.length === 0 ? (
+            <div className="px-2 py-3 text-[10px] text-gray-400">
+              No cabinet sizes yet.
+            </div>
+          ) : (
+            rows.map((r) => (
+              <div key={r.id} className="rounded-2xl border border-gray-100 bg-white px-2 py-[2px]">
+               <div className="flex gap-3 items-start">
                   <PhotoBox
                     photo={r.photo_data}
                     name={r.size}
@@ -1688,55 +1696,76 @@ function LedModelCard({
                   />
 
                   <div className="min-w-0 flex-1">
-                    <button
-                      type="button"
-                      onClick={() => onOpenEdit(r)}
-                      className="mb-2 truncate text-left text-[10px] font-bold text-gray-900 hover:text-red-500"
-                    >
-                      {r.size}
-                    </button>
+                    <div className="mb-2 flex items-start justify-between gap-2">
+  <button
+    type="button"
+    onClick={() => promptEditSize(r)}
+    className="block min-w-0 truncate text-left text-[10px] font-bold text-gray-900 hover:text-red-500"
+  >
+    {r.size}
+  </button>
+
+  {editable ? (
+    <button
+      type="button"
+      onClick={() => onDeleteRow(r.id)}
+      className="shrink-0 text-red-500 hover:text-black"
+    >
+      <Trash2 size={15} />
+    </button>
+  ) : null}
+</div>
 
                     <div className="grid grid-cols-5 gap-x-1 gap-y-1 text-center">
-                      <MobileStat label="Total" value={toSqm(r.qty, r.size)} tone="gray" />
+                      <button
+                        type="button"
+                        onClick={() => promptEditQty(r, "qty", "Total Qty", r.qty)}
+                        className="hover:text-red-500"
+                      >
+                        <MobileStat label="Total" value={toSqm(r.qty, r.size)} tone="gray" />
+                      </button>
                       <MobileStat
                         label="Available"
                         value={toSqm(r.available_qty, r.size)}
                         tone="green"
                       />
-                      <MobileStat label="In Use" value={toSqm(r.in_use_qty, r.size)} tone="blue" />
+                      <button
+                        type="button"
+                        onClick={() => promptEditQty(r, "in_use_qty", "In Use", r.in_use_qty)}
+                        className="hover:text-red-500"
+                      >
+                        <MobileStat label="In Use" value={toSqm(r.in_use_qty, r.size)} tone="blue" />
+                      </button>
                       <MobileStat
                         label="Maintenance"
                         value={toSqm(r.maintenance_qty, r.size)}
                         tone="yellow"
                       />
-                      <MobileStat label="In KSA" value={toSqm(r.in_ksa_qty, r.size)} tone="purple" />
+                      <button
+                        type="button"
+                        onClick={() => promptEditQty(r, "in_ksa_qty", "In KSA", r.in_ksa_qty)}
+                        className="hover:text-red-500"
+                      >
+                        <MobileStat label="In KSA" value={toSqm(r.in_ksa_qty, r.size)} tone="purple" />
+                      </button>
                     </div>
                   </div>
                 </div>
-
-                {editable && (
-                  <div className="mt-2 flex justify-end gap-3">
-                    <button
-                      type="button"
-                      onClick={() => onOpenEdit(r)}
-                      className="rounded-full border border-gray-200 px-3 py-1 text-[10px]"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onDeleteRow(r.id)}
-                      className="text-red-500 hover:text-black"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                )}
               </div>
-            ))}
-          </div>
+            ))
+          )}
         </div>
-      )}
+      </div>
+
+      {editable ? (
+        <button
+          type="button"
+          onClick={onAddRow}
+          className="mt-2 text-[10px] font-medium text-red-500 hover:text-black"
+        >
+          + Add cabinet
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -1760,27 +1789,38 @@ function DesktopEditableCabinetRow({
   onSaveRowDirect: (row: MatrixRow, patch: Partial<MatrixRow>) => Promise<void>;
   onDeleteRow: (rowId: string) => void;
 }) {
-  const [size, setSize] = useState(row.size);
-  const [qty, setQty] = useState(String(row.qty));
-  const [inUse, setInUse] = useState(String(row.in_use_qty));
-  const [inKsa, setInKsa] = useState(String(row.in_ksa_qty));
-
-  useEffect(() => {
-    setSize(row.size);
-    setQty(String(row.qty));
-    setInUse(String(row.in_use_qty));
-    setInKsa(String(row.in_ksa_qty));
-  }, [row]);
-
   const available = rowAvailableFromTotal(
-    clampQty(qty),
-    clampQty(inUse),
+    clampQty(row.qty),
+    clampQty(row.in_use_qty),
     clampQty(row.maintenance_qty),
-    clampQty(inKsa)
+    clampQty(row.in_ksa_qty)
   );
 
+  async function promptEditSize() {
+    if (!editable) return;
+    const nextSize = prompt("Edit cabinet size:", row.size);
+    if (nextSize === null) return;
+
+    const clean = normalizeText(nextSize);
+    if (!clean) return;
+
+    await onSaveRowDirect(row, { size: clean });
+  }
+
+  async function promptEditQty(
+    field: "qty" | "in_use_qty" | "in_ksa_qty",
+    label: string,
+    current: number
+  ) {
+    if (!editable) return;
+    const nextValue = prompt(`Edit ${label}:`, String(current ?? 0));
+    if (nextValue === null) return;
+
+    await onSaveRowDirect(row, { [field]: clampQty(nextValue) } as Partial<MatrixRow>);
+  }
+
   return (
-    <div className="grid grid-cols-[64px_1.4fr_repeat(5,96px)_28px] items-center gap-1 border-t border-gray-100 px-3 py-2 text-[10px] text-gray-900">
+    <div className="grid grid-cols-[64px_1.4fr_repeat(5,96px)_28px] items-center gap-1 border-t border-gray-100 px-3 py-[2px] text-[9px] text-gray-900">
       <PhotoBox
         photo={row.photo_data}
         name={row.size}
@@ -1791,49 +1831,54 @@ function DesktopEditableCabinetRow({
         onSearchPhoto={() => onSearchRowPhoto(row)}
       />
 
-      <input
-        value={size}
-        readOnly={!editable}
-        onChange={(e) => setSize(e.target.value)}
-        onBlur={() => onSaveRowDirect(row, { size })}
-        className="w-full rounded-lg border-none bg-transparent px-1 py-1 font-bold outline-none focus:bg-gray-50"
-      />
+      <button
+        type="button"
+        onClick={promptEditSize}
+        className="truncate text-left font-bold hover:text-red-500"
+        title={row.size}
+      >
+        {row.size}
+      </button>
 
-      <input
-        value={qty}
-        readOnly={!editable}
-        onChange={(e) => setQty(String(clampQty(e.target.value)))}
-        onBlur={() => onSaveRowDirect(row, { qty: clampQty(qty) })}
-        className="w-full rounded-lg border-none bg-transparent px-1 py-1 text-center outline-none focus:bg-gray-50"
-      />
+      <button
+        type="button"
+        onClick={() => promptEditQty("qty", "Total Qty", row.qty)}
+        className="text-center hover:text-red-500"
+      >
+        {formatSqm(toSqm(row.qty, row.size))} SQM
+      </button>
 
       <div className="text-center">
         <span className="inline-flex min-w-7 justify-center rounded-lg bg-green-100 px-2 py-1 font-bold">
-          {formatSqm(toSqm(available, size))}
-        </span>
+  {formatSqm(toSqm(available, row.size))} SQM
+</span>
       </div>
 
-      <input
-        value={inUse}
-        readOnly={!editable}
-        onChange={(e) => setInUse(String(clampQty(e.target.value)))}
-        onBlur={() => onSaveRowDirect(row, { in_use_qty: clampQty(inUse) })}
-        className="w-full rounded-lg border-none bg-transparent px-1 py-1 text-center outline-none focus:bg-blue-50"
-      />
+      <button
+        type="button"
+        onClick={() => promptEditQty("in_use_qty", "In Use", row.in_use_qty)}
+        className="text-center"
+      >
+        <span className="inline-flex min-w-7 justify-center rounded-lg bg-blue-100 px-2 py-1 font-bold hover:text-red-500">
+          {formatSqm(toSqm(row.in_use_qty, row.size))}SQM
+        </span>
+      </button>
 
       <div className="text-center">
         <span className="inline-flex min-w-7 justify-center rounded-lg bg-yellow-100 px-2 py-1 font-bold">
-          {formatSqm(toSqm(row.maintenance_qty, size))}
+          {formatSqm(toSqm(row.maintenance_qty, row.size))}SQM
         </span>
       </div>
 
-      <input
-        value={inKsa}
-        readOnly={!editable}
-        onChange={(e) => setInKsa(String(clampQty(e.target.value)))}
-        onBlur={() => onSaveRowDirect(row, { in_ksa_qty: clampQty(inKsa) })}
-        className="w-full rounded-lg border-none bg-transparent px-1 py-1 text-center outline-none focus:bg-purple-50"
-      />
+      <button
+        type="button"
+        onClick={() => promptEditQty("in_ksa_qty", "In KSA", row.in_ksa_qty)}
+        className="text-center"
+      >
+        <span className="inline-flex min-w-7 justify-center rounded-lg bg-purple-100 px-2 py-1 font-bold hover:text-red-500">
+          {formatSqm(toSqm(row.in_ksa_qty, row.size))}SQM
+        </span>
+      </button>
 
       <div>
         {editable ? (
