@@ -13,6 +13,7 @@ type Category = {
 
 function getCachedCatalog(): Category[] {
   if (typeof window === "undefined") return [];
+
   try {
     const cached = sessionStorage.getItem("hems:catalog");
     return cached ? JSON.parse(cached) : [];
@@ -22,11 +23,21 @@ function getCachedCatalog(): Category[] {
 }
 
 export default function InventoryClient() {
-  const [categories, setCategories] = useState<Category[]>(() => getCachedCatalog());
-  const [loading, setLoading] = useState(() => getCachedCatalog().length === 0);
+  const [mounted, setMounted] = useState(false);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
   const [loadingSub, setLoadingSub] = useState<string | null>(null);
 
   useEffect(() => {
+    setMounted(true);
+
+    const cached = getCachedCatalog();
+
+    if (cached.length > 0) {
+      setCategories(cached);
+      setLoading(false);
+    }
+
     void loadCatalog();
   }, []);
 
@@ -36,7 +47,10 @@ export default function InventoryClient() {
       const cats = data.categories || [];
 
       setCategories(cats);
-      sessionStorage.setItem("hems:catalog", JSON.stringify(cats));
+
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem("hems:catalog", JSON.stringify(cats));
+      }
     } catch (e) {
       console.error("Inventory load error:", e);
     } finally {
@@ -44,16 +58,27 @@ export default function InventoryClient() {
     }
   }
 
+  if (!mounted) {
+    return null;
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 p-3">
         <div className="mx-auto max-w-[1100px] space-y-3">
           {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="rounded-2xl border border-gray-200 bg-white px-4 py-4 shadow-sm">
+            <div
+              key={i}
+              className="rounded-2xl border border-gray-200 bg-white px-4 py-4 shadow-sm"
+            >
               <div className="mb-4 h-4 w-32 animate-pulse rounded bg-gray-200" />
+
               <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                 {Array.from({ length: 6 }).map((_, j) => (
-                  <div key={j} className="h-9 animate-pulse rounded-xl bg-gray-200 sm:h-7 sm:w-24 sm:rounded-full" />
+                  <div
+                    key={j}
+                    className="h-9 animate-pulse rounded-xl bg-gray-200 sm:h-7 sm:w-24 sm:rounded-full"
+                  />
                 ))}
               </div>
             </div>
@@ -74,6 +99,7 @@ export default function InventoryClient() {
             <div className="mb-3 flex items-center justify-between sm:mb-1.5">
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 shrink-0 rounded-full bg-red-500 sm:h-1.5 sm:w-1.5" />
+
                 <h2 className="text-[15px] font-bold leading-none text-gray-900 sm:text-sm sm:font-semibold">
                   {cat.name}
                 </h2>

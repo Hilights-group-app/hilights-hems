@@ -1249,9 +1249,8 @@ export default function SubcategoryClientLedScreen({
           No LED screen models yet.
         </div>
       ) : (
-        <div className="rounded-2xl border border-gray-200 bg-white p-2 sm:p-4">
-          <div className="divide-y divide-gray-100">
-            {parsedModels.map((m) => (
+        <div className="space-y-3">
+  {parsedModels.map((m) => (
               <LedModelCard
                 key={m.id}
                 model={m}
@@ -1276,8 +1275,7 @@ export default function SubcategoryClientLedScreen({
                 onSaveRowDirect={saveRowDirect}
                 onRowsReorder={reorderRows}
               />
-            ))}
-          </div>
+              ))}
         </div>
       )}
 
@@ -1459,7 +1457,7 @@ export default function SubcategoryClientLedScreen({
                   ) : null}
 
                   {imageResults.length > 0 ? (
-                    <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
+                    <div className="mt-3 grid max-h-[260px] grid-cols-3 gap-2 overflow-y-auto pr-1 sm:grid-cols-4">
                       {imageResults.map((img, index) => {
                         const imageUrl = img.original || img.image || img.thumbnail;
                         const thumb = img.thumbnail || imageUrl;
@@ -1620,7 +1618,7 @@ function LedModelCard({
   }
 
   return (
-    <div className="py-2">
+    <div className="rounded-2xl border border-gray-200 bg-white p-3 sm:p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
   <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
     <div className="min-w-0 flex-1">
@@ -1684,7 +1682,7 @@ function LedModelCard({
   </div>
 </div>
 
-      <div className="mt-4 rounded-2xl border border-gray-200 overflow-visible bg-white">
+      <div className="mt-4 overflow-hidden rounded-2xl border border-gray-200 bg-white">
         <div className="hidden sm:block">
           <div className="grid grid-cols-[64px_1.4fr_repeat(5,96px)_28px] bg-gray-100 px-3 py-2 text-[10px] font-bold text-gray-600 items-center gap-1">
             <div>Photo</div>
