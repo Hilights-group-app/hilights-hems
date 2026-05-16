@@ -4,6 +4,20 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
 import { ChevronDown, Trash2 } from "lucide-react";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 type MatrixRow = {
   id: string;
@@ -15,6 +29,7 @@ type MatrixRow = {
   maintenance_qty: number;
   in_ksa_qty: number;
   photo_data?: string | null;
+  sort_order?: number | null;
 };
 
 type MatrixModel = {
@@ -144,6 +159,14 @@ function formatSqm(value: number) {
   const rounded = Math.round(value * 100) / 100;
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2);
 }
+function sortRows(rows?: MatrixRow[]) {
+  return [...(rows ?? [])].sort((a, b) => {
+    const ao = typeof a.sort_order === "number" ? a.sort_order : 999999;
+    const bo = typeof b.sort_order === "number" ? b.sort_order : 999999;
+    return ao - bo;
+  });
+}
+
 
 function SmallStat({
   label,
@@ -238,7 +261,7 @@ function PhotoBox({
       )}
 
       {editable ? (
-        <div className="absolute right-0 top-0 z-30" data-led-photo-menu="true">
+        <div className="absolute right-0 top-0 z-[9999]" data-led-photo-menu="true">
           <button
             type="button"
             onClick={(e) => {
@@ -360,14 +383,14 @@ export default function SubcategoryClientLedScreen({
   }
 
   async function loadModels(subId: string) {
-    setLoading(true);
+    setLoading(models.length === 0);
     setErrorMsg(null);
 
     try {
       const { data, error } = await supabase
         .from("matrix_models")
         .select(
-          "id, category_id, subcategory_id, name, created_at, matrix_rows(id, model_id, size, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data)"
+          "id, category_id, subcategory_id, name, created_at, matrix_rows(id, model_id, size, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data, sort_order)"
         )
         .eq("subcategory_id", subId)
         .order("created_at", { ascending: false });
@@ -393,11 +416,11 @@ export default function SubcategoryClientLedScreen({
             const rres = await supabase
               .from("matrix_rows")
               .select(
-                "id, model_id, size, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data"
+                "id, model_id, size, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data, sort_order"
               )
               .eq("model_id", m.id);
 
-            return { ...m, matrix_rows: (rres.data ?? []) as MatrixRow[] };
+            return { ...m, matrix_rows: sortRows((rres.data ?? []) as MatrixRow[]) };
           })
         );
 
@@ -406,7 +429,12 @@ export default function SubcategoryClientLedScreen({
         return;
       }
 
-      setModels((data ?? []) as MatrixModel[]);
+      setModels(
+        ((data ?? []) as MatrixModel[]).map((m) => ({
+          ...m,
+          matrix_rows: sortRows(m.matrix_rows),
+        }))
+      );
     } catch (e: any) {
       setErrorMsg(e?.message || "Failed to load LED screen models.");
       setModels([]);
@@ -629,7 +657,10 @@ export default function SubcategoryClientLedScreen({
   }
 
   function startSearchForAddCabinetPhoto() {
-    const rowSearch = `${brand} ${model} ${addCabinetSize}`.trim();
+    const currentModel = models.find((m) => m.id === addingModelId);
+    const parsed = currentModel ? parseLedName(currentModel.name) : { brand, model };
+    const rowSearch = `${parsed.brand} ${parsed.model} ${addCabinetSize} LED cabinet`.trim();
+
     setPhotoTarget({ type: "addCabinet" });
     setAddCabinetPhotoMenuOpen(false);
     setImageSearch(rowSearch);
@@ -661,122 +692,62 @@ export default function SubcategoryClientLedScreen({
 
     const cleanBrand = normalizeText(brand);
     const cleanModel = normalizeText(model);
-    const cleanCabinet = normalizeText(cabinetSize);
-    const totalQty = clampQty(totalQtyInput);
 
     if (!cleanBrand) return setErrorMsg("Please enter brand name.");
     if (!cleanModel) return setErrorMsg("Please enter model / pixel pitch.");
-    if (!cleanCabinet) return setErrorMsg("Please enter cabinet size.");
-    if (totalQty <= 0) return setErrorMsg("Please enter qty by panel.");
+
+    const fullName = buildLedName(cleanBrand, cleanModel);
+    const existingModel = parsedModels.find(
+      (m) =>
+        normalizeText(m.parsed.brand).toLowerCase() === cleanBrand.toLowerCase() &&
+        normalizeText(m.parsed.model).toLowerCase() === cleanModel.toLowerCase()
+    );
+
+    if (existingModel) {
+      setSaveMsg("LED screen model already exists");
+      setOpenModelId(existingModel.id);
+      setTimeout(
+        () => setSaveMsg((prev) => (prev === "LED screen model already exists" ? "" : prev)),
+        1500
+      );
+      return;
+    }
 
     setSubmitting(true);
 
     try {
       const catId = resolvedCategoryId ?? (await resolveCategoryId(subcategoryId));
-      const fullName = buildLedName(cleanBrand, cleanModel);
 
-      const existingModel = parsedModels.find(
-        (m) =>
-          normalizeText(m.parsed.brand).toLowerCase() === cleanBrand.toLowerCase() &&
-          normalizeText(m.parsed.model).toLowerCase() === cleanModel.toLowerCase()
-      );
+      const { data: created, error } = await supabase
+        .from("matrix_models")
+        .insert({
+          category_id: catId,
+          subcategory_id: subcategoryId,
+          name: fullName,
+        })
+        .select("id, category_id, subcategory_id, name, created_at")
+        .single();
 
-      if (existingModel) {
-        const existingRow = (existingModel.matrix_rows ?? []).find(
-          (r) => normalizeText(r.size).toLowerCase() === cleanCabinet.toLowerCase()
-        );
-
-        if (existingRow) {
-          const newTotal = clampQty(existingRow.qty) + totalQty;
-          const newAvailable = rowAvailableFromTotal(
-            newTotal,
-            clampQty(existingRow.in_use_qty),
-            clampQty(existingRow.maintenance_qty),
-            clampQty(existingRow.in_ksa_qty)
-          );
-
-          const { error } = await supabase
-            .from("matrix_rows")
-            .update({
-              qty: newTotal,
-              available_qty: newAvailable,
-              photo_data: newPhoto || existingRow.photo_data || null,
-            })
-            .eq("id", existingRow.id);
-
-          if (error) {
-            setErrorMsg(error.message || "Failed to update qty.");
-            return;
-          }
-        } else {
-          const { error } = await supabase.from("matrix_rows").insert({
-            model_id: existingModel.id,
-            size: cleanCabinet,
-            qty: totalQty,
-            available_qty: totalQty,
-            in_use_qty: 0,
-            maintenance_qty: 0,
-            in_ksa_qty: 0,
-            photo_data: newPhoto || null,
-          });
-
-          if (error) {
-            setErrorMsg(error.message || "Failed to add cabinet row.");
-            return;
-          }
-        }
-      } else {
-        const { data: created, error } = await supabase
-          .from("matrix_models")
-          .insert({
-            category_id: catId,
-            subcategory_id: subcategoryId,
-            name: fullName,
-          })
-          .select("id, category_id, subcategory_id, name, created_at")
-          .single();
-
-        if (error || !created) {
-          setErrorMsg(error?.message || "Failed to add LED screen model.");
-          return;
-        }
-
-        const firstRow = await supabase.from("matrix_rows").insert({
-          model_id: created.id,
-          size: cleanCabinet,
-          qty: totalQty,
-          available_qty: totalQty,
-          in_use_qty: 0,
-          maintenance_qty: 0,
-          in_ksa_qty: 0,
-          photo_data: newPhoto || null,
-        });
-
-        if (firstRow.error) {
-          setErrorMsg(firstRow.error.message || "Model added, but failed to create first cabinet row.");
-          return;
-        }
-
-        setOpenModelId(created.id);
+      if (error || !created) {
+        setErrorMsg(error?.message || "Failed to add LED screen model.");
+        return;
       }
 
+      const newModel = { ...(created as MatrixModel), matrix_rows: [] };
+
+      setModels((prev) => [newModel, ...prev]);
+      setOpenModelId(created.id);
       setBrand("");
       setModel("");
-      setCabinetSize("");
-      setTotalQtyInput(0);
-      setNewPhoto(null);
-      setImageSearch("");
-      setImageResults([]);
-      setSearchPanelOpen(false);
-      setSaveMsg("LED screen added");
+      setSaveMsg("LED screen model added");
       setTimeout(
-        () => setSaveMsg((prev) => (prev === "LED screen added" ? "" : prev)),
+        () => setSaveMsg((prev) => (prev === "LED screen model added" ? "" : prev)),
         1500
       );
 
-      await loadModels(subcategoryId);
+      void loadModels(subcategoryId);
     } catch (e: any) {
-      setErrorMsg(e?.message || "Failed to add LED screen.");
+      setErrorMsg(e?.message || "Failed to add LED screen model.");
     } finally {
       setSubmitting(false);
     }
@@ -883,22 +854,38 @@ export default function SubcategoryClientLedScreen({
 
     setSavingAddCabinet(true);
 
-    const { error } = await supabase.from("matrix_rows").insert({
-      model_id: addingModelId,
-      size,
-      qty: total,
-      available_qty: total,
-      in_use_qty: 0,
-      maintenance_qty: 0,
-      in_ksa_qty: 0,
-      photo_data: addCabinetPhoto || null,
-    });
+    const { data, error } = await supabase
+      .from("matrix_rows")
+      .insert({
+        model_id: addingModelId,
+        size,
+        qty: total,
+        available_qty: total,
+        in_use_qty: 0,
+        maintenance_qty: 0,
+        in_ksa_qty: 0,
+        photo_data: addCabinetPhoto || null,
+        sort_order:
+          models.find((m) => m.id === addingModelId)?.matrix_rows?.length ?? 0,
+      })
+      .select("id, model_id, size, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data, sort_order")
+      .single();
 
-    if (error) {
-      alert("Failed to add cabinet");
+    if (error || !data) {
+      alert(error?.message || "Failed to add cabinet");
       setSavingAddCabinet(false);
       return;
     }
+
+    const newRow = data as MatrixRow;
+
+    setModels((prev) =>
+      prev.map((m) =>
+        m.id === addingModelId
+          ? { ...m, matrix_rows: [...(m.matrix_rows ?? []), newRow] }
+          : m
+      )
+    );
 
     if (subcategoryId) {
       setSaveMsg("Cabinet added");
@@ -906,7 +893,7 @@ export default function SubcategoryClientLedScreen({
         () => setSaveMsg((prev) => (prev === "Cabinet added" ? "" : prev)),
         1500
       );
-      await loadModels(subcategoryId);
+      void loadModels(subcategoryId);
     }
 
     setOpenModelId(addingModelId);
@@ -1007,6 +994,45 @@ export default function SubcategoryClientLedScreen({
     }
   }
 
+  async function reorderRows(modelId: string, activeId: string, overId: string) {
+    if (!editable || activeId === overId) return;
+
+    let nextRows: MatrixRow[] = [];
+
+    setModels((prev) =>
+      prev.map((m) => {
+        if (m.id !== modelId) return m;
+
+        const rows = m.matrix_rows ?? [];
+        const oldIndex = rows.findIndex((r) => r.id === activeId);
+        const newIndex = rows.findIndex((r) => r.id === overId);
+
+        if (oldIndex < 0 || newIndex < 0) return m;
+
+        nextRows = arrayMove(rows, oldIndex, newIndex).map((r, index) => ({
+          ...r,
+          sort_order: index,
+        }));
+
+        return { ...m, matrix_rows: nextRows };
+      })
+    );
+
+    if (nextRows.length === 0) return;
+
+    const results = await Promise.all(
+      nextRows.map((row, index) =>
+        supabase.from("matrix_rows").update({ sort_order: index }).eq("id", row.id)
+      )
+    );
+
+    const failed = results.find((res) => res.error);
+    if (failed?.error) {
+      alert("Failed to save row order");
+      if (subcategoryId) void loadModels(subcategoryId);
+    }
+  }
+
   async function deleteModel(modelId: string) {
     if (!editable) return;
     if (!confirm("Delete this LED model?")) return;
@@ -1096,7 +1122,7 @@ export default function SubcategoryClientLedScreen({
             </p>
           </div>
 
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_1fr_76px_116px_76px] md:items-center">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_76px] md:items-center">
             <input
               list="led-brand-list"
               value={brand}
@@ -1123,63 +1149,6 @@ export default function SubcategoryClientLedScreen({
               ))}
             </datalist>
 
-            <input
-              list="led-cabinet-list"
-              value={cabinetSize}
-              onChange={(e) => setCabinetSize(e.target.value)}
-              placeholder="Cabinet size"
-              className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
-            />
-            <datalist id="led-cabinet-list">
-              {cabinetSuggestions.map((s) => (
-                <option key={s} value={s} />
-              ))}
-            </datalist>
-
-            <input
-              type="number"
-              min={0}
-              value={String(totalQtyInput)}
-              onChange={(e) => setTotalQtyInput(clampQty(e.target.value))}
-              placeholder="Qty"
-              className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
-            />
-
-            <div id="led-add-photo-menu" className="relative">
-              <button
-                type="button"
-                onClick={() => setAddPhotoMenuOpen((v) => !v)}
-                className="flex h-11 w-full items-center justify-center gap-1 rounded-2xl border border-gray-300 bg-white px-4 text-[12px] font-medium text-gray-700 shadow-sm transition hover:bg-red-50 hover:border-red-200 hover:text-red-700"
-              >
-                {newPhoto ? "Photo ✔" : "Add photo"}
-                <ChevronDown size={13} />
-              </button>
-
-              {addPhotoMenuOpen ? (
-                <div className="absolute right-0 top-full z-[9999] mt-2 w-40 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPhotoTarget({ type: "new" });
-                      setAddPhotoMenuOpen(false);
-                      newPhotoFileRef.current?.click();
-                    }}
-                    className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
-                  >
-                    Upload photo
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={startSearchForNewPhoto}
-                    className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
-                  >
-                    Search photo
-                  </button>
-                </div>
-              ) : null}
-            </div>
-
             <button
               type="button"
               onClick={addLedScreen}
@@ -1190,24 +1159,6 @@ export default function SubcategoryClientLedScreen({
             </button>
           </div>
 
-          {newPhoto ? (
-            <div className="mt-3 flex items-center gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-2">
-              <img
-                src={newPhoto}
-                alt="Selected"
-                className="h-12 w-12 rounded-xl object-cover border border-gray-200 bg-white"
-              />
-
-              <button
-                type="button"
-                onClick={() => setNewPhoto(null)}
-                className="text-[10px] font-medium text-red-500 hover:text-black"
-              >
-                Remove photo
-              </button>
-            </div>
-          ) : null}
-
           {(errorMsg || saveMsg) && (
             <div className={`mt-3 text-xs ${errorMsg ? "text-red-600" : "text-gray-500"}`}>
               {errorMsg || saveMsg}
@@ -1216,7 +1167,7 @@ export default function SubcategoryClientLedScreen({
         </div>
       )}
 
-      {searchPanelOpen ? (
+      {searchPanelOpen && photoTarget?.type !== "addCabinet" ? (
         <div className="rounded-2xl border border-gray-200 p-3 relative z-50 bg-white">
           <div className="mb-3 flex items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-gray-900">
@@ -1323,6 +1274,7 @@ export default function SubcategoryClientLedScreen({
                 onDeleteRow={(rowId) => deleteRow(rowId)}
                 onOpenEdit={(row) => openEditPopup(row)}
                 onSaveRowDirect={saveRowDirect}
+                onRowsReorder={reorderRows}
               />
             ))}
           </div>
@@ -1458,6 +1410,83 @@ export default function SubcategoryClientLedScreen({
                 ) : null}
               </div>
 
+              {searchPanelOpen && photoTarget?.type === "addCabinet" ? (
+                <div className="rounded-2xl border border-gray-200 p-3 relative z-[9999] bg-white">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className="text-[12px] font-semibold text-gray-900">
+                      Search photo online
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchPanelOpen(false);
+                        setImageResults([]);
+                        setPhotoTarget(null);
+                      }}
+                      className="text-[10px] text-red-500 hover:text-black"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input
+                      value={imageSearch}
+                      onChange={(e) => setImageSearch(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void searchOnlineImages();
+                        }
+                      }}
+                      placeholder="Search image..."
+                      className="h-10 flex-1 rounded-xl border border-gray-300 px-3 text-[12px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => void searchOnlineImages()}
+                      disabled={searchingImages}
+                      className="h-10 rounded-xl bg-black px-3 text-[11px] font-medium text-white disabled:opacity-40"
+                    >
+                      {searchingImages ? "Searching..." : "Search"}
+                    </button>
+                  </div>
+
+                  {searchingImages ? (
+                    <div className="mt-3 text-xs text-gray-500">Searching images...</div>
+                  ) : null}
+
+                  {imageResults.length > 0 ? (
+                    <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-4">
+                      {imageResults.map((img, index) => {
+                        const imageUrl = img.original || img.image || img.thumbnail;
+                        const thumb = img.thumbnail || imageUrl;
+
+                        if (!imageUrl || !thumb) return null;
+
+                        return (
+                          <button
+                            key={`${imageUrl}-${index}`}
+                            type="button"
+                            onClick={() => void selectOnlinePhoto(img)}
+                            className="overflow-hidden rounded-lg border border-gray-200 hover:border-blue-400"
+                            title={img.title || "Select photo"}
+                          >
+                            <img
+                              src={thumb}
+                              alt={img.title || "Online image"}
+                              className="aspect-square w-full object-cover"
+                            />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
               {addCabinetPhoto ? (
                 <div className="flex items-center gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-2">
                   <img
@@ -1514,6 +1543,7 @@ function LedModelCard({
   onDeleteRow,
   onOpenEdit,
   onSaveRowDirect,
+  onRowsReorder,
 }: {
   model: MatrixModel;
   brand: string;
@@ -1529,8 +1559,14 @@ function LedModelCard({
   onDeleteRow: (rowId: string) => void;
   onOpenEdit: (row: MatrixRow) => void;
   onSaveRowDirect: (row: MatrixRow, patch: Partial<MatrixRow>) => Promise<void>;
+  onRowsReorder: (modelId: string, activeId: string, overId: string) => Promise<void>;
 }) {
-  const rows = model.matrix_rows ?? [];
+  const rows = sortRows(model.matrix_rows);
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    })
+  );
 
   const totalDisplay = rows.reduce(
     (sum, row) => sum + toSqm(clampQty(row.qty), row.size),
@@ -1575,6 +1611,12 @@ function LedModelCard({
     if (nextValue === null) return;
 
     await onSaveRowDirect(row, { [field]: clampQty(nextValue) } as Partial<MatrixRow>);
+  }
+
+  function handleDragEnd(event: any) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    void onRowsReorder(model.id, String(active.id), String(over.id));
   }
 
   return (
@@ -1642,7 +1684,7 @@ function LedModelCard({
   </div>
 </div>
 
-      <div className="mt-4 rounded-2xl border border-gray-200 overflow-hidden bg-white">
+      <div className="mt-4 rounded-2xl border border-gray-200 overflow-visible bg-white">
         <div className="hidden sm:block">
           <div className="grid grid-cols-[64px_1.4fr_repeat(5,96px)_28px] bg-gray-100 px-3 py-2 text-[10px] font-bold text-gray-600 items-center gap-1">
             <div>Photo</div>
@@ -1660,19 +1702,31 @@ function LedModelCard({
               No cabinet sizes yet.
             </div>
           ) : (
-            rows.map((r) => (
-              <DesktopEditableCabinetRow
-                key={r.id}
-                row={r}
-                editable={editable}
-                rowPhotoMenuId={rowPhotoMenuId}
-                onToggleRowPhotoMenu={onToggleRowPhotoMenu}
-                onUploadRowPhoto={onUploadRowPhoto}
-                onSearchRowPhoto={onSearchRowPhoto}
-                onSaveRowDirect={onSaveRowDirect}
-                onDeleteRow={onDeleteRow}
-              />
-            ))
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext
+                items={rows.map((r) => r.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {rows.map((r) => (
+                  <SortableCabinetRow key={r.id} id={r.id} disabled={!editable}>
+                    <DesktopEditableCabinetRow
+                      row={r}
+                      editable={editable}
+                      rowPhotoMenuId={rowPhotoMenuId}
+                      onToggleRowPhotoMenu={onToggleRowPhotoMenu}
+                      onUploadRowPhoto={onUploadRowPhoto}
+                      onSearchRowPhoto={onSearchRowPhoto}
+                      onSaveRowDirect={onSaveRowDirect}
+                      onDeleteRow={onDeleteRow}
+                    />
+                  </SortableCabinetRow>
+                ))}
+              </SortableContext>
+            </DndContext>
           )}
         </div>
 
@@ -1682,9 +1736,19 @@ function LedModelCard({
               No cabinet sizes yet.
             </div>
           ) : (
-            rows.map((r) => (
-              <div key={r.id} className="rounded-2xl border border-gray-100 bg-white px-2 py-[2px]">
-               <div className="flex gap-3 items-start">
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragEnd={handleDragEnd}
+            >
+              <SortableContext
+                items={rows.map((r) => r.id)}
+                strategy={verticalListSortingStrategy}
+              >
+                {rows.map((r) => (
+                  <SortableCabinetRow key={r.id} id={r.id} disabled={!editable}>
+                    <div className="rounded-2xl border border-gray-100 bg-white px-2 py-[2px]">
+                     <div className="flex gap-3 items-start">
                   <PhotoBox
                     photo={r.photo_data}
                     name={r.size}
@@ -1751,8 +1815,11 @@ function LedModelCard({
                     </div>
                   </div>
                 </div>
-              </div>
-            ))
+                    </div>
+                  </SortableCabinetRow>
+                ))}
+              </SortableContext>
+            </DndContext>
           )}
         </div>
       </div>
@@ -1766,6 +1833,45 @@ function LedModelCard({
           + Add cabinet
         </button>
       ) : null}
+    </div>
+  );
+}
+
+function SortableCabinetRow({
+  id,
+  disabled,
+  children,
+}: {
+  id: string;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id, disabled });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.65 : 1,
+    zIndex: isDragging ? 9999 : "auto",
+    position: "relative",
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className={disabled ? "" : "cursor-grab touch-none active:cursor-grabbing"}
+    >
+      {children}
     </div>
   );
 }
