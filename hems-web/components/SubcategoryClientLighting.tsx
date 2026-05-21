@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -51,19 +50,61 @@ type FixturesCache = {
   statsByItem: Record<string, ItemStats>;
 };
 
-async function uploadPhoto(file: File): Promise<string> {
+async function compressImageFile(
+  file: File,
+  maxSize = 260,
+  quality = 0.72
+): Promise<Blob> {
+  const imageUrl = URL.createObjectURL(file);
+
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Failed to load image"));
+      image.src = imageUrl;
+    });
+
+    const ratio = Math.min(maxSize / img.width, maxSize / img.height, 1);
+    const width = Math.max(1, Math.round(img.width * ratio));
+    const height = Math.max(1, Math.round(img.height * ratio));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Failed to prepare image");
+
+    ctx.drawImage(img, 0, 0, width, height);
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, "image/webp", quality);
+    });
+
+    if (!blob) throw new Error("Failed to compress image");
+    return blob;
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
+
+async function uploadPhotoBlob(blob: Blob): Promise<string> {
   const supabase = createClient();
 
-  const ext = file.name.split(".").pop() || "jpg";
   const fileName = `${Date.now()}-${Math.random()
     .toString(36)
-    .slice(2)}.${ext}`;
+    .slice(2)}.webp`;
 
-  const filePath = `items/${fileName}`;
+  const filePath = `items/thumbs/${fileName}`;
 
   const { error } = await supabase.storage
     .from("equipment-photos")
-    .upload(filePath, file);
+    .upload(filePath, blob, {
+      contentType: "image/webp",
+      cacheControl: "31536000",
+      upsert: false,
+    });
 
   if (error) throw error;
 
@@ -72,6 +113,11 @@ async function uploadPhoto(file: File): Promise<string> {
     .getPublicUrl(filePath);
 
   return data.publicUrl;
+}
+
+async function uploadPhoto(file: File): Promise<string> {
+  const compressed = await compressImageFile(file);
+  return uploadPhotoBlob(compressed);
 }
 
 function splitBrandModel(name: string) {
@@ -129,7 +175,7 @@ function countByStatus(statuses: UnitStatus[]): ItemStats {
 }
 
 function cacheKeyFor(category: string, subcategory: string) {
-  return `hems:${category}:${subcategory}:fixtures:v2`;
+  return `hems:${category}:${subcategory}:fixtures:v3`;
 }
 
 function readFixturesCache(
@@ -213,6 +259,8 @@ function ItemPhoto({
         <img
           src={photo}
           alt={name}
+          loading="lazy"
+          decoding="async"
           className="h-full w-full rounded-lg object-cover bg-white"
         />
       ) : (
@@ -419,17 +467,30 @@ export default function SubcategoryClientLighting({
       let stats: Record<string, ItemStats> = {};
 
       if (ids.length > 0) {
-        const unitsRes = await supabase
-          .from("units")
-          .select("item_id,status")
-          .in("item_id", ids);
+        let allUnits: any[] = [];
+let from = 0;
+const pageSize = 1000;
 
-        if (unitsRes.error) throw unitsRes.error;
+while (true) {
+  const unitsRes = await supabase
+    .from("units")
+    .select("item_id,status")
+    .in("item_id", ids)
+    .range(from, from + pageSize - 1);
 
-        const by: Record<string, UnitStatus[]> = {};
-        for (const itId of ids) by[itId] = [];
+  if (unitsRes.error) throw unitsRes.error;
 
-        for (const u of unitsRes.data || []) {
+  allUnits = [...allUnits, ...(unitsRes.data || [])];
+
+  if (!unitsRes.data || unitsRes.data.length < pageSize) break;
+
+  from += pageSize;
+}
+
+const by: Record<string, UnitStatus[]> = {};
+for (const itId of ids) by[itId] = [];
+
+for (const u of allUnits) {
           const itemId = String((u as any).item_id || "");
           const status = String((u as any).status || "available") as UnitStatus;
 
@@ -608,15 +669,46 @@ export default function SubcategoryClientLighting({
     void searchOnlineImages(searchName);
   }
 
-  function selectOnlinePhoto(img: OnlineImage) {
-    const imageUrl = img.original || img.image || img.thumbnail;
-    if (!imageUrl) return;
+  async function selectOnlinePhoto(img: OnlineImage) {
+    const fallbackUrl = img.thumbnail || img.image || img.original;
+    const sourceUrl = img.image || img.original || img.thumbnail;
+
+    if (!fallbackUrl || !sourceUrl) return;
+
+    setSaveMsg("Preparing photo...");
+
+    let finalImageUrl = fallbackUrl;
+
+    try {
+      const res = await fetch("/api/optimize-image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          imageUrl: sourceUrl,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Optimization failed");
+      }
+
+      const data = await res.json();
+
+      if (data?.url) {
+        finalImageUrl = data.url;
+      }
+    } catch (error) {
+      console.warn("Could not optimize online image, using thumbnail URL:", error);
+      finalImageUrl = fallbackUrl;
+    }
 
     if (editingPhotoItemId) {
-      void updateItemPhoto(editingPhotoItemId, imageUrl);
+      await updateItemPhoto(editingPhotoItemId, finalImageUrl);
       setEditingPhotoItemId(null);
     } else {
-      setPhoto(imageUrl);
+      setPhoto(finalImageUrl);
     }
 
     setSearchPanelOpen(false);
@@ -1094,6 +1186,8 @@ export default function SubcategoryClientLighting({
         <img
           src={photo}
           alt="Selected"
+          loading="lazy"
+          decoding="async"
           className="h-12 w-12 rounded-xl object-cover border border-gray-200 bg-white"
         />
 
@@ -1167,13 +1261,15 @@ export default function SubcategoryClientLighting({
                 <button
                   key={`${imageUrl}-${index}`}
                   type="button"
-                  onClick={() => selectOnlinePhoto(img)}
+                  onClick={() => void selectOnlinePhoto(img)}
                   className="overflow-hidden rounded-lg border border-gray-200 hover:border-blue-400"
                   title={img.title || "Select photo"}
                 >
                   <img
                     src={thumb}
                     alt={img.title || "Online image"}
+                    loading="lazy"
+                    decoding="async"
                     className="aspect-square w-full object-cover"
                   />
                 </button>
