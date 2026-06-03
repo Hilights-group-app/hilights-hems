@@ -68,19 +68,61 @@ function normalizeText(v: string) {
   return v.trim().replace(/\s+/g, " ");
 }
 
-async function uploadPhoto(file: File) {
+async function compressImageFile(
+  file: File,
+  maxSize = 260,
+  quality = 0.72
+): Promise<Blob> {
+  const imageUrl = URL.createObjectURL(file);
+
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Failed to load image"));
+      image.src = imageUrl;
+    });
+
+    const ratio = Math.min(maxSize / img.width, maxSize / img.height, 1);
+    const width = Math.max(1, Math.round(img.width * ratio));
+    const height = Math.max(1, Math.round(img.height * ratio));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Failed to prepare image");
+
+    ctx.drawImage(img, 0, 0, width, height);
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, "image/webp", quality);
+    });
+
+    if (!blob) throw new Error("Failed to compress image");
+    return blob;
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
+
+async function uploadPhotoBlob(blob: Blob): Promise<string> {
   const supabase = createClient();
 
-  const ext = file.name.split(".").pop() || "jpg";
   const fileName = `${Date.now()}-${Math.random()
     .toString(36)
-    .slice(2)}.${ext}`;
+    .slice(2)}.webp`;
 
-  const filePath = `led-screen/${fileName}`;
+  const filePath = `led-screen/thumbs/${fileName}`;
 
   const { error } = await supabase.storage
     .from("equipment-photos")
-    .upload(filePath, file);
+    .upload(filePath, blob, {
+      contentType: "image/webp",
+      cacheControl: "31536000",
+      upsert: false,
+    });
 
   if (error) throw error;
 
@@ -89,6 +131,11 @@ async function uploadPhoto(file: File) {
     .getPublicUrl(filePath);
 
   return data.publicUrl;
+}
+
+async function uploadPhoto(file: File): Promise<string> {
+  const compressed = await compressImageFile(file);
+  return uploadPhotoBlob(compressed);
 }
 
 function parseLedName(name: string): ParsedLedName {
@@ -284,6 +331,8 @@ function PhotoBox({
         <img
           src={photo}
           alt={name}
+          loading="lazy"
+          decoding="async"
           className="h-full w-full rounded-xl object-cover bg-white"
         />
       ) : (
@@ -669,15 +718,48 @@ export default function SubcategoryClientLedScreen({
   }
 
   async function selectOnlinePhoto(img: OnlineImage) {
-    const imageUrl = img.original || img.image || img.thumbnail;
-    if (!imageUrl || !photoTarget) return;
+    const fallbackUrl = img.thumbnail || img.image || img.original;
+    const sourceUrl = img.image || img.original || img.thumbnail;
 
-    await applyPhotoToTarget(photoTarget, imageUrl);
+    if (!fallbackUrl || !sourceUrl || !photoTarget) return;
+
+    setSaveMsg("Preparing photo...");
+
+    let finalImageUrl = fallbackUrl;
+
+    try {
+      const res = await fetch("/api/optimize-image", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          imageUrl: sourceUrl,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error("Optimization failed");
+      }
+
+      const data = await res.json();
+
+      if (data?.url) {
+        finalImageUrl = data.url;
+      }
+    } catch (error) {
+      console.warn("Could not optimize online image, using thumbnail URL:", error);
+      finalImageUrl = fallbackUrl;
+    }
+
+    await applyPhotoToTarget(photoTarget, finalImageUrl);
 
     setPhotoTarget(null);
     setRowPhotoMenuId(null);
     setSearchPanelOpen(false);
     setImageResults([]);
+    setSaveMsg("Online photo selected");
+    setTimeout(() => setSaveMsg(""), 1500);
   }
 
   function startSearchForNewPhoto() {
@@ -1266,6 +1348,8 @@ export default function SubcategoryClientLedScreen({
                     <img
                       src={thumb}
                       alt={img.title || "Online image"}
+                      loading="lazy"
+                      decoding="async"
                       className="aspect-square w-full object-cover"
                     />
                   </button>
@@ -1522,6 +1606,8 @@ export default function SubcategoryClientLedScreen({
                   <img
                     src={addCabinetPhoto}
                     alt="Selected"
+                    loading="lazy"
+                    decoding="async"
                     className="h-12 w-12 rounded-xl object-cover border border-gray-200 bg-white"
                   />
 

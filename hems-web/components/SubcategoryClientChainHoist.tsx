@@ -49,13 +49,70 @@ function isExpired(expiry?: string | null) {
   return ed.getTime() < today.getTime();
 }
 
-async function fileToDataUrl(file: File): Promise<string> {
-  return await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Failed to read file"));
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.readAsDataURL(file);
-  });
+async function compressImageFile(
+  file: File,
+  maxSize = 260,
+  quality = 0.72
+): Promise<Blob> {
+  const imageUrl = URL.createObjectURL(file);
+
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Failed to load image"));
+      image.src = imageUrl;
+    });
+
+    const ratio = Math.min(maxSize / img.width, maxSize / img.height, 1);
+    const width = Math.max(1, Math.round(img.width * ratio));
+    const height = Math.max(1, Math.round(img.height * ratio));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Failed to prepare image");
+
+    ctx.drawImage(img, 0, 0, width, height);
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, "image/webp", quality);
+    });
+
+    if (!blob) throw new Error("Failed to compress image");
+    return blob;
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
+
+async function uploadPhoto(file: File): Promise<string> {
+  const supabase = createClient();
+  const compressed = await compressImageFile(file);
+
+  const fileName = `${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}.webp`;
+
+  const filePath = `chain-hoist/thumbs/${fileName}`;
+
+  const { error } = await supabase.storage
+    .from("equipment-photos")
+    .upload(filePath, compressed, {
+      contentType: "image/webp",
+      cacheControl: "31536000",
+      upsert: false,
+    });
+
+  if (error) throw error;
+
+  const { data } = supabase.storage
+    .from("equipment-photos")
+    .getPublicUrl(filePath);
+
+  return data.publicUrl;
 }
 
 function StatPill({
@@ -100,6 +157,8 @@ function ItemPhoto({
         <img
           src={photo}
           alt={name}
+          loading="lazy"
+          decoding="async"
           className="h-full w-full rounded-lg object-cover bg-white"
         />
       ) : (
@@ -168,16 +227,29 @@ export default function SubcategoryClientChainHoist({
 
     const ids = rows.map((x) => x.id);
 
-    const { data: udata, error: uerr } = await supabase
-      .from("units")
-      .select("item_id, status, expiry_date")
-      .in("item_id", ids);
+    let allUnits: any[] = [];
+    let from = 0;
+    const pageSize = 1000;
 
-    if (uerr) {
-      console.error("load chainhoist units stats error", uerr);
-      setStats({});
-      setLoading(false);
-      return;
+    while (true) {
+      const { data: udata, error: uerr } = await supabase
+        .from("units")
+        .select("item_id, status, expiry_date")
+        .in("item_id", ids)
+        .range(from, from + pageSize - 1);
+
+      if (uerr) {
+        console.error("load chainhoist units stats error", uerr);
+        setStats({});
+        setLoading(false);
+        return;
+      }
+
+      allUnits = [...allUnits, ...(udata ?? [])];
+
+      if (!udata || udata.length < pageSize) break;
+
+      from += pageSize;
     }
 
     const map: Record<string, ItemStats> = {};
@@ -193,7 +265,7 @@ export default function SubcategoryClientChainHoist({
       };
     }
 
-    for (const u of udata ?? []) {
+    for (const u of allUnits) {
       const itemId = String((u as any).item_id || "");
       const st = toStatus((u as any).status);
       const expiryDate = (u as any).expiry_date || null;
@@ -263,8 +335,15 @@ export default function SubcategoryClientChainHoist({
     if (!f) return;
 
     try {
-      const dataUrl = await fileToDataUrl(f);
-      setPhoto(dataUrl);
+      setSaveMsg("Uploading photo...");
+      const imageUrl = await uploadPhoto(f);
+      setPhoto(imageUrl);
+      setSaveMsg("Photo selected");
+      setTimeout(() => setSaveMsg(""), 1500);
+    } catch (error: any) {
+      console.error("chainhoist photo upload error", error);
+      alert(error?.message || "Photo upload failed");
+      setSaveMsg("");
     } finally {
       e.target.value = "";
     }

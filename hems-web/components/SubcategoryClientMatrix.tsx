@@ -51,19 +51,61 @@ type ItemsCache = {
   statsByItem: Record<string, ItemStats>;
 };
 
-async function uploadPhoto(file: File) {
+async function compressImageFile(
+  file: File,
+  maxSize = 260,
+  quality = 0.72
+): Promise<Blob> {
+  const imageUrl = URL.createObjectURL(file);
+
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Failed to load image"));
+      image.src = imageUrl;
+    });
+
+    const ratio = Math.min(maxSize / img.width, maxSize / img.height, 1);
+    const width = Math.max(1, Math.round(img.width * ratio));
+    const height = Math.max(1, Math.round(img.height * ratio));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Failed to prepare image");
+
+    ctx.drawImage(img, 0, 0, width, height);
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, "image/webp", quality);
+    });
+
+    if (!blob) throw new Error("Failed to compress image");
+    return blob;
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
+
+async function uploadPhotoBlob(blob: Blob): Promise<string> {
   const supabase = createClient();
 
-  const ext = file.name.split(".").pop() || "jpg";
   const fileName = `${Date.now()}-${Math.random()
     .toString(36)
-    .slice(2)}.${ext}`;
+    .slice(2)}.webp`;
 
-  const filePath = `matrix/${fileName}`;
+  const filePath = `matrix/thumbs/${fileName}`;
 
   const { error } = await supabase.storage
     .from("equipment-photos")
-    .upload(filePath, file);
+    .upload(filePath, blob, {
+      contentType: "image/webp",
+      cacheControl: "31536000",
+      upsert: false,
+    });
 
   if (error) throw error;
 
@@ -72,6 +114,32 @@ async function uploadPhoto(file: File) {
     .getPublicUrl(filePath);
 
   return data.publicUrl;
+}
+
+async function uploadPhoto(file: File): Promise<string> {
+  const compressed = await compressImageFile(file);
+  return uploadPhotoBlob(compressed);
+}
+
+async function optimizeOnlinePhoto(imageUrl: string): Promise<string> {
+  const res = await fetch("/api/optimize-image", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ imageUrl }),
+  });
+
+  if (!res.ok) {
+    throw new Error("Optimization failed");
+  }
+
+  const data = await res.json();
+  if (!data?.url) {
+    throw new Error("Optimization returned no URL");
+  }
+
+  return data.url as string;
 }
 
 function clampQty(v: any) {
@@ -181,7 +249,7 @@ function groupItemsByBrand(items: MatrixItemRow[]) {
 }
 
 function cacheKeyFor(categoryId: string | null, subcategoryId: string | null) {
-  return `hems:${categoryId || "no-cat"}:${subcategoryId || "no-sub"}:matrix-v3`;
+  return `hems:${categoryId || "no-cat"}:${subcategoryId || "no-sub"}:matrix-v4`;
 }
 
 function readItemsCache(
@@ -279,6 +347,8 @@ function ItemPhoto({
         <img
           src={photo}
           alt={name}
+          loading="lazy"
+          decoding="async"
           className="h-full w-full rounded-xl object-cover bg-white"
         />
       ) : (
@@ -685,15 +755,28 @@ export default function SubcategoryClientMatrix({
     void searchOnlineImages(searchName);
   }
 
-  function selectOnlinePhoto(img: OnlineImage) {
-    const imageUrl = img.original || img.image || img.thumbnail;
-    if (!imageUrl) return;
+  async function selectOnlinePhoto(img: OnlineImage) {
+    const fallbackUrl = img.thumbnail || img.image || img.original;
+    const sourceUrl = img.image || img.original || img.thumbnail;
+
+    if (!fallbackUrl || !sourceUrl) return;
+
+    setSaveMsg("Preparing photo...");
+
+    let finalImageUrl = fallbackUrl;
+
+    try {
+      finalImageUrl = await optimizeOnlinePhoto(sourceUrl);
+    } catch (error) {
+      console.warn("Could not optimize online image, using thumbnail URL:", error);
+      finalImageUrl = fallbackUrl;
+    }
 
     if (editingPhotoItemId) {
-      void updateItemPhoto(editingPhotoItemId, imageUrl);
+      await updateItemPhoto(editingPhotoItemId, finalImageUrl);
       setEditingPhotoItemId(null);
     } else {
-      setPhoto(imageUrl);
+      setPhoto(finalImageUrl);
     }
 
     setSearchPanelOpen(false);
@@ -1870,6 +1953,8 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
               <img
                 src={photo}
                 alt="Selected"
+                loading="lazy"
+                decoding="async"
                 className="h-12 w-12 rounded-xl object-cover border border-gray-200 bg-white"
               />
 
@@ -1952,6 +2037,8 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                         <img
                           src={thumb}
                           alt={img.title || "Online image"}
+                          loading="lazy"
+                          decoding="async"
                           className="aspect-square w-full object-cover"
                         />
                       </button>

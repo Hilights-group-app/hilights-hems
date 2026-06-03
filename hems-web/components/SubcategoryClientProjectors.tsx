@@ -29,20 +29,62 @@ function toStatus(v: any): UnitStatus {
   return "available";
 }
 
-async function uploadPhoto(file: File): Promise<string> {
-  const supabase = createClient();
+async function compressImageFile(
+  file: File,
+  maxSize = 260,
+  quality = 0.72
+): Promise<Blob> {
+  const imageUrl = URL.createObjectURL(file);
 
-  const ext = file.name.split(".").pop() || "jpg";
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Failed to load image"));
+      image.src = imageUrl;
+    });
+
+    const ratio = Math.min(maxSize / img.width, maxSize / img.height, 1);
+    const width = Math.max(1, Math.round(img.width * ratio));
+    const height = Math.max(1, Math.round(img.height * ratio));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Failed to prepare image");
+
+    ctx.drawImage(img, 0, 0, width, height);
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, "image/webp", quality);
+    });
+
+    if (!blob) throw new Error("Failed to compress image");
+
+    return blob;
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
+
+async function uploadPhotoBlob(blob: Blob): Promise<string> {
+  const supabase = createClient();
 
   const fileName = `${Date.now()}-${Math.random()
     .toString(36)
-    .slice(2)}.${ext}`;
+    .slice(2)}.webp`;
 
-  const filePath = `projectors/${fileName}`;
+  const filePath = `projectors/thumbs/${fileName}`;
 
   const { error } = await supabase.storage
     .from("equipment-photos")
-    .upload(filePath, file);
+    .upload(filePath, blob, {
+      contentType: "image/webp",
+      cacheControl: "31536000",
+      upsert: false,
+    });
 
   if (error) throw error;
 
@@ -51,6 +93,11 @@ async function uploadPhoto(file: File): Promise<string> {
     .getPublicUrl(filePath);
 
   return data.publicUrl;
+}
+
+async function uploadPhoto(file: File): Promise<string> {
+  const compressed = await compressImageFile(file);
+  return uploadPhotoBlob(compressed);
 }
 
 function StatPill({
@@ -93,6 +140,8 @@ function ProjectorPhoto({
         <img
           src={photo}
           alt={name}
+          loading="lazy"
+          decoding="async"
           className="h-full w-full rounded-lg object-cover bg-white"
         />
       ) : (
@@ -198,17 +247,30 @@ export default function SubcategoryClientProjectors({
 
     const ids = rows.map((x) => x.id);
 
-    const { data: udata, error: uerr } = await supabase
-      .from("units")
-      .select("item_id,status")
-      .in("item_id", ids);
+    let allUnits: any[] = [];
+    let from = 0;
+    const pageSize = 1000;
 
-    if (uerr) {
-      console.error("loadUnits stats error", uerr);
-      setStats({});
-      setErrorMsg(uerr.message || "Failed to load stats.");
-      setLoading(false);
-      return;
+    while (true) {
+      const { data: udata, error: uerr } = await supabase
+        .from("units")
+        .select("item_id,status")
+        .in("item_id", ids)
+        .range(from, from + pageSize - 1);
+
+      if (uerr) {
+        console.error("loadUnits stats error", uerr);
+        setStats({});
+        setErrorMsg(uerr.message || "Failed to load stats.");
+        setLoading(false);
+        return;
+      }
+
+      allUnits = [...allUnits, ...(udata || [])];
+
+      if (!udata || udata.length < pageSize) break;
+
+      from += pageSize;
     }
 
     const map: Record<string, ItemStats> = {};
@@ -216,7 +278,7 @@ export default function SubcategoryClientProjectors({
       map[itId] = { total: 0, available: 0, inUse: 0, maintenance: 0, inKsa: 0 };
     }
 
-    for (const u of udata ?? []) {
+    for (const u of allUnits) {
       const itemId = String((u as any).item_id || "");
       const status = toStatus((u as any).status);
 
