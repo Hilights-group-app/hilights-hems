@@ -147,12 +147,16 @@ function StatPill({
 function ItemPhoto({
   photo,
   name,
+  editable,
+  onEditPhoto,
 }: {
   photo?: string | null;
   name: string;
+  editable?: boolean;
+  onEditPhoto?: () => void;
 }) {
   return (
-    <div className="flex h-14 w-14 min-w-[56px] items-center justify-center">
+    <div className="relative flex h-14 w-14 min-w-[56px] items-center justify-center">
       {photo ? (
         <img
           src={photo}
@@ -166,6 +170,21 @@ function ItemPhoto({
           No photo
         </div>
       )}
+
+      {editable ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onEditPhoto?.();
+          }}
+          className="absolute right-0 top-0 flex h-4 w-4 items-center justify-center rounded-full bg-white/90 text-[10px] text-red-500 shadow hover:text-black"
+          title="Change photo"
+        >
+          ✎
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -188,6 +207,8 @@ export default function SubcategoryClientChainHoist({
   const [qty, setQty] = useState<number>(1);
   const [photo, setPhoto] = useState<string | null>(null);
   const addPhotoRef = useRef<HTMLInputElement | null>(null);
+  const listPhotoRef = useRef<HTMLInputElement | null>(null);
+  const [editingPhotoItemId, setEditingPhotoItemId] = useState<string | null>(null);
 
   const [stats, setStats] = useState<Record<string, ItemStats>>({});
   const [saveMsg, setSaveMsg] = useState("");
@@ -349,6 +370,50 @@ export default function SubcategoryClientChainHoist({
     }
   }
 
+  async function updateItemPhoto(itemId: string, imageUrl: string) {
+    if (!editable) return;
+
+    const { error } = await supabase
+      .from("items")
+      .update({ photo_url: imageUrl })
+      .eq("id", itemId);
+
+    if (error) {
+      console.error("update chainhoist photo error", error);
+      alert("Failed to update photo");
+      return;
+    }
+
+    setItems((prev) =>
+      prev.map((it) => (it.id === itemId ? { ...it, photo_url: imageUrl } : it))
+    );
+
+    setSaveMsg("Photo updated");
+    setTimeout(() => {
+      setSaveMsg((prev) => (prev === "Photo updated" ? "" : prev));
+    }, 1500);
+  }
+
+  async function onPickListItemPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!editable || !editingPhotoItemId) return;
+
+    const f = e.target.files?.[0];
+    if (!f) return;
+
+    try {
+      setSaveMsg("Uploading photo...");
+      const imageUrl = await uploadPhoto(f);
+      await updateItemPhoto(editingPhotoItemId, imageUrl);
+    } catch (error: any) {
+      console.error("chainhoist list photo upload error", error);
+      alert(error?.message || "Photo upload failed");
+      setSaveMsg("");
+    } finally {
+      e.target.value = "";
+      setEditingPhotoItemId(null);
+    }
+  }
+
   async function addItem() {
     if (!editable || !subcategoryId) return;
 
@@ -468,6 +533,14 @@ export default function SubcategoryClientChainHoist({
 
   return (
     <div className="max-w-[1100px] mx-auto space-y-3">
+      <input
+        ref={listPhotoRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={onPickListItemPhoto}
+      />
+
       {editable && (
         <div className="bg-white border border-gray-200 rounded-2xl p-6">
           <div className="flex items-center justify-between gap-4 mb-4">
@@ -558,7 +631,15 @@ export default function SubcategoryClientChainHoist({
                       href={detailsHref}
                       className="flex items-start gap-3 min-w-0 flex-1 group"
                     >
-                      <ItemPhoto photo={it.photo_url} name={it.name} />
+                      <ItemPhoto
+                        photo={it.photo_url}
+                        name={it.name}
+                        editable={editable}
+                        onEditPhoto={() => {
+                          setEditingPhotoItemId(it.id);
+                          listPhotoRef.current?.click();
+                        }}
+                      />
 
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2 min-w-0">
