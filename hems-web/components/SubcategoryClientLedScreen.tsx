@@ -23,6 +23,7 @@ type MatrixRow = {
   id: string;
   model_id: string;
   size: string;
+  cabinet_model?: string | null;
   qty: number;
   available_qty: number;
   in_use_qty: number;
@@ -429,6 +430,7 @@ export default function SubcategoryClientLedScreen({
 
   const [addingModelId, setAddingModelId] = useState<string | null>(null);
   const [addCabinetSize, setAddCabinetSize] = useState("");
+  const [addCabinetModel, setAddCabinetModel] = useState("");
   const [addCabinetQty, setAddCabinetQty] = useState(0);
   const [addCabinetPhoto, setAddCabinetPhoto] = useState<string | null>(null);
   const [savingAddCabinet, setSavingAddCabinet] = useState(false);
@@ -471,7 +473,7 @@ export default function SubcategoryClientLedScreen({
       const { data, error } = await supabase
         .from("matrix_models")
         .select(
-          "id, category_id, subcategory_id, name, created_at, matrix_rows(id, model_id, size, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data, sort_order)"
+          "id, category_id, subcategory_id, name, created_at, matrix_rows(id, model_id, size, cabinet_model, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data, sort_order)"
         )
         .eq("subcategory_id", subId)
         .order("created_at", { ascending: false });
@@ -497,7 +499,7 @@ export default function SubcategoryClientLedScreen({
             const rres = await supabase
               .from("matrix_rows")
               .select(
-                "id, model_id, size, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data, sort_order"
+                "id, model_id, size, cabinet_model, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data, sort_order"
               )
               .eq("model_id", m.id);
 
@@ -773,7 +775,7 @@ export default function SubcategoryClientLedScreen({
   function startSearchForAddCabinetPhoto() {
     const currentModel = models.find((m) => m.id === addingModelId);
     const parsed = currentModel ? parseLedName(currentModel.name) : { brand, model };
-    const rowSearch = `${parsed.brand} ${parsed.model} ${addCabinetSize} LED cabinet`.trim();
+    const rowSearch = `${parsed.brand} ${parsed.model} ${addCabinetSize} ${addCabinetModel} LED cabinet`.trim();
 
     setPhotoTarget({ type: "addCabinet" });
     setAddCabinetPhotoMenuOpen(false);
@@ -783,7 +785,7 @@ export default function SubcategoryClientLedScreen({
   }
 
   function startSearchForRowPhoto(row: MatrixRow) {
-    const rowSearch = `${row.size} LED cabinet`.trim();
+    const rowSearch = `${row.size} ${row.cabinet_model || ""} LED cabinet`.trim();
     setPhotoTarget({ type: "row", rowId: row.id });
     setRowPhotoMenuId(null);
     setImageSearch(rowSearch);
@@ -885,6 +887,7 @@ export default function SubcategoryClientLedScreen({
   function openAddCabinetPopup(modelId: string) {
     setAddingModelId(modelId);
     setAddCabinetSize("");
+    setAddCabinetModel("");
     setAddCabinetQty(0);
     setAddCabinetPhoto(null);
     setSavingAddCabinet(false);
@@ -893,6 +896,7 @@ export default function SubcategoryClientLedScreen({
   function closeAddCabinetPopup() {
     setAddingModelId(null);
     setAddCabinetSize("");
+    setAddCabinetModel("");
     setAddCabinetQty(0);
     setAddCabinetPhoto(null);
     setSavingAddCabinet(false);
@@ -961,9 +965,11 @@ export default function SubcategoryClientLedScreen({
     if (!editable || !addingModelId) return;
 
     const size = normalizeText(addCabinetSize);
+    const cabinetModel = normalizeText(addCabinetModel);
     const total = clampQty(addCabinetQty);
 
     if (!size) return alert("Please enter cabinet size");
+    if (!cabinetModel) return alert("Please enter cabinet model");
     if (total <= 0) return alert("Please enter qty");
 
     setSavingAddCabinet(true);
@@ -973,6 +979,7 @@ export default function SubcategoryClientLedScreen({
       .insert({
         model_id: addingModelId,
         size,
+        cabinet_model: cabinetModel,
         qty: total,
         available_qty: total,
         in_use_qty: 0,
@@ -982,7 +989,7 @@ export default function SubcategoryClientLedScreen({
         sort_order:
           models.find((m) => m.id === addingModelId)?.matrix_rows?.length ?? 0,
       })
-      .select("id, model_id, size, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data, sort_order")
+      .select("id, model_id, size, cabinet_model, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data, sort_order")
       .single();
 
     if (error || !data) {
@@ -1051,6 +1058,7 @@ export default function SubcategoryClientLedScreen({
     if (!editable) return;
 
     const nextSize = normalizeText(String(patch.size ?? row.size));
+    const nextCabinetModel = normalizeText(String(patch.cabinet_model ?? row.cabinet_model ?? ""));
     const nextTotal = clampQty(patch.qty ?? row.qty);
     const nextInUse = clampQty(patch.in_use_qty ?? row.in_use_qty);
     const nextMaintenance = clampQty(row.maintenance_qty);
@@ -1081,6 +1089,7 @@ export default function SubcategoryClientLedScreen({
             ? {
                 ...r,
                 size: nextSize,
+                cabinet_model: nextCabinetModel,
                 qty: nextTotal,
                 available_qty: nextAvailable,
                 in_use_qty: nextInUse,
@@ -1095,6 +1104,7 @@ export default function SubcategoryClientLedScreen({
       .from("matrix_rows")
       .update({
         size: nextSize,
+        cabinet_model: nextCabinetModel,
         qty: nextTotal,
         available_qty: nextAvailable,
         in_use_qty: nextInUse,
@@ -1476,7 +1486,14 @@ export default function SubcategoryClientLedScreen({
               <input
                 value={addCabinetSize}
                 onChange={(e) => setAddCabinetSize(e.target.value)}
-                placeholder="Cabinet Size"
+                placeholder="Cabinet Size (e.g. 500mm X 500mm)"
+                className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+              />
+
+              <input
+                value={addCabinetModel}
+                onChange={(e) => setAddCabinetModel(e.target.value)}
+                placeholder="Cabinet Model (e.g. Flexible / 90 Degree)"
                 className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
               />
 
@@ -1722,6 +1739,17 @@ function LedModelCard({
     await onSaveRowDirect(row, { size: clean });
   }
 
+  async function promptEditCabinetModel(row: MatrixRow) {
+    if (!editable) return;
+    const nextModel = prompt("Edit cabinet model:", row.cabinet_model || "");
+    if (nextModel === null) return;
+
+    const clean = normalizeText(nextModel);
+    if (!clean) return;
+
+    await onSaveRowDirect(row, { cabinet_model: clean });
+  }
+
   async function promptEditQty(
     row: MatrixRow,
     field: "qty" | "in_use_qty" | "in_ksa_qty",
@@ -1808,8 +1836,9 @@ function LedModelCard({
 
       <div className="mt-4 overflow-hidden rounded-2xl border border-gray-200 bg-white">
         <div className="hidden sm:block">
-          <div className="grid grid-cols-[64px_1.4fr_repeat(5,96px)_28px] bg-gray-100 px-3 py-2 text-[10px] font-bold text-gray-600 items-center gap-1">
+          <div className="grid grid-cols-[64px_1.1fr_1.1fr_repeat(5,96px)_28px] bg-gray-100 px-3 py-2 text-[10px] font-bold text-gray-600 items-center gap-1">
             <div>Photo</div>
+            <div>Cabinet Model</div>
             <div>Cabinet Size</div>
             <div className="text-center">Total</div>
             <div className="text-center">Available</div>
@@ -1883,13 +1912,23 @@ function LedModelCard({
 
                   <div className="min-w-0 flex-1">
                     <div className="mb-2 flex items-start justify-between gap-2">
-  <button
-    type="button"
-    onClick={() => promptEditSize(r)}
-    className="block min-w-0 truncate text-left text-[10px] font-bold text-gray-900 hover:text-red-500"
-  >
-    {r.size}
-  </button>
+  <div className="min-w-0">
+    <button
+  type="button"
+  onClick={() => promptEditCabinetModel(r)}
+  className="block min-w-0 truncate text-left text-[10px] font-bold text-gray-900 hover:text-red-500"
+>
+  {r.cabinet_model || "No model"}
+</button>
+
+<button
+  type="button"
+  onClick={() => promptEditSize(r)}
+  className="mt-0.5 block min-w-0 truncate text-left text-[8px] font-semibold text-gray-500 hover:text-red-500"
+>
+  {r.size}
+</button>
+  </div>
 
   {editable ? (
     <button
@@ -2073,6 +2112,17 @@ function DesktopEditableCabinetRow({
     await onSaveRowDirect(row, { size: clean });
   }
 
+  async function promptEditCabinetModel() {
+    if (!editable) return;
+    const nextModel = prompt("Edit cabinet model:", row.cabinet_model || "");
+    if (nextModel === null) return;
+
+    const clean = normalizeText(nextModel);
+    if (!clean) return;
+
+    await onSaveRowDirect(row, { cabinet_model: clean });
+  }
+
   async function promptEditQty(
     field: "qty" | "in_use_qty" | "in_ksa_qty",
     label: string,
@@ -2086,7 +2136,7 @@ function DesktopEditableCabinetRow({
   }
 
   return (
-    <div className="grid grid-cols-[64px_1.4fr_repeat(5,96px)_28px] items-center gap-1 border-t border-gray-100 px-3 py-[2px] text-[9px] text-gray-900">
+    <div className="grid grid-cols-[64px_1.1fr_1.1fr_repeat(5,96px)_28px] items-center gap-1 border-t border-gray-100 px-3 py-[2px] text-[9px] text-gray-900">
       <PhotoBox
         photo={row.photo_data}
         name={row.size}
@@ -2098,13 +2148,18 @@ function DesktopEditableCabinetRow({
       />
 
       <button
-        type="button"
-        onClick={promptEditSize}
-        className="truncate text-left font-bold hover:text-red-500"
-        title={row.size}
-      >
-        {row.size}
-      </button>
+  type="button"
+  onClick={promptEditCabinetModel}
+>
+  {row.cabinet_model || "No model"}
+</button>
+
+<button
+  type="button"
+  onClick={promptEditSize}
+>
+  {row.size}
+</button>
 
       <button
         type="button"
