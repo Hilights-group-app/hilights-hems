@@ -5,7 +5,6 @@ import { createClient } from "@/lib/supabase/client";
 import { titleFromSlug } from "@/lib/catalogHelpers";
 
 import SubcategoryShellClient from "@/components/SubcategoryShellClient";
-
 import SubcategoryClientSerialized from "@/components/SubcategoryClientSerialized";
 import SubcategoryClientMatrix from "@/components/SubcategoryClientMatrix";
 import SubcategoryClientLedScreen from "@/components/SubcategoryClientLedScreen";
@@ -16,6 +15,23 @@ import SubcategoryClientLighting from "@/components/SubcategoryClientLighting";
 
 import type { SubcategoryType } from "@/lib/catalogStore";
 
+type RouteInfo = {
+  type: SubcategoryType;
+  categoryId: string | null;
+  subcategoryId: string | null;
+};
+
+function isSafeType(value: any): value is SubcategoryType {
+  return (
+    value === "matrix" ||
+    value === "fixture_units" ||
+    value === "chain_hoist_units" ||
+    value === "projector_units" ||
+    value === "lens_units" ||
+    value === "led_screen_units"
+  );
+}
+
 export default function SubcategoryRouterClient({
   category,
   subcategory,
@@ -23,17 +39,37 @@ export default function SubcategoryRouterClient({
   category: string;
   subcategory: string;
 }) {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
-  const [type, setType] = useState<SubcategoryType | null>(null);
-  const [categoryId, setCategoryId] = useState<string | null>(null);
-  const [subcategoryId, setSubcategoryId] = useState<string | null>(null);
+  const cacheKey = `hems:route:${category}:${subcategory}`;
+
+  const [routeInfo, setRouteInfo] = useState<RouteInfo | null>(() => {
+    if (typeof window === "undefined") return null;
+
+    try {
+      const cached = sessionStorage.getItem(cacheKey);
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
       try {
+        const cached =
+          typeof window !== "undefined"
+            ? sessionStorage.getItem(cacheKey)
+            : null;
+
+        if (cached) {
+          const parsed = JSON.parse(cached) as RouteInfo;
+          if (!cancelled) setRouteInfo(parsed);
+          return;
+        }
+
         const { data: categoryRow, error: categoryError } = await supabase
           .from("categories")
           .select("id")
@@ -42,16 +78,15 @@ export default function SubcategoryRouterClient({
 
         if (categoryError || !categoryRow) {
           console.error("Failed to resolve category id", categoryError);
-          if (!cancelled) {
-            setCategoryId(null);
-            setSubcategoryId(null);
-            setType("fixture_units");
-          }
-          return;
-        }
 
-        if (!cancelled) {
-          setCategoryId(categoryRow.id as string);
+          const fallback: RouteInfo = {
+            categoryId: null,
+            subcategoryId: null,
+            type: "fixture_units",
+          };
+
+          if (!cancelled) setRouteInfo(fallback);
+          return;
         }
 
         const { data: subcategoryRow, error: subcategoryError } = await supabase
@@ -63,80 +98,79 @@ export default function SubcategoryRouterClient({
 
         if (subcategoryError || !subcategoryRow) {
           console.error("Failed to resolve subcategory", subcategoryError);
-          if (!cancelled) {
-            setSubcategoryId(null);
-            setType("fixture_units");
-          }
+
+          const fallback: RouteInfo = {
+            categoryId: categoryRow.id as string,
+            subcategoryId: null,
+            type: "fixture_units",
+          };
+
+          if (!cancelled) setRouteInfo(fallback);
           return;
         }
 
-        const dbType = subcategoryRow.type;
+        const nextInfo: RouteInfo = {
+          categoryId: categoryRow.id as string,
+          subcategoryId: subcategoryRow.id as string,
+          type: isSafeType(subcategoryRow.type)
+            ? subcategoryRow.type
+            : "fixture_units",
+        };
 
-        const safeType: SubcategoryType =
-          dbType === "matrix" ||
-          dbType === "fixture_units" ||
-          dbType === "chain_hoist_units" ||
-          dbType === "projector_units" ||
-          dbType === "lens_units" ||
-          dbType === "led_screen_units"
-            ? dbType
-            : "fixture_units";
-
-        if (!cancelled) {
-          setSubcategoryId(subcategoryRow.id as string);
-          setType(safeType);
+        if (typeof window !== "undefined") {
+          sessionStorage.setItem(cacheKey, JSON.stringify(nextInfo));
         }
+
+        if (!cancelled) setRouteInfo(nextInfo);
       } catch (error) {
         console.error("SubcategoryRouterClient load error", error);
-        if (!cancelled) {
-          setCategoryId(null);
-          setSubcategoryId(null);
-          setType("fixture_units");
-        }
+
+        const fallback: RouteInfo = {
+          categoryId: null,
+          subcategoryId: null,
+          type: "fixture_units",
+        };
+
+        if (!cancelled) setRouteInfo(fallback);
       }
     }
 
-    load();
+    void load();
 
     return () => {
       cancelled = true;
     };
-  }, [category, subcategory, supabase]);
+  }, [category, subcategory, cacheKey, supabase]);
 
   const title = useMemo(() => {
     return titleFromSlug(subcategory) || "Subcategory";
   }, [subcategory]);
 
-  if (type === null) {
-  return (
-    <SubcategoryShellClient title={title}>
-      <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
-        Loading...
-      </div>
-    </SubcategoryShellClient>
-  );
-}
+  if (routeInfo === null) {
+    return (
+      <SubcategoryShellClient title={title}>
+        <div className="rounded-xl border border-gray-200 bg-white px-5 py-6 text-gray-900">
+          Loading...
+        </div>
+      </SubcategoryShellClient>
+    );
+  }
+
+  const { type, categoryId, subcategoryId } = routeInfo;
 
   let body =
-  category === "lighting" &&
-  subcategory === "lighting-fixtures" ? (
-    <SubcategoryClientLighting
-      category={category}
-      subcategory={subcategory}
-    />
-  ) : (
-    <SubcategoryClientSerialized
-      category={category}
-      subcategory={subcategory}
-    />
-  );
+    category === "lighting" && subcategory === "lighting-fixtures" ? (
+      <SubcategoryClientLighting category={category} subcategory={subcategory} />
+    ) : (
+      <SubcategoryClientSerialized category={category} subcategory={subcategory} />
+    );
 
   if (type === "matrix") {
     body = (
       <SubcategoryClientMatrix
-  category={category}
-  subcategory={subcategory}
-/>
+        category={category}
+        subcategory={subcategory}
+      />
     );
   } else if (type === "led_screen_units") {
     body = (

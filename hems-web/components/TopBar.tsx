@@ -30,7 +30,6 @@ export default function TopBar() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [avatarLoaded, setAvatarLoaded] = useState(false);
-
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
 
   const [profile, setProfile] = useState<{
@@ -39,7 +38,6 @@ export default function TopBar() {
     avatar_url?: string | null;
   }>(() => {
     if (typeof window === "undefined") return {};
-
     return {
       role: localStorage.getItem("hems:profile:role") || "",
       department: localStorage.getItem("hems:profile:department") || "",
@@ -63,9 +61,7 @@ export default function TopBar() {
       .order("created_at", { ascending: false })
       .limit(10);
 
-    if (error) return;
-
-    setNotifications((data ?? []) as NotificationRow[]);
+    if (!error) setNotifications((data ?? []) as NotificationRow[]);
   }
 
   async function markNotificationsRead() {
@@ -79,10 +75,7 @@ export default function TopBar() {
       .update({ is_read: true })
       .in("id", unreadIds);
 
-    if (error) {
-      console.error("mark notifications read error:", error);
-      await loadNotifications();
-    }
+    if (error) await loadNotifications();
   }
 
   useEffect(() => {
@@ -128,8 +121,14 @@ export default function TopBar() {
       setUserNameState(getUserName());
 
       if (session?.user?.id) {
-        await loadProfile(session.user.id);
-        await loadNotifications();
+        const cachedRole = localStorage.getItem("hems:profile:role");
+        const cachedDepartment = localStorage.getItem("hems:profile:department");
+
+        if (!cachedRole || !cachedDepartment) {
+          await loadProfile(session.user.id);
+        }
+
+        void loadNotifications();
       } else {
         setProfile({});
         setNotifications([]);
@@ -149,42 +148,22 @@ export default function TopBar() {
       setNotifOpen(false);
 
       if (session?.user?.id) {
-        void loadProfile(session.user.id);
-        void loadNotifications();
-      } else {
-        setProfile({});
-        setNotifications([]);
-      }
+  const cachedRole = localStorage.getItem("hems:profile:role");
+  const cachedDepartment = localStorage.getItem("hems:profile:department");
+
+  if (!cachedRole || !cachedDepartment) {
+    void loadProfile(session.user.id);
+  }
+
+  void loadNotifications();
+}
     });
 
     return () => {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, [pathname]);
-
-  //useEffect(() => {
-    //if (!loggedIn) return;
-
-    //const channel = supabase
-      //.channel("notifications-topbar")
-      //.on(
-       // "postgres_changes",
-       // {
-        //  event: "INSERT",
-         // schema: "public",
-          //table: "notifications",
-        //},
-       // () => {
-       //   void loadNotifications();
-       // }
-      //)
-     // .subscribe();
-
-  //  return () => {
-  //    void supabase.removeChannel(channel);
-  //  };
-//  }, [loggedIn]);
+  }, []);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -204,35 +183,30 @@ export default function TopBar() {
   }, []);
 
   async function onLogout() {
-  if (loggingOut) return;
+    if (loggingOut) return;
 
-  setLoggingOut(true);
-  setNotifOpen(false);
-  setSidebarOpen(false);
-  setOpen(true);
+    setLoggingOut(true);
+    setNotifOpen(false);
+    setSidebarOpen(false);
+    setOpen(true);
 
-  localStorage.removeItem("hems:profile:role");
-  localStorage.removeItem("hems:profile:department");
-  localStorage.removeItem("hems:profile:avatar_url");
+    localStorage.removeItem("hems:profile:role");
+    localStorage.removeItem("hems:profile:department");
+    localStorage.removeItem("hems:profile:avatar_url");
 
-  try {
-    await Promise.race([
-      logout(),
-      new Promise((resolve) => setTimeout(resolve, 1200)),
-    ]);
-
-    await supabase.auth.signOut({ scope: "global" });
-  } catch (e) {
-    console.error("logout error:", e);
-  } finally {
-    setLoggedIn(false);
-    setUserNameState(null);
-    setProfile({});
-    setNotifications([]);
-
-    window.location.replace("/login");
+    try {
+      await Promise.race([logout(), new Promise((resolve) => setTimeout(resolve, 1200))]);
+      await supabase.auth.signOut({ scope: "global" });
+    } catch (e) {
+      console.error("logout error:", e);
+    } finally {
+      setLoggedIn(false);
+      setUserNameState(null);
+      setProfile({});
+      setNotifications([]);
+      window.location.replace("/login");
+    }
   }
-}
 
   const unreadCount = notifications.filter((n) => !n.is_read).length;
 
@@ -249,14 +223,12 @@ export default function TopBar() {
     if (profile.role === "admin") return "Admin";
     if (profile.role === "warehouse_manager") return "Warehouse Manager";
     if (profile.role === "viewer") return "Viewer";
-
     if (profile.role === "head") {
       if (profile.department === "lighting") return "Head of Lighting";
       if (profile.department === "video") return "Head of Video";
       if (profile.department === "rigging") return "Head of Rigging";
       return "Head";
     }
-
     return profile.role;
   }
 
@@ -320,7 +292,6 @@ export default function TopBar() {
                         title="Notifications"
                       >
                         <Bell size={15} strokeWidth={2} />
-
                         {unreadCount > 0 ? (
                           <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-red-500 px-1 text-[8px] font-bold text-white">
                             {unreadCount > 9 ? "9+" : unreadCount}
@@ -388,22 +359,22 @@ export default function TopBar() {
                     className="flex items-center gap-1.5 rounded-lg px-1 py-0.5 transition hover:bg-gray-50 active:scale-[0.98]"
                   >
                     <div className="relative h-6 w-6 overflow-hidden rounded-full bg-gray-900">
-  {profile.avatar_url ? (
-    <img
-  src={profile.avatar_url}
-  alt={userName || "User"}
-  loading="eager"
-  onLoad={() => setAvatarLoaded(true)}
-  className={`h-full w-full object-cover transition-opacity duration-200 ${
-    avatarLoaded ? "opacity-100" : "opacity-0"
-  }`}
-/>
-  ) : (
-    <span className="flex h-full w-full items-center justify-center text-[9px] font-semibold text-white">
-      {userInitials}
-    </span>
-  )}
-</div>
+                      {profile.avatar_url ? (
+                        <img
+                          src={profile.avatar_url}
+                          alt={userName || "User"}
+                          loading="eager"
+                          onLoad={() => setAvatarLoaded(true)}
+                          className={`h-full w-full object-cover transition-opacity duration-200 ${
+                            avatarLoaded ? "opacity-100" : "opacity-0"
+                          }`}
+                        />
+                      ) : (
+                        <span className="flex h-full w-full items-center justify-center text-[9px] font-semibold text-white">
+                          {userInitials}
+                        </span>
+                      )}
+                    </div>
 
                     <span className="hidden text-left leading-none sm:block">
                       <span className="block max-w-[120px] truncate text-[10px] font-semibold leading-3 text-gray-900">
@@ -416,9 +387,7 @@ export default function TopBar() {
 
                     <ChevronDown
                       size={10}
-                      className={`text-gray-400 transition-transform ${
-                        open ? "rotate-180" : ""
-                      }`}
+                      className={`text-gray-400 transition-transform ${open ? "rotate-180" : ""}`}
                     />
                   </button>
 
@@ -489,11 +458,7 @@ export default function TopBar() {
           >
             <div className="flex items-center justify-between border-b border-gray-100 px-4 py-4">
               <div className="flex items-center gap-2">
-                <img
-                  src="/logo.png"
-                  alt="Logo"
-                  className="h-5 w-auto object-contain"
-                />
+                <img src="/logo.png" alt="Logo" className="h-5 w-auto object-contain" />
                 <span className="text-sm font-bold text-gray-900">HEMS</span>
               </div>
 
@@ -516,9 +481,7 @@ export default function TopBar() {
                     key={item.href}
                     href={item.href}
                     className={`mb-1 flex items-center rounded-xl px-3 py-3 text-sm font-medium transition ${
-                      active
-                        ? "bg-gray-900 text-white"
-                        : "text-gray-700 hover:bg-gray-100"
+                      active ? "bg-gray-900 text-white" : "text-gray-700 hover:bg-gray-100"
                     }`}
                   >
                     {item.label}

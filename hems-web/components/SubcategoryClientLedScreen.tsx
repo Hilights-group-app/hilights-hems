@@ -358,7 +358,7 @@ function PhotoBox({
           </button>
 
           {menuOpen ? (
-            <div className="absolute left-0 top-full z-[9999] mt-1 w-36 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
+            <div className="absolute right-0 top-full z-[99999] mt-1 ... w-36 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
               <button
                 type="button"
                 onClick={(e) => {
@@ -1701,12 +1701,6 @@ function LedModelCard({
     })
   );
 
-  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
-
-  function toggleExpandedRow(rowId: string) {
-    setExpandedRows((prev) => ({ ...prev, [rowId]: !prev[rowId] }));
-  }
-
   const totalDisplay = rows.reduce(
     (sum, row) => sum + toSqm(clampQty(row.qty), row.size),
     0
@@ -1834,7 +1828,7 @@ function LedModelCard({
   </div>
 </div>
 
-      <div className="mt-4 overflow-hidden rounded-2xl border border-gray-200 bg-white">
+      <div className="mt-4 overflow-visible rounded-2xl border border-gray-200 bg-white">
         <div className="hidden sm:block">
           <div className="grid grid-cols-[64px_1.1fr_1.1fr_repeat(5,96px)_28px] bg-gray-100 px-3 py-2 text-[10px] font-bold text-gray-600 items-center gap-1">
             <div>Photo</div>
@@ -1898,122 +1892,104 @@ function LedModelCard({
               >
                 {rows.map((r) => (
                   <SortableCabinetRow key={r.id} id={r.id} disabled={!editable}>
-                    <div className="rounded-2xl border border-gray-100 bg-white px-2 py-[2px]">
-                     <div className="flex gap-3 items-start">
-                  <PhotoBox
-                    photo={r.photo_data}
-                    name={r.size}
-                    editable={editable}
-                    menuOpen={rowPhotoMenuId === r.id}
-                    onToggleMenu={() => onToggleRowPhotoMenu(r.id)}
-                    onUploadPhoto={() => onUploadRowPhoto(r)}
-                    onSearchPhoto={() => onSearchRowPhoto(r)}
-                  />
-
-                  <div className="min-w-0 flex-1">
-                    <div className="mb-2 flex items-start justify-between gap-2">
-  <div className="min-w-0">
-    <button
-  type="button"
-  onClick={() => promptEditCabinetModel(r)}
-  className="block min-w-0 truncate text-left text-[10px] font-bold text-gray-900 hover:text-red-500"
->
-  {r.cabinet_model || "No model"}
-</button>
-
-<button
-  type="button"
-  onClick={() => promptEditSize(r)}
-  className="mt-0.5 block min-w-0 truncate text-left text-[8px] font-semibold text-gray-500 hover:text-red-500"
->
-  {r.size}
-</button>
-  </div>
-
-  {editable ? (
-    <button
-      type="button"
-      onClick={() => onDeleteRow(r.id)}
-      className="shrink-0 text-red-500 hover:text-black"
-    >
-      <Trash2 size={15} />
-    </button>
-  ) : null}
-</div>
-
-                    <div className="space-y-1">
-                      <div className="grid grid-cols-[1fr_1fr_1fr_24px] gap-x-1 gap-y-1 text-center">
-                        <button
-                          type="button"
-                          onClick={() => promptEditQty(r, "qty", "Total Qty", r.qty)}
-                          className="hover:text-red-500"
-                        >
-                          <MobileStat label="Total" value={toSqm(r.qty, r.size)} tone="gray" />
-                        </button>
-
-                        <MobileStat
-                          label="Available"
-                          value={toSqm(r.available_qty, r.size)}
-                          tone="green"
+                    <div className="rounded-2xl border border-gray-100 bg-white px-2 py-2">
+                      <div className="flex items-start gap-3">
+                        <PhotoBox
+                          photo={r.photo_data}
+                          name={r.size}
+                          editable={editable}
+                          menuOpen={rowPhotoMenuId === r.id}
+                          onToggleMenu={() => onToggleRowPhotoMenu(r.id)}
+                          onUploadPhoto={() => onUploadRowPhoto(r)}
+                          onSearchPhoto={() => onSearchRowPhoto(r)}
                         />
 
-                        <MobileStat
-                          label="Maintenance"
-                          value={toSqm(r.maintenance_qty, r.size)}
-                          tone="yellow"
-                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="mb-2 flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <div className="flex min-w-0 items-baseline gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => promptEditCabinetModel(r)}
+                                  className="min-w-0 truncate text-left text-[10px] font-bold text-gray-900 hover:text-red-500"
+                                  title={r.cabinet_model || "No model"}
+                                >
+                                  {r.cabinet_model || "No model"}
+                                </button>
 
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            toggleExpandedRow(r.id);
-                          }}
-                          className="flex h-full min-h-[28px] items-center justify-center rounded-md bg-gray-100 text-gray-600 hover:bg-red-50 hover:text-red-500"
-                          title={expandedRows[r.id] ? "Hide details" : "Show details"}
-                        >
-                          <ChevronDown
-                            size={13}
-                            className={`transition-transform ${expandedRows[r.id] ? "rotate-180" : ""}`}
-                          />
-                        </button>
-                      </div>
+                                <button
+                                  type="button"
+                                  onClick={() => promptEditSize(r)}
+                                  className="min-w-0 truncate text-left text-[9px] font-medium text-gray-500 hover:text-red-500"
+                                  title={r.size}
+                                >
+                                  {r.size}
+                                </button>
+                              </div>
+                            </div>
 
-                      {expandedRows[r.id] ? (
-                        <div className="grid grid-cols-2 gap-x-1 gap-y-1 text-center">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              promptEditQty(r, "in_use_qty", "In Use", r.in_use_qty)
-                            }
-                            className="hover:text-red-500"
-                          >
+                            {editable ? (
+                              <button
+                                type="button"
+                                onClick={() => onDeleteRow(r.id)}
+                                className="shrink-0 text-red-500 hover:text-black"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            ) : null}
+                          </div>
+
+                          <div className="grid grid-cols-5 gap-x-1 gap-y-1 text-center">
+                            <button
+                              type="button"
+                              onClick={() => promptEditQty(r, "qty", "Total Qty", r.qty)}
+                              className="hover:text-red-500"
+                            >
+                              <MobileStat label="Total" value={toSqm(r.qty, r.size)} tone="gray" />
+                            </button>
+
                             <MobileStat
-                              label="In Use"
-                              value={toSqm(r.in_use_qty, r.size)}
-                              tone="blue"
+                              label="Available"
+                              value={toSqm(r.available_qty, r.size)}
+                              tone="green"
                             />
-                          </button>
 
-                          <button
-                            type="button"
-                            onClick={() =>
-                              promptEditQty(r, "in_ksa_qty", "In KSA", r.in_ksa_qty)
-                            }
-                            className="hover:text-red-500"
-                          >
+                            <button
+                              type="button"
+                              onClick={() =>
+                                promptEditQty(r, "in_use_qty", "In Use", r.in_use_qty)
+                              }
+                              className="hover:text-red-500"
+                            >
+                              <MobileStat
+                                label="In Use"
+                                value={toSqm(r.in_use_qty, r.size)}
+                                tone="blue"
+                              />
+                            </button>
+
                             <MobileStat
-                              label="In KSA"
-                              value={toSqm(r.in_ksa_qty, r.size)}
-                              tone="purple"
+                              label="Maintenance"
+                              value={toSqm(r.maintenance_qty, r.size)}
+                              tone="yellow"
                             />
-                          </button>
+
+                            <button
+                              type="button"
+                              onClick={() =>
+                                promptEditQty(r, "in_ksa_qty", "In KSA", r.in_ksa_qty)
+                              }
+                              className="hover:text-red-500"
+                            >
+                              <MobileStat
+                                label="In KSA"
+                                value={toSqm(r.in_ksa_qty, r.size)}
+                                tone="purple"
+                              />
+                            </button>
+                          </div>
                         </div>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
+                      </div>
                     </div>
                   </SortableCabinetRow>
                 ))}
@@ -2148,18 +2124,22 @@ function DesktopEditableCabinetRow({
       />
 
       <button
-  type="button"
-  onClick={promptEditCabinetModel}
->
-  {row.cabinet_model || "No model"}
-</button>
+        type="button"
+        onClick={promptEditCabinetModel}
+        className="truncate text-left font-bold hover:text-red-500"
+        title={row.cabinet_model || "No model"}
+      >
+        {row.cabinet_model || "No model"}
+      </button>
 
-<button
-  type="button"
-  onClick={promptEditSize}
->
-  {row.size}
-</button>
+      <button
+        type="button"
+        onClick={promptEditSize}
+        className="truncate text-left font-medium text-gray-600 hover:text-red-500"
+        title={row.size}
+      >
+        {row.size}
+      </button>
 
       <button
         type="button"

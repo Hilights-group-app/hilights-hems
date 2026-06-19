@@ -408,9 +408,13 @@ function ItemPhoto({
 export default function SubcategoryClientMatrix({
   category,
   subcategory,
+  categoryId: initialCategoryId = null,
+  subcategoryId: initialSubcategoryId = null,
 }: {
   category: string;
   subcategory: string;
+  categoryId?: string | null;
+  subcategoryId?: string | null;
 }) {
   const supabase = createClient();
   const editable = canEditInventory();
@@ -421,8 +425,12 @@ export default function SubcategoryClientMatrix({
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const [categoryId, setCategoryId] = useState<string | null>(null);
-  const [subcategoryId, setSubcategoryId] = useState<string | null>(null);
+  const [categoryId, setCategoryId] = useState<string | null>(
+    initialCategoryId
+  );
+  const [subcategoryId, setSubcategoryId] = useState<string | null>(
+    initialSubcategoryId
+  );
 
   const [items, setItems] = useState<MatrixItemRow[]>([]);
   const [statsByItem, setStatsByItem] = useState<Record<string, ItemStats>>({});
@@ -505,6 +513,13 @@ export default function SubcategoryClientMatrix({
   }, [newBlockName, blockName]);
 
   async function resolveIds() {
+    if (initialCategoryId && initialSubcategoryId) {
+      return {
+        categoryId: initialCategoryId,
+        subcategoryId: initialSubcategoryId,
+      };
+    }
+
     const catRes = await supabase
       .from("categories")
       .select("id")

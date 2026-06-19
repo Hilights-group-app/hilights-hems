@@ -34,7 +34,7 @@ export default function EquipmentReportPage() {
           </div>
 
           <p className="text-[12px] text-gray-600 mt-2">
-            Create, update, and export equipment reports.
+            Create, update, and preview equipment reports.
           </p>
         </div>
 
@@ -136,7 +136,7 @@ export default function EquipmentReportPage() {
               ></span>
 
               <h2 className="text-[17px] font-semibold text-gray-900 leading-none">
-                Export PDF
+                View Report
               </h2>
             </div>
 
@@ -146,10 +146,10 @@ export default function EquipmentReportPage() {
 
             <div className="mt-6">
               <Link
-                href="/equipment-report/export"
+                href="/equipment-report/view"
                 className="block w-full px-3 py-2 rounded-full border border-gray-300 text-[11px] font-medium text-gray-700 bg-white text-center transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
               >
-                Export PDF
+                View Report
               </Link>
             </div>
           </div>

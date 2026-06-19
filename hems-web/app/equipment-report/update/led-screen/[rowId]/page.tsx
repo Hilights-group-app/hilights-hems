@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -150,13 +150,70 @@ function rowAvailableFromTotal(
   return Math.max(0, total - inUse - maintenance - inKsa);
 }
 
-async function fileToDataUrl(file: File): Promise<string> {
-  return await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Failed to read file"));
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.readAsDataURL(file);
-  });
+async function compressImageFile(
+  file: File,
+  maxSize = 900,
+  quality = 0.72
+): Promise<Blob> {
+  const imageUrl = URL.createObjectURL(file);
+
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Failed to load image"));
+      image.src = imageUrl;
+    });
+
+    const ratio = Math.min(maxSize / img.width, maxSize / img.height, 1);
+    const width = Math.max(1, Math.round(img.width * ratio));
+    const height = Math.max(1, Math.round(img.height * ratio));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Failed to prepare image");
+
+    ctx.drawImage(img, 0, 0, width, height);
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob(resolve, "image/webp", quality);
+    });
+
+    if (!blob) throw new Error("Failed to compress image");
+    return blob;
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
+
+async function uploadReportPhoto(file: File): Promise<string> {
+  const supabase = createClient();
+  const compressed = await compressImageFile(file);
+
+  const fileName = `${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2)}.webp`;
+
+  const filePath = `led-report/thumbs/${fileName}`;
+
+  const { error } = await supabase.storage
+    .from("equipment-photos")
+    .upload(filePath, compressed, {
+      contentType: "image/webp",
+      cacheControl: "31536000",
+      upsert: false,
+    });
+
+  if (error) throw error;
+
+  const { data } = supabase.storage
+    .from("equipment-photos")
+    .getPublicUrl(filePath);
+
+  return data.publicUrl;
 }
 
 function normalizePhotoList(input: unknown, fallback?: string | null): string[] {
@@ -172,6 +229,7 @@ function normalizePhotoList(input: unknown, fallback?: string | null): string[] 
 export default function LedScreenRowReportPage() {
   const supabase = createClient();
   const params = useParams();
+  const loadingRef = useRef(false);
 
   const rowId =
     typeof params?.rowId === "string"
@@ -218,17 +276,25 @@ export default function LedScreenRowReportPage() {
     setLoading(true);
 
     try {
-      const {
-        data: { user },
-        error: userErr,
-      } = await supabase.auth.getUser();
+      if (loadingRef.current) return;
+      loadingRef.current = true;
 
-      if (userErr || !user) {
-        console.error("auth user error", userErr);
+      const {
+        data: { session },
+        error: sessionErr,
+      } = await supabase.auth.getSession();
+
+      const user = session?.user;
+
+      if (sessionErr || !user) {
+        console.error("auth session error", sessionErr);
+        setRole("viewer");
+        setDepartment("");
         setRow(null);
         setModel(null);
         setIssues([]);
         setLoading(false);
+        loadingRef.current = false;
         return;
       }
 
@@ -239,8 +305,11 @@ export default function LedScreenRowReportPage() {
         .single();
 
       if (!profileErr && profile) {
-        setRole((profile.role ?? "") as UserRole | "");
+        setRole((profile.role ?? "viewer") as UserRole | "");
         setDepartment((profile.department ?? "") as Department);
+      } else {
+        setRole("viewer");
+        setDepartment("");
       }
 
       const { data: rowData, error: rowError } = await supabase
@@ -296,6 +365,7 @@ export default function LedScreenRowReportPage() {
       setModel(null);
       setIssues([]);
     } finally {
+      loadingRef.current = false;
       setLoading(false);
     }
   }
@@ -400,8 +470,10 @@ export default function LedScreenRowReportPage() {
     }
 
     try {
-      const list = await Promise.all(files.map((file) => fileToDataUrl(file)));
+      setPhotoError("Optimizing and uploading photos...");
+      const list = await Promise.all(files.slice(0, 3).map((file) => uploadReportPhoto(file)));
       setPhotoList(list.slice(0, 3));
+      setPhotoError(null);
     } catch (error) {
       console.error("photo read error", error);
       setPhotoError("Failed to read selected photo.");
@@ -982,6 +1054,8 @@ export default function LedScreenRowReportPage() {
                                 <img
                                   src={src}
                                   alt={`Issue ${index + 1}`}
+                                  loading="lazy"
+                                  decoding="async"
                                   style={{
                                     width: "100%",
                                     height: "100%",
