@@ -108,6 +108,11 @@ export default function TopBar() {
       }
 
       if (data.full_name) setUserNameState(data.full_name);
+
+      if (data.full_name) {
+  localStorage.setItem("hems:user_name", data.full_name);
+}
+
     }
 
     async function syncAuth() {
@@ -128,7 +133,12 @@ export default function TopBar() {
           await loadProfile(session.user.id);
         }
 
-        void loadNotifications();
+        const notifCache = sessionStorage.getItem("hems:notif-loaded");
+
+if (!notifCache) {
+  void loadNotifications();
+  sessionStorage.setItem("hems:notif-loaded", "1");
+}
       } else {
         setProfile({});
         setNotifications([]);
