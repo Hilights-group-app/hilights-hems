@@ -1201,7 +1201,7 @@ export default function SubcategoryClientLedScreen({
 
   if (loading) {
     return (
-      <div className="mx-auto max-w-[1100px]">
+      <div className="mx-auto w-full">
         <div className="rounded-xl border border-gray-200 bg-white px-5 py-6 text-gray-900">
           Loading LED screen models...
         </div>
@@ -1210,7 +1210,7 @@ export default function SubcategoryClientLedScreen({
   }
 
   return (
-    <div className="mx-auto max-w-[1100px] space-y-3 text-black">
+    <div className="mx-auto w-full space-y-3 text-black">
       <input
         ref={newPhotoFileRef}
         type="file"

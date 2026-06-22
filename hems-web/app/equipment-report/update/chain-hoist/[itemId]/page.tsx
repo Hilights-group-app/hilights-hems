@@ -60,6 +60,13 @@ function getStatusTextColor(status: string | null) {
   }
 }
 
+function getStatusLabel(status: string | null) {
+  if (status === "in_use") return "In Use";
+  if (status === "in_ksa") return "In KSA";
+  if (status === "maintenance") return "Maintenance";
+  return "Available";
+}
+
 async function fileToDataUrl(file: File): Promise<string> {
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -149,6 +156,8 @@ const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
   }, [units, onStatsChange]);
 
   async function updateUnit(id: string, patch: UnitPatch) {
+    if (!editable) return;
+
     const nextPatch: Partial<Unit> = { ...patch };
 
     if (patch.unit_no !== undefined) {
@@ -176,6 +185,8 @@ const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
   }
 
   async function uploadPhoto(unitId: string, file: File) {
+    if (!allowUpload) return;
+
     const unit = units.find((u) => u.id === unitId);
     if (!unit) return;
 
@@ -203,6 +214,8 @@ const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
   }
 
   function deleteDamagePhoto(unitId: string, photoIndex: number) {
+    if (!allowUpload) return;
+
     const unit = units.find((u) => u.id === unitId);
     if (!unit) return;
 
@@ -213,6 +226,8 @@ const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
   }
 
   async function addRow() {
+    if (!allowAdd) return;
+
     const nextNo =
       units.length > 0
         ? Math.max(...units.map((u) => Number(u.unit_no || 0))) + 1
@@ -242,6 +257,7 @@ const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
   }
 
   async function deleteRow(unitId: string) {
+    if (!allowDelete) return;
     if (!confirm("Delete this row?")) return;
 
     const { error } = await supabase.from("units").delete().eq("id", unitId);
@@ -282,8 +298,8 @@ const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
       <div className="hidden sm:flex items-center gap-2 text-[11px] font-semibold text-gray-600 pt-2 pb-4">
         <div className="w-[16px] min-w-[16px] sm:w-[32px] sm:min-w-[32px] text-center">ID</div>
         <div className="w-[42px] min-w-[42px] sm:w-[120px] sm:min-w-[120px]">Serial</div>
-        <div className="w-[56px] min-w-[56px] sm:w-[100px] sm:min-w-[100px]">Cert</div>
-        <div className="w-[56px] min-w-[56px] sm:w-[100px] sm:min-w-[100px]">Expiry</div>
+        <div className="w-[56px] min-w-[56px] sm:w-[130px] sm:min-w-[130px]">Cert</div>
+        <div className="w-[56px] min-w-[56px] sm:w-[130px] sm:min-w-[130px]">Expiry</div>
         <div className="w-[36px] min-w-[36px] sm:w-[70px] sm:min-w-[70px]">Valid</div>
         <div className="w-[48px] min-w-[48px] sm:w-[95px] sm:min-w-[95px]">Status</div>
         <div className="w-[48px] min-w-[48px] sm:w-[230px] sm:min-w-[230px]">Note</div>
@@ -462,7 +478,7 @@ export default function ChainHoistReportPage() {
   if (loading || !role) {
     return (
       <div className="min-h-screen bg-gray-50 px-[2px] py-2 sm:p-3">
-        <div className="w-full max-w-none sm:max-w-[1100px] mx-auto space-y-3 px-0">
+        <div className="w-full max-w-none sm:w-full mx-auto space-y-3 px-0">
           <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
             Loading report...
           </div>
@@ -497,7 +513,7 @@ export default function ChainHoistReportPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 px-[2px] py-2 sm:p-3">
-      <div className="w-full max-w-none sm:max-w-[1100px] mx-auto space-y-3 px-0">
+      <div className="w-full max-w-none sm:w-full mx-auto space-y-3 px-0">
         <input
           ref={itemPhotoRef}
           type="file"
@@ -831,59 +847,66 @@ function ChainHoistEditableRow({
 
           <label className="rounded-xl bg-gray-50 p-2">
             <div className="text-[10px] font-semibold text-gray-400">Status</div>
-            <select
-              value={status}
-              disabled={!editable}
-              onChange={(e) => {
-                if (!editable) return;
-                const v = e.target.value;
-                setStatus(v);
-                void onSave(unit.id, { status: v });
-              }}
-              style={{ color: getStatusTextColor(status) }}
-              className="mt-1 w-full border-none bg-transparent p-0 text-[12px] font-semibold outline-none disabled:bg-transparent"
-            >
-              <option value="available">Available</option>
-              <option value="in_use">In Use</option>
-              <option value="maintenance">Maintenance</option>
-              <option value="in_ksa">In KSA</option>
-            </select>
+            {editable ? (
+              <select
+                value={status}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setStatus(v);
+                  void onSave(unit.id, { status: v });
+                }}
+                style={{ color: getStatusTextColor(status) }}
+                className="mt-1 w-full border-none bg-transparent p-0 text-[12px] font-semibold outline-none"
+              >
+                <option value="available">Available</option>
+                <option value="in_use">In Use</option>
+                <option value="maintenance">Maintenance</option>
+                <option value="in_ksa">In KSA</option>
+              </select>
+            ) : (
+              <div
+                style={{ color: getStatusTextColor(status) }}
+                className="mt-1 w-full text-[12px] font-semibold"
+              >
+                {getStatusLabel(status)}
+              </div>
+            )}
           </label>
 
           <label className="rounded-xl bg-gray-50 p-2">
             <div className="text-[10px] font-semibold text-gray-400">Cert Date</div>
-            <input
-              type="date"
-              value={certDate}
-              readOnly={!editable}
-              onChange={(e) => {
-                if (!editable) return;
-                const v = e.target.value;
-                setCertDate(v);
+            {editable ? (
+              <input
+                type="date"
+                value={certDate}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setCertDate(v);
 
-                const newExpiry = v ? addOneYear(v) : "";
-                setExpiryDate(newExpiry);
+                  const newExpiry = v ? addOneYear(v) : "";
+                  setExpiryDate(newExpiry);
 
-                debounceSave("cert_mobile", () => {
-                  void onSave(unit.id, { cert_date: v || null });
-                });
-              }}
-              onBlur={() => {
-                if (!editable) return;
-                void onSave(unit.id, { cert_date: certDate || null });
-              }}
-              className="mt-1 w-full border-none bg-transparent p-0 text-[11px] text-gray-800 outline-none"
-            />
+                  debounceSave("cert_mobile", () => {
+                    void onSave(unit.id, { cert_date: v || null });
+                  });
+                }}
+                onBlur={() => {
+                  void onSave(unit.id, { cert_date: certDate || null });
+                }}
+                className="mt-1 w-full border-none bg-transparent p-0 text-[11px] text-gray-800 outline-none"
+              />
+            ) : (
+              <div className="mt-1 w-full text-[11px] text-gray-800">
+                {certDate || "-"}
+              </div>
+            )}
           </label>
 
           <label className="rounded-xl bg-gray-50 p-2">
             <div className="text-[10px] font-semibold text-gray-400">Expiry</div>
-            <input
-              type="date"
-              value={expiryDate}
-              readOnly
-              className="mt-1 w-full border-none bg-transparent p-0 text-[11px] text-gray-500 outline-none"
-            />
+            <div className="mt-1 w-full text-[11px] text-gray-500">
+              {expiryDate || "-"}
+            </div>
           </label>
         </div>
 
@@ -999,33 +1022,33 @@ function ChainHoistEditableRow({
           className="w-[120px] min-w-[120px] truncate rounded-lg border-none bg-white px-2 py-1 text-[12px] outline-none read-only:text-gray-700"
         />
 
-        <input
-          type="date"
-          value={certDate}
-          readOnly={!editable}
-          onChange={(e) => {
-            if (!editable) return;
-            const v = e.target.value;
-            setCertDate(v);
-            const newExpiry = v ? addOneYear(v) : "";
-            setExpiryDate(newExpiry);
-            debounceSave("cert_date", () => {
-              void onSave(unit.id, { cert_date: v || null });
-            });
-          }}
-          onBlur={() => {
-            if (!editable) return;
-            void onSave(unit.id, { cert_date: certDate || null });
-          }}
-          className="w-[100px] min-w-[100px] rounded-lg border-none bg-white px-1 py-1 text-[11px] outline-none read-only:text-gray-700"
-        />
+        {editable ? (
+          <input
+            type="date"
+            value={certDate}
+            onChange={(e) => {
+              const v = e.target.value;
+              setCertDate(v);
+              const newExpiry = v ? addOneYear(v) : "";
+              setExpiryDate(newExpiry);
+              debounceSave("cert_date", () => {
+                void onSave(unit.id, { cert_date: v || null });
+              });
+            }}
+            onBlur={() => {
+              void onSave(unit.id, { cert_date: certDate || null });
+            }}
+            className="w-[130px] min-w-[130px] rounded-lg border-none bg-white px-1 py-1 text-[11px] outline-none"
+          />
+        ) : (
+          <div className="w-[130px] min-w-[130px] rounded-lg bg-white px-1 py-1 text-[11px] text-gray-700">
+            {certDate || "-"}
+          </div>
+        )}
 
-        <input
-          type="date"
-          value={expiryDate}
-          readOnly
-          className="w-[100px] min-w-[100px] rounded-lg border-none bg-white px-1 py-1 text-[11px] text-gray-500 outline-none"
-        />
+        <div className="w-[130px] min-w-[130px] rounded-lg bg-white px-1 py-1 text-[11px] text-gray-500">
+          {expiryDate || "-"}
+        </div>
 
         <div
           className={`w-[70px] min-w-[70px] rounded-lg px-2 py-1 text-[11px] font-semibold text-center ${
@@ -1037,23 +1060,30 @@ function ChainHoistEditableRow({
           {validStatus === "expired" ? "Expired" : "Valid"}
         </div>
 
-        <select
-          value={status}
-          disabled={!editable}
-          onChange={(e) => {
-            if (!editable) return;
-            const v = e.target.value;
-            setStatus(v);
-            void onSave(unit.id, { status: v });
-          }}
-          style={{ color: getStatusTextColor(status) }}
-          className="w-[95px] min-w-[95px] rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none disabled:bg-white"
-        >
-          <option value="available">Available</option>
-          <option value="in_use">In Use</option>
-          <option value="maintenance">Maintenance</option>
-          <option value="in_ksa">In KSA</option>
-        </select>
+        {editable ? (
+          <select
+            value={status}
+            onChange={(e) => {
+              const v = e.target.value;
+              setStatus(v);
+              void onSave(unit.id, { status: v });
+            }}
+            style={{ color: getStatusTextColor(status) }}
+            className="w-[95px] min-w-[95px] rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none"
+          >
+            <option value="available">Available</option>
+            <option value="in_use">In Use</option>
+            <option value="maintenance">Maintenance</option>
+            <option value="in_ksa">In KSA</option>
+          </select>
+        ) : (
+          <div
+            style={{ color: getStatusTextColor(status) }}
+            className="w-[95px] min-w-[95px] rounded-lg bg-white px-1 py-1 text-[12px] font-semibold"
+          >
+            {getStatusLabel(status)}
+          </div>
+        )}
 
         <textarea
           value={notes}

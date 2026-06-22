@@ -54,7 +54,7 @@ type ItemsCache = {
 async function compressImageFile(
   file: File,
   maxSize = 260,
-  quality = 0.72
+  quality = 0.72,
 ): Promise<Blob> {
   const imageUrl = URL.createObjectURL(file);
 
@@ -93,9 +93,7 @@ async function compressImageFile(
 async function uploadPhotoBlob(blob: Blob): Promise<string> {
   const supabase = createClient();
 
-  const fileName = `${Date.now()}-${Math.random()
-    .toString(36)
-    .slice(2)}.webp`;
+  const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.webp`;
 
   const filePath = `matrix/thumbs/${fileName}`;
 
@@ -168,6 +166,18 @@ function cableStats(row: CableRow): ItemStats {
   return { total, available, inUse, maintenance, inKsa };
 }
 
+function cableLengthNumber(value: string) {
+  const match = String(value || "").match(/[\d.]+/);
+  return match ? Number(match[0]) : 0;
+}
+
+function sortCableRows(rows: CableRow[]) {
+  return [...rows].sort(
+    (a, b) =>
+      cableLengthNumber(b.cable_length) - cableLengthNumber(a.cable_length),
+  );
+}
+
 function splitBrandModel(name: string) {
   const clean = name.trim();
 
@@ -186,7 +196,10 @@ function splitBrandModel(name: string) {
   };
 }
 
-function renderItemName(name: string, itemType?: "unit" | "cable" | "rack" | null) {
+function renderItemName(
+  name: string,
+  itemType?: "unit" | "cable" | "rack" | null,
+) {
   if (itemType === "cable" || itemType === "rack") {
     return <span className="font-bold">{name}</span>;
   }
@@ -230,22 +243,58 @@ function sortItemsByBrand(items: MatrixItemRow[]) {
   });
 }
 
-function groupItemsByBrand(items: MatrixItemRow[]) {
-  const sorted = sortItemsByBrand(items);
-  const groups: { brand: string; items: MatrixItemRow[] }[] = [];
+function groupItemsByBrand(
+  items: MatrixItemRow[],
+  blockOrder: string[] = [],
+  itemOrderByBlock: Record<string, string[]> = {},
+) {
+  const map = new Map<string, MatrixItemRow[]>();
 
-  for (const item of sorted) {
+  for (const item of items) {
     const brand = itemBlockName(item);
-    const last = groups[groups.length - 1];
-
-    if (last && last.brand.toLowerCase() === brand.toLowerCase()) {
-      last.items.push(item);
-    } else {
-      groups.push({ brand, items: [item] });
-    }
+    const existingKey = Array.from(map.keys()).find(
+      (key) => key.toLowerCase() === brand.toLowerCase(),
+    );
+    const key = existingKey || brand;
+    map.set(key, [...(map.get(key) || []), item]);
   }
 
-  return groups;
+  const blockIndex = (brand: string) => {
+    const idx = blockOrder.findIndex(
+      (name) => name.toLowerCase() === brand.toLowerCase(),
+    );
+    return idx === -1 ? 999999 : idx;
+  };
+
+  const sortedBlocks = Array.from(map.keys()).sort((a, b) => {
+    const ai = blockIndex(a);
+    const bi = blockIndex(b);
+    if (ai !== bi) return ai - bi;
+    return a.localeCompare(b, undefined, {
+      sensitivity: "base",
+      numeric: true,
+    });
+  });
+
+  return sortedBlocks.map((brand) => {
+    const order = itemOrderByBlock[brand] || [];
+    const itemIndex = (id: string) => {
+      const idx = order.indexOf(id);
+      return idx === -1 ? 999999 : idx;
+    };
+
+    const groupItems = [...(map.get(brand) || [])].sort((a, b) => {
+      const ai = itemIndex(a.id);
+      const bi = itemIndex(b.id);
+      if (ai !== bi) return ai - bi;
+      return a.name.localeCompare(b.name, undefined, {
+        sensitivity: "base",
+        numeric: true,
+      });
+    });
+
+    return { brand, items: groupItems };
+  });
 }
 
 function cacheKeyFor(categoryId: string | null, subcategoryId: string | null) {
@@ -254,7 +303,7 @@ function cacheKeyFor(categoryId: string | null, subcategoryId: string | null) {
 
 function readItemsCache(
   categoryId: string | null,
-  subcategoryId: string | null
+  subcategoryId: string | null,
 ): ItemsCache | null {
   if (typeof window === "undefined") return null;
 
@@ -269,16 +318,74 @@ function readItemsCache(
 function writeItemsCache(
   categoryId: string | null,
   subcategoryId: string | null,
-  data: ItemsCache
+  data: ItemsCache,
 ) {
   if (typeof window === "undefined") return;
 
   try {
     sessionStorage.setItem(
       cacheKeyFor(categoryId, subcategoryId),
-      JSON.stringify(data)
+      JSON.stringify(data),
     );
   } catch {}
+}
+
+function matrixOrderKey(
+  categoryId: string | null,
+  subcategoryId: string | null,
+) {
+  return `hems:${categoryId || "no-cat"}:${subcategoryId || "no-sub"}:matrix-manual-order-v1`;
+}
+
+type MatrixManualOrder = {
+  blockOrder: string[];
+  itemOrderByBlock: Record<string, string[]>;
+};
+
+function readMatrixManualOrder(
+  categoryId: string | null,
+  subcategoryId: string | null,
+): MatrixManualOrder {
+  if (typeof window === "undefined") {
+    return { blockOrder: [], itemOrderByBlock: {} };
+  }
+
+  try {
+    const raw = localStorage.getItem(matrixOrderKey(categoryId, subcategoryId));
+    if (!raw) return { blockOrder: [], itemOrderByBlock: {} };
+    const parsed = JSON.parse(raw) as Partial<MatrixManualOrder>;
+    return {
+      blockOrder: Array.isArray(parsed.blockOrder) ? parsed.blockOrder : [],
+      itemOrderByBlock:
+        parsed.itemOrderByBlock && typeof parsed.itemOrderByBlock === "object"
+          ? parsed.itemOrderByBlock
+          : {},
+    };
+  } catch {
+    return { blockOrder: [], itemOrderByBlock: {} };
+  }
+}
+
+function writeMatrixManualOrder(
+  categoryId: string | null,
+  subcategoryId: string | null,
+  data: MatrixManualOrder,
+) {
+  if (typeof window === "undefined") return;
+
+  try {
+    localStorage.setItem(
+      matrixOrderKey(categoryId, subcategoryId),
+      JSON.stringify(data),
+    );
+  } catch {}
+}
+
+function moveArrayItem<T>(list: T[], fromIndex: number, toIndex: number) {
+  const next = [...list];
+  const [removed] = next.splice(fromIndex, 1);
+  next.splice(toIndex, 0, removed);
+  return next;
 }
 
 function StatPill({
@@ -296,12 +403,12 @@ function StatPill({
     tone === "green"
       ? "bg-green-100 text-black"
       : tone === "blue"
-      ? "bg-blue-100 text-black"
-      : tone === "yellow"
-      ? "bg-yellow-100 text-black"
-      : tone === "purple"
-      ? "bg-purple-100 text-black"
-      : "bg-gray-100 text-black";
+        ? "bg-blue-100 text-black"
+        : tone === "yellow"
+          ? "bg-yellow-100 text-black"
+          : tone === "purple"
+            ? "bg-purple-100 text-black"
+            : "bg-gray-100 text-black";
 
   const className = `px-2 py-1 rounded-lg text-[8px] font-semibold whitespace-nowrap ${cls} ${
     onClick ? "hover:ring-1 hover:ring-red-300" : ""
@@ -315,7 +422,11 @@ function StatPill({
     );
   }
 
-  return <span className={className}>{label}: {value}</span>;
+  return (
+    <span className={className}>
+      {label}: {value}
+    </span>
+  );
 }
 
 function ItemPhoto({
@@ -358,7 +469,10 @@ function ItemPhoto({
       )}
 
       {editable ? (
-        <div className="absolute right-0 top-0 z-30" data-list-photo-menu="true">
+        <div
+          className="absolute right-0 top-0 z-30"
+          data-list-photo-menu="true"
+        >
           <button
             type="button"
             onClick={(e) => {
@@ -422,14 +536,14 @@ export default function SubcategoryClientMatrix({
   const fileRef = useRef<HTMLInputElement | null>(null);
   const listPhotoFileRef = useRef<HTMLInputElement | null>(null);
 
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   const [categoryId, setCategoryId] = useState<string | null>(
-    initialCategoryId
+    initialCategoryId,
   );
   const [subcategoryId, setSubcategoryId] = useState<string | null>(
-    initialSubcategoryId
+    initialSubcategoryId,
   );
 
   const [items, setItems] = useState<MatrixItemRow[]>([]);
@@ -455,10 +569,20 @@ export default function SubcategoryClientMatrix({
   const [imageResults, setImageResults] = useState<OnlineImage[]>([]);
   const [searchingImages, setSearchingImages] = useState(false);
 
-  const [listPhotoMenuItemId, setListPhotoMenuItemId] =
-    useState<string | null>(null);
-  const [editingPhotoItemId, setEditingPhotoItemId] =
-    useState<string | null>(null);
+  const [listPhotoMenuItemId, setListPhotoMenuItemId] = useState<string | null>(
+    null,
+  );
+  const [editingPhotoItemId, setEditingPhotoItemId] = useState<string | null>(
+    null,
+  );
+
+  const [blockOrder, setBlockOrder] = useState<string[]>([]);
+  const [itemOrderByBlock, setItemOrderByBlock] = useState<
+    Record<string, string[]>
+  >({});
+  const [dragItemId, setDragItemId] = useState<string | null>(null);
+  const [dragItemBlock, setDragItemBlock] = useState<string | null>(null);
+  const [dragBlockName, setDragBlockName] = useState<string | null>(null);
 
   const itemName = useMemo(() => {
     if (itemType === "cable" || itemType === "rack") return cableModel.trim();
@@ -495,8 +619,8 @@ export default function SubcategoryClientMatrix({
   }, [editable, itemName, qty, itemType]);
 
   const brandGroups = useMemo(() => {
-    return groupItemsByBrand(items);
-  }, [items]);
+    return groupItemsByBrand(items, blockOrder, itemOrderByBlock);
+  }, [items, blockOrder, itemOrderByBlock]);
 
   const blockOptions = useMemo(() => {
     const names = items
@@ -504,13 +628,222 @@ export default function SubcategoryClientMatrix({
       .filter((name) => name.trim().length > 0);
 
     return Array.from(new Set(names)).sort((a, b) =>
-      a.localeCompare(b, undefined, { sensitivity: "base", numeric: true })
+      a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }),
     );
   }, [items]);
 
   const finalBlockName = useMemo(() => {
     return newBlockName.trim() || blockName.trim();
   }, [newBlockName, blockName]);
+
+  useEffect(() => {
+    const order = readMatrixManualOrder(categoryId, subcategoryId);
+    setBlockOrder(order.blockOrder);
+    setItemOrderByBlock(order.itemOrderByBlock);
+  }, [categoryId, subcategoryId]);
+
+  function saveManualOrder(
+    nextBlockOrder = blockOrder,
+    nextItemOrderByBlock = itemOrderByBlock,
+  ) {
+    setBlockOrder(nextBlockOrder);
+    setItemOrderByBlock(nextItemOrderByBlock);
+    writeMatrixManualOrder(categoryId, subcategoryId, {
+      blockOrder: nextBlockOrder,
+      itemOrderByBlock: nextItemOrderByBlock,
+    });
+  }
+
+  function ensureBlockOrder(list: MatrixItemRow[]) {
+    const names = Array.from(new Set(list.map((item) => itemBlockName(item))));
+    setBlockOrder((prev) => {
+      const next = [...prev.filter((name) => names.includes(name))];
+      for (const name of names) {
+        if (!next.some((x) => x.toLowerCase() === name.toLowerCase())) {
+          next.push(name);
+        }
+      }
+      writeMatrixManualOrder(categoryId, subcategoryId, {
+        blockOrder: next,
+        itemOrderByBlock,
+      });
+      return next;
+    });
+  }
+
+  async function renameBlock(oldName: string) {
+    if (!editable) return;
+
+    const nextName = prompt("Rename block:", oldName);
+    if (!nextName) return;
+
+    const clean = nextName.trim();
+    if (!clean || clean.toLowerCase() === oldName.toLowerCase()) return;
+
+    const blockItems = items.filter(
+      (item) => itemBlockName(item).toLowerCase() === oldName.toLowerCase(),
+    );
+    const ids = blockItems.map((item) => item.id);
+    if (ids.length === 0) return;
+
+    const { error } = await supabase
+      .from("matrix_models")
+      .update({ block_name: clean })
+      .in("id", ids);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    const nextItems = items.map((item) =>
+      ids.includes(item.id) ? { ...item, block_name: clean } : item,
+    );
+
+    const nextBlockOrder = blockOrder.map((name) =>
+      name.toLowerCase() === oldName.toLowerCase() ? clean : name,
+    );
+
+    const nextItemOrderByBlock = { ...itemOrderByBlock };
+    if (nextItemOrderByBlock[oldName]) {
+      nextItemOrderByBlock[clean] = nextItemOrderByBlock[oldName];
+      delete nextItemOrderByBlock[oldName];
+    }
+
+    setItems(sortItemsByBrand(nextItems));
+    saveManualOrder(nextBlockOrder, nextItemOrderByBlock);
+    setSaveMsg("Block renamed");
+    setTimeout(() => setSaveMsg(""), 1500);
+  }
+
+  function onBlockDragStart(name: string) {
+    if (!editable) return;
+    setDragBlockName(name);
+    setDragItemId(null);
+    setDragItemBlock(null);
+  }
+
+  function onItemDragStart(itemId: string, sourceBlock: string) {
+    if (!editable) return;
+    setDragItemId(itemId);
+    setDragItemBlock(sourceBlock);
+    setDragBlockName(null);
+  }
+
+  function dropBlockOnBlock(targetBlock: string) {
+    if (!editable || !dragBlockName || dragBlockName === targetBlock) return;
+
+    const currentBlocks = brandGroups.map((group) => group.brand);
+    const base = blockOrder.length > 0 ? blockOrder : currentBlocks;
+    const normalized = [...base];
+
+    for (const block of currentBlocks) {
+      if (!normalized.includes(block)) normalized.push(block);
+    }
+
+    const from = normalized.findIndex(
+      (name) => name.toLowerCase() === dragBlockName.toLowerCase(),
+    );
+    const to = normalized.findIndex(
+      (name) => name.toLowerCase() === targetBlock.toLowerCase(),
+    );
+
+    if (from === -1 || to === -1) return;
+
+    const nextBlockOrder = moveArrayItem(normalized, from, to);
+    saveManualOrder(nextBlockOrder, itemOrderByBlock);
+    setDragBlockName(null);
+  }
+
+  async function dropItemOnBlock(targetBlock: string) {
+    if (!editable || !dragItemId) return;
+
+    const sourceBlock = dragItemBlock || "";
+    const dragged = items.find((item) => item.id === dragItemId);
+    if (!dragged) return;
+
+    const nextItems = items.map((item) =>
+      item.id === dragItemId ? { ...item, block_name: targetBlock } : item,
+    );
+
+    const nextOrder = { ...itemOrderByBlock };
+    if (sourceBlock) {
+      nextOrder[sourceBlock] = (nextOrder[sourceBlock] || []).filter(
+        (id) => id !== dragItemId,
+      );
+    }
+    nextOrder[targetBlock] = [
+      ...(nextOrder[targetBlock] || []).filter((id) => id !== dragItemId),
+      dragItemId,
+    ];
+
+    setItems(sortItemsByBrand(nextItems));
+    saveManualOrder(blockOrder, nextOrder);
+
+    const { error } = await supabase
+      .from("matrix_models")
+      .update({ block_name: targetBlock })
+      .eq("id", dragItemId);
+
+    if (error) {
+      alert(error.message);
+      await refreshData();
+    }
+
+    setDragItemId(null);
+    setDragItemBlock(null);
+  }
+
+  async function dropItemOnItem(targetItemId: string, targetBlock: string) {
+    if (!editable || !dragItemId || dragItemId === targetItemId) return;
+
+    const sourceBlock = dragItemBlock || "";
+    const targetItems = items
+      .filter(
+        (item) =>
+          itemBlockName(item).toLowerCase() === targetBlock.toLowerCase(),
+      )
+      .map((item) => item.id)
+      .filter((id) => id !== dragItemId);
+
+    const oldOrder = (itemOrderByBlock[targetBlock] || targetItems).filter(
+      (id) => id !== dragItemId,
+    );
+
+    const targetIndex = Math.max(0, oldOrder.indexOf(targetItemId));
+    const nextTargetOrder = [...oldOrder];
+    nextTargetOrder.splice(targetIndex, 0, dragItemId);
+
+    const nextOrder = { ...itemOrderByBlock, [targetBlock]: nextTargetOrder };
+    if (
+      sourceBlock &&
+      sourceBlock.toLowerCase() !== targetBlock.toLowerCase()
+    ) {
+      nextOrder[sourceBlock] = (nextOrder[sourceBlock] || []).filter(
+        (id) => id !== dragItemId,
+      );
+    }
+
+    const nextItems = items.map((item) =>
+      item.id === dragItemId ? { ...item, block_name: targetBlock } : item,
+    );
+
+    setItems(sortItemsByBrand(nextItems));
+    saveManualOrder(blockOrder, nextOrder);
+
+    const { error } = await supabase
+      .from("matrix_models")
+      .update({ block_name: targetBlock })
+      .eq("id", dragItemId);
+
+    if (error) {
+      alert(error.message);
+      await refreshData();
+    }
+
+    setDragItemId(null);
+    setDragItemBlock(null);
+  }
 
   async function resolveIds() {
     if (initialCategoryId && initialSubcategoryId) {
@@ -570,7 +903,7 @@ export default function SubcategoryClientMatrix({
       }
 
       const cableItems = list.filter(
-        (x) => x.item_type === "cable" || x.item_type === "rack"
+        (x) => x.item_type === "cable" || x.item_type === "rack",
       );
 
       if (cableItems.length > 0) {
@@ -579,7 +912,7 @@ export default function SubcategoryClientMatrix({
           .select("*")
           .in(
             "item_id",
-            cableItems.map((x) => x.id)
+            cableItems.map((x) => x.id),
           );
 
         if (rowsRes.error) throw rowsRes.error;
@@ -591,13 +924,19 @@ export default function SubcategoryClientMatrix({
           grouped[row.item_id].push(row);
         }
 
-        setCableRowsByItem(grouped);
+        const sortedGrouped: Record<string, CableRow[]> = {};
+        for (const key of Object.keys(grouped)) {
+          sortedGrouped[key] = sortCableRows(grouped[key]);
+        }
+
+        setCableRowsByItem(sortedGrouped);
       } else {
         setCableRowsByItem({});
       }
 
       setItems(list);
       setStatsByItem(stats);
+      ensureBlockOrder(list);
 
       writeItemsCache(ids.categoryId, ids.subcategoryId, {
         categoryId: ids.categoryId,
@@ -659,8 +998,7 @@ export default function SubcategoryClientMatrix({
 
     document.addEventListener("mousedown", handleClickOutside);
 
-    return () =>
-      document.removeEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
@@ -702,8 +1040,8 @@ export default function SubcategoryClientMatrix({
       const results = Array.isArray(data)
         ? data
         : Array.isArray(data?.images_results)
-        ? data.images_results
-        : [];
+          ? data.images_results
+          : [];
 
       setImageResults(results);
     } catch (e) {
@@ -713,7 +1051,7 @@ export default function SubcategoryClientMatrix({
       setSearchingImages(false);
     }
   }
-  
+
   async function updateItemPhoto(itemId: string, imageUrl: string) {
     const { error } = await supabase
       .from("matrix_models")
@@ -726,7 +1064,7 @@ export default function SubcategoryClientMatrix({
     }
 
     const nextItems = items.map((it) =>
-      it.id === itemId ? { ...it, photo_data: imageUrl } : it
+      it.id === itemId ? { ...it, photo_data: imageUrl } : it,
     );
 
     setItems(nextItems);
@@ -734,9 +1072,7 @@ export default function SubcategoryClientMatrix({
     setTimeout(() => setSaveMsg(""), 1500);
   }
 
-  async function onPickListItemPhoto(
-    e: React.ChangeEvent<HTMLInputElement>
-  ) {
+  async function onPickListItemPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     if (!editingPhotoItemId) return;
 
     const f = e.target.files?.[0];
@@ -783,7 +1119,10 @@ export default function SubcategoryClientMatrix({
     try {
       finalImageUrl = await optimizeOnlinePhoto(sourceUrl);
     } catch (error) {
-      console.warn("Could not optimize online image, using thumbnail URL:", error);
+      console.warn(
+        "Could not optimize online image, using thumbnail URL:",
+        error,
+      );
       finalImageUrl = fallbackUrl;
     }
 
@@ -807,12 +1146,13 @@ export default function SubcategoryClientMatrix({
     if (!nm) return;
 
     const q = itemType === "cable" ? 0 : Math.max(1, Number(qty) || 1);
-    const cleanBlockName = finalBlockName ||
+    const cleanBlockName =
+      finalBlockName ||
       (itemType === "cable"
         ? "Cables"
         : itemType === "rack"
-        ? "Racks"
-        : splitBrandModel(nm).brand || "Other");
+          ? "Racks"
+          : splitBrandModel(nm).brand || "Other");
 
     setErr(null);
 
@@ -889,7 +1229,9 @@ export default function SubcategoryClientMatrix({
     const isRack = parentItem?.item_type === "rack";
 
     const length = prompt(
-      isRack ? "Rack item name example: MA Lighting 8 PORT NODE" : "Cable length example: 5m / 10m / 20m"
+      isRack
+        ? "Rack item name example: MA Lighting 8 PORT NODE"
+        : "Cable length example: 5m / 10m / 20m",
     );
     if (!length?.trim()) return;
 
@@ -917,74 +1259,78 @@ export default function SubcategoryClientMatrix({
 
     setCableRowsByItem((prev) => ({
       ...prev,
-      [itemId]: [...(prev[itemId] || []), data as CableRow],
+      [itemId]: sortCableRows([...(prev[itemId] || []), data as CableRow]),
     }));
   }
-  
-  
-  
+
   async function updateCableQty(
-  rowId: string,
-  itemId: string,
-  field: "total_qty" | "in_use_qty" | "maintenance_qty" | "in_ksa_qty",
-  current: number | null
-) {
-  if (!editable) return;
+    rowId: string,
+    itemId: string,
+    field: "total_qty" | "in_use_qty" | "maintenance_qty" | "in_ksa_qty",
+    current: number | null,
+  ) {
+    if (!editable) return;
 
-  const nextValue = prompt("Edit quantity:", String(current ?? 0));
-  if (nextValue === null) return;
+    const nextValue = prompt("Edit quantity:", String(current ?? 0));
+    if (nextValue === null) return;
 
-  const clean = clampQty(nextValue);
+    const clean = clampQty(nextValue);
 
-  const { error } = await supabase
-    .from("matrix_rows")
-    .update({ [field]: clean })
-    .eq("id", rowId);
+    const { error } = await supabase
+      .from("matrix_rows")
+      .update({ [field]: clean })
+      .eq("id", rowId);
 
-  if (error) {
-    alert(error.message);
-    return;
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    setCableRowsByItem((prev) => ({
+      ...prev,
+      [itemId]: (prev[itemId] || []).map((row) =>
+        row.id === rowId ? { ...row, [field]: clean } : row,
+      ),
+    }));
   }
 
-  setCableRowsByItem((prev) => ({
-    ...prev,
-    [itemId]: (prev[itemId] || []).map((row) =>
-      row.id === rowId ? { ...row, [field]: clean } : row
-    ),
-  }));
-}
+  async function updateCableLength(
+    rowId: string,
+    itemId: string,
+    current: string,
+  ) {
+    if (!editable) return;
 
-async function updateCableLength(rowId: string, itemId: string, current: string) {
-  if (!editable) return;
+    const nextLength = prompt("Edit cable length:", current);
+    if (!nextLength) return;
 
-  const nextLength = prompt("Edit cable length:", current);
-  if (!nextLength) return;
+    const clean = nextLength.trim();
+    if (!clean) return;
 
-  const clean = nextLength.trim();
-  if (!clean) return;
+    const { error } = await supabase
+      .from("matrix_rows")
+      .update({ cable_length: clean })
+      .eq("id", rowId);
 
-  const { error } = await supabase
-    .from("matrix_rows")
-    .update({ cable_length: clean })
-    .eq("id", rowId);
+    if (error) {
+      alert(error.message);
+      return;
+    }
 
-  if (error) {
-    alert(error.message);
-    return;
+    setCableRowsByItem((prev) => ({
+      ...prev,
+      [itemId]: sortCableRows(
+        (prev[itemId] || []).map((row) =>
+          row.id === rowId ? { ...row, cable_length: clean } : row,
+        ),
+      ),
+    }));
   }
 
-  setCableRowsByItem((prev) => ({
-    ...prev,
-    [itemId]: (prev[itemId] || []).map((row) =>
-      row.id === rowId ? { ...row, cable_length: clean } : row
-    ),
-  }));
-}
-  
   async function updateItemQty(
     itemId: string,
     field: "total_qty" | "in_use_qty" | "maintenance_qty" | "in_ksa_qty",
-    current: number | null
+    current: number | null,
   ) {
     if (!editable) return;
 
@@ -1004,7 +1350,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
     }
 
     const nextItems = items.map((item) =>
-      item.id === itemId ? { ...item, [field]: clean } : item
+      item.id === itemId ? { ...item, [field]: clean } : item,
     );
 
     const updatedItem = nextItems.find((item) => item.id === itemId);
@@ -1044,7 +1390,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
       if (upd.error) throw upd.error;
 
       const nextItems = sortItemsByBrand(
-        items.map((it) => (it.id === itemId ? { ...it, name: clean } : it))
+        items.map((it) => (it.id === itemId ? { ...it, name: clean } : it)),
       );
 
       setItems(nextItems);
@@ -1117,158 +1463,203 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
       return (
         <div
           key={it.id}
-          className={!isLast ? "border-b border-gray-100 pb-6 mb-6" : ""}
+          draggable={editable}
+          onDragStart={() => onItemDragStart(it.id, itemBlockName(it))}
+          onDragOver={(e) => editable && e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            void dropItemOnItem(it.id, itemBlockName(it));
+          }}
+          className={`${!isLast ? "border-b border-gray-100 pb-6 mb-6" : ""} ${
+            editable ? "cursor-grab active:cursor-grabbing" : ""
+          }`}
         >
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-  <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
-    <div className="flex items-start gap-3 min-w-0 flex-1">
-      <ItemPhoto
-        photo={it.photo_data}
-        name={it.name}
-        editable={editable}
-        big
-        menuOpen={listPhotoMenuItemId === it.id}
-        onToggleMenu={() =>
-          setListPhotoMenuItemId((prev) =>
-            prev === it.id ? null : it.id
-          )
-        }
-        onUploadPhoto={() => {
-          setListPhotoMenuItemId(null);
-          setEditingPhotoItemId(it.id);
-          listPhotoFileRef.current?.click();
-        }}
-        onSearchPhoto={() => {
-          setListPhotoMenuItemId(null);
-          void searchPhotoForItem(it);
-        }}
-      />
+            <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
+              <div className="flex items-start gap-3 min-w-0 flex-1">
+                <ItemPhoto
+                  photo={it.photo_data}
+                  name={it.name}
+                  editable={editable}
+                  big
+                  menuOpen={listPhotoMenuItemId === it.id}
+                  onToggleMenu={() =>
+                    setListPhotoMenuItemId((prev) =>
+                      prev === it.id ? null : it.id,
+                    )
+                  }
+                  onUploadPhoto={() => {
+                    setListPhotoMenuItemId(null);
+                    setEditingPhotoItemId(it.id);
+                    listPhotoFileRef.current?.click();
+                  }}
+                  onSearchPhoto={() => {
+                    setListPhotoMenuItemId(null);
+                    void searchPhotoForItem(it);
+                  }}
+                />
 
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2 min-w-0">
-          <h2
-            className="truncate text-[10px] sm:text-[11px] text-gray-900"
-            style={{ lineHeight: 1.1 }}
-          >
-            <span className="font-bold">{it.name}</span>
-          </h2>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <h2
+                      className="truncate text-[10px] sm:text-[11px] text-gray-900"
+                      style={{ lineHeight: 1.1 }}
+                    >
+                      <span className="font-bold">{it.name}</span>
+                    </h2>
 
-          {editable && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onRename(it.id, it.name);
-              }}
-              className="text-red-500 text-[12px] shrink-0 hover:text-black"
-            >
-              ✎
-            </button>
-          )}
+                    {editable && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onRename(it.id, it.name);
+                        }}
+                        className="text-red-500 text-[12px] shrink-0 hover:text-black"
+                      >
+                        ✎
+                      </button>
+                    )}
 
-          {editable && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onDelete(it.id);
-              }}
-              className="ml-auto text-red-500 shrink-0 hover:text-black sm:hidden"
-            >
-              <Trash2 className="h-3.5 w-3.5 sm:h-[15px] sm:w-[15px]" />
-            </button>
-          )}
-        </div>
+                    {editable && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onDelete(it.id);
+                        }}
+                        className="ml-auto text-red-500 shrink-0 hover:text-black sm:hidden"
+                      >
+                        <Trash2 className="h-3.5 w-3.5 sm:h-[15px] sm:w-[15px]" />
+                      </button>
+                    )}
+                  </div>
 
-        <div className="mt-2 sm:hidden">
-          <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
-            <div className="text-[8px] font-semibold text-gray-500">Total</div>
-            <div className="text-[8px] font-semibold text-gray-500">Available</div>
-            <div className="text-[8px] font-semibold text-gray-500">In Use</div>
-            <div className="text-[8px] font-semibold text-gray-500">Maintenance</div>
-            <div className="text-[8px] font-semibold text-gray-500">In KSA</div>
+                  <div className="mt-2 sm:hidden">
+                    <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
+                      <div className="text-[8px] font-semibold text-gray-500">
+                        Total
+                      </div>
+                      <div className="text-[8px] font-semibold text-gray-500">
+                        Available
+                      </div>
+                      <div className="text-[8px] font-semibold text-gray-500">
+                        In Use
+                      </div>
+                      <div className="text-[8px] font-semibold text-gray-500">
+                        Maintenance
+                      </div>
+                      <div className="text-[8px] font-semibold text-gray-500">
+                        In KSA
+                      </div>
 
-            <button
-              type="button"
-              onClick={() => updateItemQty(it.id, "total_qty", it.total_qty)}
-              className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
-            >
-              {stats.total}
-            </button>
-            <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
-              {stats.available}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateItemQty(it.id, "total_qty", it.total_qty)
+                        }
+                        className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
+                      >
+                        {stats.total}
+                      </button>
+                      <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
+                        {stats.available}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateItemQty(it.id, "in_use_qty", it.in_use_qty)
+                        }
+                        className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
+                      >
+                        {stats.inUse}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateItemQty(
+                            it.id,
+                            "maintenance_qty",
+                            it.maintenance_qty,
+                          )
+                        }
+                        className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
+                      >
+                        {stats.maintenance}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateItemQty(it.id, "in_ksa_qty", it.in_ksa_qty)
+                        }
+                        className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
+                      >
+                        {stats.inKsa}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-1 hidden sm:block">
+                    <div className="flex flex-wrap gap-2">
+                      <StatPill
+                        label="Total Qty"
+                        value={stats.total}
+                        onClick={() =>
+                          updateItemQty(it.id, "total_qty", it.total_qty)
+                        }
+                      />
+                      <StatPill
+                        label="Available Qty"
+                        value={stats.available}
+                        tone="green"
+                      />
+                      <StatPill
+                        label="In Use"
+                        value={stats.inUse}
+                        tone="blue"
+                        onClick={() =>
+                          updateItemQty(it.id, "in_use_qty", it.in_use_qty)
+                        }
+                      />
+                      <StatPill
+                        label="Maintenance"
+                        value={stats.maintenance}
+                        tone="yellow"
+                        onClick={() =>
+                          updateItemQty(
+                            it.id,
+                            "maintenance_qty",
+                            it.maintenance_qty,
+                          )
+                        }
+                      />
+                      <StatPill
+                        label="In KSA"
+                        value={stats.inKsa}
+                        tone="purple"
+                        onClick={() =>
+                          updateItemQty(it.id, "in_ksa_qty", it.in_ksa_qty)
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={() => updateItemQty(it.id, "in_use_qty", it.in_use_qty)}
-              className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
-            >
-              {stats.inUse}
-            </button>
-            <button
-              type="button"
-              onClick={() =>
-                updateItemQty(it.id, "maintenance_qty", it.maintenance_qty)
-              }
-              className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
-            >
-              {stats.maintenance}
-            </button>
-            <button
-              type="button"
-              onClick={() => updateItemQty(it.id, "in_ksa_qty", it.in_ksa_qty)}
-              className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
-            >
-              {stats.inKsa}
-            </button>
-          </div>
-        </div>
 
-        <div className="mt-1 hidden sm:block">
-          <div className="flex flex-wrap gap-2">
-            <StatPill
-              label="Total Qty"
-              value={stats.total}
-              onClick={() => updateItemQty(it.id, "total_qty", it.total_qty)}
-            />
-            <StatPill label="Available Qty" value={stats.available} tone="green" />
-            <StatPill
-              label="In Use"
-              value={stats.inUse}
-              tone="blue"
-              onClick={() => updateItemQty(it.id, "in_use_qty", it.in_use_qty)}
-            />
-            <StatPill
-              label="Maintenance"
-              value={stats.maintenance}
-              tone="yellow"
-              onClick={() => updateItemQty(it.id, "maintenance_qty", it.maintenance_qty)}
-            />
-            <StatPill
-              label="In KSA"
-              value={stats.inKsa}
-              tone="purple"
-              onClick={() => updateItemQty(it.id, "in_ksa_qty", it.in_ksa_qty)}
-            />
+            <div className="hidden sm:flex items-center gap-2 shrink-0">
+              {editable && (
+                <button
+                  onClick={() => onDelete(it.id)}
+                  className="px-2 py-1 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
+                >
+                  Delete
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div className="hidden sm:flex items-center gap-2 shrink-0">
-    {editable && (
-      <button
-        onClick={() => onDelete(it.id)}
-        className="px-2 py-1 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
-      >
-        Delete
-      </button>
-    )}
-  </div>
-</div>
 
           <div className="mt-4 w-full sm:w-[410px] rounded-2xl border border-gray-200 overflow-hidden bg-white">
             {(cableRowsByItem[it.id] || []).length === 0 ? (
@@ -1276,7 +1667,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                 No rack items yet.
               </div>
             ) : (
-              (cableRowsByItem[it.id] || []).map((row) => (
+              sortCableRows(cableRowsByItem[it.id] || []).map((row) => (
                 <div
                   key={row.id}
                   className="grid grid-cols-[1fr_64px_24px] items-center gap-2 px-4 py-2 text-[6px] sm:text-[8px] border-t first:border-t-0 border-gray-100"
@@ -1321,7 +1712,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                         setCableRowsByItem((prev) => ({
                           ...prev,
                           [it.id]: (prev[it.id] || []).filter(
-                            (x) => x.id !== row.id
+                            (x) => x.id !== row.id,
                           ),
                         }));
                       }}
@@ -1354,7 +1745,16 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
       return (
         <div
           key={it.id}
-          className={!isLast ? "border-b border-gray-100 pb-8 mb-8" : ""}
+          draggable={editable}
+          onDragStart={() => onItemDragStart(it.id, itemBlockName(it))}
+          onDragOver={(e) => editable && e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            void dropItemOnItem(it.id, itemBlockName(it));
+          }}
+          className={`${!isLast ? "border-b border-gray-100 pb-8 mb-8" : ""} ${
+            editable ? "cursor-grab active:cursor-grabbing" : ""
+          }`}
         >
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-7 min-w-0">
@@ -1366,7 +1766,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                 menuOpen={listPhotoMenuItemId === it.id}
                 onToggleMenu={() =>
                   setListPhotoMenuItemId((prev) =>
-                    prev === it.id ? null : it.id
+                    prev === it.id ? null : it.id,
                   )
                 }
                 onUploadPhoto={() => {
@@ -1389,19 +1789,19 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                 </h2>
 
                 {editable ? (
-  <button
-    type="button"
-    onClick={(e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      onRename(it.id, it.name);
-    }}
-    className="absolute -top-4 right-0 text-red-500 text-[12px] hover:text-black"
-    title="Rename"
-  >
-    ✎
-  </button>
-) : null}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      onRename(it.id, it.name);
+                    }}
+                    className="absolute -top-4 right-0 text-red-500 text-[12px] hover:text-black"
+                    title="Rename"
+                  >
+                    ✎
+                  </button>
+                ) : null}
               </div>
             </div>
 
@@ -1431,7 +1831,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
 
           <div className="mt-5 overflow-x-auto pr-0">
             <div className="rounded-2xl border border-gray-200 overflow-hidden min-w-0">
-              <div className="grid grid-cols-[74px_repeat(5,45px)_20px] md:grid-cols-[160px_repeat(5,130px)_32px] bg-gray-100 items-center gap-[2px] px-2 lg:px-6 py-1.5 lg:py-4 text-[7px] lg:text-[10px] font-bold text-gray-600">
+              <div className="grid grid-cols-[74px_repeat(5,45px)_20px] md:grid-cols-[160px_repeat(5,130px)_32px] bg-gray-100 items-center gap-[1px] px-2 lg:px-6 py-1 lg:py-2 text-[7px] lg:text-[9px] font-bold text-gray-600">
                 <div className="text-left">Length</div>
                 <div className="text-center">Total</div>
                 <div className="text-center">Available</div>
@@ -1446,17 +1846,19 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                   No cable lengths yet.
                 </div>
               ) : (
-                (cableRowsByItem[it.id] || []).map((row) => {
+                sortCableRows(cableRowsByItem[it.id] || []).map((row) => {
                   const s = cableStats(row);
 
                   return (
                     <div
                       key={row.id}
-                      className="grid grid-cols-[74px_repeat(5,45px)_20px] md:grid-cols-[160px_repeat(5,130px)_32px] items-center gap-[2px] px-2 lg:px-6 py-[2px] lg:py-1 text-[7px] lg:text-[10px] text-gray-900 border-t border-gray-100"
+                      className="grid grid-cols-[74px_repeat(5,45px)_20px] md:grid-cols-[160px_repeat(5,130px)_32px] items-center gap-[1px] px-2 lg:px-6 py-[1px] lg:py-[2px] text-[7px] lg:text-[9px] text-gray-900 border-t border-gray-100"
                     >
                       <button
                         type="button"
-                        onClick={() => updateCableLength(row.id, it.id, row.cable_length)}
+                        onClick={() =>
+                          updateCableLength(row.id, it.id, row.cable_length)
+                        }
                         className="text-left font-bold hover:text-red-500"
                       >
                         {row.cable_length}
@@ -1465,7 +1867,12 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                       <button
                         type="button"
                         onClick={() =>
-                          updateCableQty(row.id, it.id, "total_qty", row.total_qty)
+                          updateCableQty(
+                            row.id,
+                            it.id,
+                            "total_qty",
+                            row.total_qty,
+                          )
                         }
                         className="text-center hover:text-red-500"
                       >
@@ -1473,7 +1880,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                       </button>
 
                       <div className="text-center">
-                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-green-100 px-1 lg:px-2 py-0.5 lg:py-1 font-bold">
+                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-green-100 px-1 lg:px-1.5 py-0 lg:py-[2px] font-bold">
                           {s.available}
                         </span>
                       </div>
@@ -1481,11 +1888,16 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                       <button
                         type="button"
                         onClick={() =>
-                          updateCableQty(row.id, it.id, "in_use_qty", row.in_use_qty)
+                          updateCableQty(
+                            row.id,
+                            it.id,
+                            "in_use_qty",
+                            row.in_use_qty,
+                          )
                         }
                         className="text-center"
                       >
-                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-blue-100 px-1 lg:px-2 py-0.5 lg:py-1 font-bold hover:text-red-500">
+                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-blue-100 px-1 lg:px-1.5 py-0 lg:py-[2px] font-bold hover:text-red-500">
                           {s.inUse}
                         </span>
                       </button>
@@ -1497,12 +1909,12 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                             row.id,
                             it.id,
                             "maintenance_qty",
-                            row.maintenance_qty
+                            row.maintenance_qty,
                           )
                         }
                         className="text-center"
                       >
-                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-yellow-100 px-1 lg:px-2 py-0.5 lg:py-1 font-bold hover:text-red-500">
+                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-yellow-100 px-1 lg:px-1.5 py-0 lg:py-[2px] font-bold hover:text-red-500">
                           {s.maintenance}
                         </span>
                       </button>
@@ -1510,11 +1922,16 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                       <button
                         type="button"
                         onClick={() =>
-                          updateCableQty(row.id, it.id, "in_ksa_qty", row.in_ksa_qty)
+                          updateCableQty(
+                            row.id,
+                            it.id,
+                            "in_ksa_qty",
+                            row.in_ksa_qty,
+                          )
                         }
                         className="text-center"
                       >
-                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-purple-100 px-1 lg:px-2 py-0.5 lg:py-1 font-bold hover:text-red-500">
+                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-purple-100 px-1 lg:px-1.5 py-0 lg:py-[2px] font-bold hover:text-red-500">
                           {s.inKsa}
                         </span>
                       </button>
@@ -1538,7 +1955,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                             setCableRowsByItem((prev) => ({
                               ...prev,
                               [it.id]: (prev[it.id] || []).filter(
-                                (x) => x.id !== row.id
+                                (x) => x.id !== row.id,
                               ),
                             }));
                           }}
@@ -1573,7 +1990,16 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
     return (
       <div
         key={it.id}
-        className={!isLast ? "border-b border-gray-100 pb-4 mb-4" : ""}
+        draggable={editable}
+        onDragStart={() => onItemDragStart(it.id, itemBlockName(it))}
+        onDragOver={(e) => editable && e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          void dropItemOnItem(it.id, itemBlockName(it));
+        }}
+        className={`${!isLast ? "border-b border-gray-100 pb-4 mb-4" : ""} ${
+          editable ? "cursor-grab active:cursor-grabbing" : ""
+        }`}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
@@ -1585,7 +2011,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                 menuOpen={listPhotoMenuItemId === it.id}
                 onToggleMenu={() =>
                   setListPhotoMenuItemId((prev) =>
-                    prev === it.id ? null : it.id
+                    prev === it.id ? null : it.id,
                   )
                 }
                 onUploadPhoto={() => {
@@ -1657,7 +2083,9 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
 
                     <button
                       type="button"
-                      onClick={() => updateItemQty(it.id, "total_qty", it.total_qty)}
+                      onClick={() =>
+                        updateItemQty(it.id, "total_qty", it.total_qty)
+                      }
                       className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
                     >
                       {stats.total}
@@ -1667,7 +2095,9 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                     </div>
                     <button
                       type="button"
-                      onClick={() => updateItemQty(it.id, "in_use_qty", it.in_use_qty)}
+                      onClick={() =>
+                        updateItemQty(it.id, "in_use_qty", it.in_use_qty)
+                      }
                       className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
                     >
                       {stats.inUse}
@@ -1675,7 +2105,11 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                     <button
                       type="button"
                       onClick={() =>
-                        updateItemQty(it.id, "maintenance_qty", it.maintenance_qty)
+                        updateItemQty(
+                          it.id,
+                          "maintenance_qty",
+                          it.maintenance_qty,
+                        )
                       }
                       className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
                     >
@@ -1683,7 +2117,9 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                     </button>
                     <button
                       type="button"
-                      onClick={() => updateItemQty(it.id, "in_ksa_qty", it.in_ksa_qty)}
+                      onClick={() =>
+                        updateItemQty(it.id, "in_ksa_qty", it.in_ksa_qty)
+                      }
                       className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
                     >
                       {stats.inKsa}
@@ -1694,34 +2130,44 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                 <div className="mt-1 hidden sm:block">
                   <div className="flex flex-wrap gap-2">
                     <StatPill
-              label="Total Qty"
-              value={stats.total}
-              onClick={() => updateItemQty(it.id, "total_qty", it.total_qty)}
-            />
+                      label="Total Qty"
+                      value={stats.total}
+                      onClick={() =>
+                        updateItemQty(it.id, "total_qty", it.total_qty)
+                      }
+                    />
                     <StatPill
                       label="Available Qty"
                       value={stats.available}
                       tone="green"
                     />
                     <StatPill
-              label="In Use"
-              value={stats.inUse}
-              tone="blue"
-              onClick={() => updateItemQty(it.id, "in_use_qty", it.in_use_qty)}
-            />
+                      label="In Use"
+                      value={stats.inUse}
+                      tone="blue"
+                      onClick={() =>
+                        updateItemQty(it.id, "in_use_qty", it.in_use_qty)
+                      }
+                    />
                     <StatPill
                       label="Maintenance"
                       value={stats.maintenance}
                       tone="yellow"
                       onClick={() =>
-                        updateItemQty(it.id, "maintenance_qty", it.maintenance_qty)
+                        updateItemQty(
+                          it.id,
+                          "maintenance_qty",
+                          it.maintenance_qty,
+                        )
                       }
                     />
                     <StatPill
                       label="In KSA"
                       value={stats.inKsa}
                       tone="purple"
-                      onClick={() => updateItemQty(it.id, "in_ksa_qty", it.in_ksa_qty)}
+                      onClick={() =>
+                        updateItemQty(it.id, "in_ksa_qty", it.in_ksa_qty)
+                      }
                     />
                   </div>
                 </div>
@@ -1746,7 +2192,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
 
   if (loading) {
     return (
-      <div className="max-w-[1100px] mx-auto">
+      <div className="w-full">
         <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
           Loading items...
         </div>
@@ -1756,7 +2202,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
 
   if (err) {
     return (
-      <div className="max-w-[1100px] mx-auto">
+      <div className="w-full mx-auto">
         <div className="bg-white border border-gray-200 rounded-2xl p-6 text-gray-900">
           <div className="font-semibold">Error</div>
           <div className="text-sm text-red-600 mt-1">{err}</div>
@@ -1773,7 +2219,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
   }
 
   return (
-    <div className="max-w-[1100px] mx-auto space-y-3">
+    <div className="w-full mx-auto space-y-3">
       {editable && (
         <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-sm">
           <div className="mb-4">
@@ -1790,8 +2236,8 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
               itemType === "unit"
                 ? "grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_1fr_76px_1fr_1fr_116px_76px] md:items-center"
                 : itemType === "rack"
-                ? "grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_76px_1fr_1fr_116px_76px] md:items-center"
-                : "grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_1fr_1fr_116px_76px] md:items-center"
+                  ? "grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_76px_1fr_1fr_116px_76px] md:items-center"
+                  : "grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_1fr_1fr_116px_76px] md:items-center"
             }
           >
             <select
@@ -1851,7 +2297,9 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                     setCableModel(e.target.value);
                     if (!imageSearch) setImageSearch(e.target.value);
                   }}
-                  placeholder={itemType === "rack" ? "Rack name" : "Cable model"}
+                  placeholder={
+                    itemType === "rack" ? "Rack name" : "Cable model"
+                  }
                   className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
                 />
 
@@ -1943,7 +2391,7 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
                       setImageSearch(itemSearchName);
                       setTimeout(
                         () => void searchOnlineImages(itemSearchName),
-                        50
+                        50,
                       );
                     }}
                     className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
@@ -2078,18 +2526,50 @@ async function updateCableLength(rowId: string, itemId: string, current: string)
         brandGroups.map((group) => (
           <div
             key={group.brand}
-            className="bg-white border border-gray-200 rounded-2xl p-2 sm:p-4"
+            onDragOver={(e) => editable && e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (dragItemId) {
+                void dropItemOnBlock(group.brand);
+              } else if (dragBlockName) {
+                dropBlockOnBlock(group.brand);
+              }
+            }}
+            className={`bg-white border rounded-2xl p-2 sm:p-4 ${
+              dragItemId || dragBlockName
+                ? "border-red-200 bg-red-50/20"
+                : "border-gray-200"
+            }`}
           >
             <div className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
+              <button
+                type="button"
+                draggable={editable}
+                onDragStart={() => onBlockDragStart(group.brand)}
+                className={`h-5 w-5 rounded-full border border-gray-200 bg-white text-[10px] text-gray-500 ${
+                  editable
+                    ? "cursor-grab hover:text-red-500 active:cursor-grabbing"
+                    : "cursor-default"
+                }`}
+                title="Drag block"
+              >
+                ⋮⋮
+              </button>
+
               <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
 
-              <h2 className="text-[8px] font-semibold uppercase tracking-wide text-gray-500">
+              <button
+                type="button"
+                onClick={() => void renameBlock(group.brand)}
+                className="text-left text-[8px] font-semibold uppercase tracking-wide text-gray-500 hover:text-red-500"
+                title="Rename block"
+              >
                 {group.brand}
-              </h2>
+              </button>
             </div>
 
             {group.items.map((it, index) =>
-              renderItemRow(it, index === group.items.length - 1)
+              renderItemRow(it, index === group.items.length - 1),
             )}
           </div>
         ))

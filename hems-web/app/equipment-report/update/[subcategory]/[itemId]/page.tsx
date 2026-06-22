@@ -53,6 +53,11 @@ function getStatusTextColor(status: string | null) {
   }
 }
 
+function formatDisplayDate(value: string | null) {
+  if (!value) return "-";
+  return value;
+}
+
 async function fileToDataUrl(file: File): Promise<string> {
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -234,7 +239,7 @@ export function SerializedRowsBlock({
           <div className="w-[120px] min-w-[120px]">Serial</div>
           <div className="w-[95px] min-w-[95px]">Status</div>
           <div className="w-[230px] min-w-[230px]">Note</div>
-          <div className="w-[90px] min-w-[90px]">Test Date</div>
+          <div className="w-[130px] min-w-[130px]">Test Date</div>
           <div className="flex-1 min-w-[200px]">Damage</div>
         </div>
 
@@ -410,7 +415,7 @@ export default function ItemReportPage() {
   if (loading || !role) {
     return (
       <div className="min-h-screen bg-gray-50 px-[2px] py-2 sm:p-3">
-        <div className="w-full max-w-none sm:max-w-[1100px] mx-auto space-y-3 px-0">
+        <div className="w-full max-w-none sm:w-full mx-auto space-y-3 px-0">
           <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
             Loading report...
           </div>
@@ -445,7 +450,7 @@ export default function ItemReportPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 px-[2px] py-2 sm:p-3">
-      <div className="w-full max-w-none sm:max-w-[1100px] mx-auto space-y-3 px-0">
+      <div className="w-full max-w-none sm:w-full mx-auto space-y-3 px-0">
         <input
           ref={itemPhotoRef}
           type="file"
@@ -768,45 +773,61 @@ function SerializedUnitRow({
 
           <label className="rounded-xl bg-gray-50 p-2">
             <div className="text-[10px] font-semibold text-gray-400">Status</div>
-            <select
-              value={status}
-              disabled={!editable}
-              onChange={(e) => {
-                if (!editable) return;
-                const v = e.target.value as UnitStatus;
-                setStatus(v);
-                void onChange(unit.id, { status: v });
-              }}
-              style={{ color: getStatusTextColor(status) }}
-              className="mt-1 w-full border-none bg-transparent p-0 text-[12px] font-semibold outline-none disabled:bg-transparent"
-            >
-              <option value="available">Available</option>
-              <option value="in_use">In Use</option>
-              <option value="maintenance">Maintenance</option>
-              <option value="in_ksa">In KSA</option>
-            </select>
+            {editable ? (
+  <select
+    value={status}
+    onChange={(e) => {
+      const v = e.target.value as UnitStatus;
+      setStatus(v);
+      void onChange(unit.id, { status: v });
+    }}
+    style={{ color: getStatusTextColor(status) }}
+    className="w-[95px] min-w-[95px] rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none"
+  >
+    <option value="available">Available</option>
+    <option value="in_use">In Use</option>
+    <option value="maintenance">Maintenance</option>
+    <option value="in_ksa">In KSA</option>
+  </select>
+) : (
+  <div
+    style={{ color: getStatusTextColor(status) }}
+    className="w-[95px] min-w-[95px] rounded-lg bg-white px-1 py-1 text-[12px] font-semibold"
+  >
+    {status === "in_use"
+      ? "In Use"
+      : status === "in_ksa"
+      ? "In KSA"
+      : status
+      ? status.charAt(0).toUpperCase() + status.slice(1)
+      : "Available"}
+  </div>
+)}
           </label>
 
           <label className="rounded-xl bg-gray-50 p-2 col-span-2">
             <div className="text-[10px] font-semibold text-gray-400">Test Date</div>
-            <input
-              type="date"
-              value={testingDate}
-              readOnly={!editable}
-              onChange={(e) => {
-                if (!editable) return;
-                const v = e.target.value;
-                setTestingDate(v);
-                debounceSave("testing_date_mobile", () => {
-                  void onChange(unit.id, { testing_date: v || null });
-                });
-              }}
-              onBlur={() => {
-                if (!editable) return;
-                void onChange(unit.id, { testing_date: testingDate || null });
-              }}
-              className="mt-1 w-full border-none bg-transparent p-0 text-[11px] text-gray-800 outline-none"
-            />
+            {editable ? (
+              <input
+                type="date"
+                value={testingDate}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setTestingDate(v);
+                  debounceSave("testing_date_mobile", () => {
+                    void onChange(unit.id, { testing_date: v || null });
+                  });
+                }}
+                onBlur={() => {
+                  void onChange(unit.id, { testing_date: testingDate || null });
+                }}
+                className="mt-1 w-full border-none bg-transparent p-0 text-[11px] text-gray-800 outline-none"
+              />
+            ) : (
+              <div className="mt-1 w-full rounded-lg bg-white px-1 py-1 text-[11px] font-medium text-gray-800">
+                {formatDisplayDate(testingDate)}
+              </div>
+            )}
           </label>
         </div>
 
@@ -916,23 +937,36 @@ function SerializedUnitRow({
           className="w-[120px] min-w-[120px] truncate rounded-lg border-none bg-white px-2 py-1 text-[12px] outline-none read-only:text-gray-700"
         />
 
-        <select
-          value={status}
-          disabled={!editable}
-          onChange={(e) => {
-            if (!editable) return;
-            const v = e.target.value as UnitStatus;
-            setStatus(v);
-            void onChange(unit.id, { status: v });
-          }}
-          style={{ color: getStatusTextColor(status) }}
-          className="w-[95px] min-w-[95px] rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none disabled:bg-white"
-        >
-          <option value="available">Available</option>
-          <option value="in_use">In Use</option>
-          <option value="maintenance">Maintenance</option>
-          <option value="in_ksa">In KSA</option>
-        </select>
+        {editable ? (
+  <select
+    value={status}
+    onChange={(e) => {
+      const v = e.target.value as UnitStatus;
+      setStatus(v);
+      void onChange(unit.id, { status: v });
+    }}
+    style={{ color: getStatusTextColor(status) }}
+    className="w-[95px] min-w-[95px] rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none"
+  >
+    <option value="available">Available</option>
+    <option value="in_use">In Use</option>
+    <option value="maintenance">Maintenance</option>
+    <option value="in_ksa">In KSA</option>
+  </select>
+) : (
+  <div
+    style={{ color: getStatusTextColor(status) }}
+    className="w-[95px] min-w-[95px] rounded-lg bg-white px-1 py-1 text-[12px] font-semibold"
+  >
+    {status === "in_use"
+      ? "In Use"
+      : status === "in_ksa"
+      ? "In KSA"
+      : status
+      ? status.charAt(0).toUpperCase() + status.slice(1)
+      : "Available"}
+  </div>
+)}
 
         <textarea
           value={notes}
@@ -959,24 +993,27 @@ function SerializedUnitRow({
           }}
         />
 
-        <input
-          type="date"
-          value={testingDate}
-          readOnly={!editable}
-          onChange={(e) => {
-            if (!editable) return;
-            const v = e.target.value;
-            setTestingDate(v);
-            debounceSave("testing_date", () => {
-              void onChange(unit.id, { testing_date: v || null });
-            });
-          }}
-          onBlur={() => {
-            if (!editable) return;
-            void onChange(unit.id, { testing_date: testingDate || null });
-          }}
-          className="w-[90px] min-w-[90px] rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none read-only:text-gray-700"
-        />
+        {editable ? (
+          <input
+            type="date"
+            value={testingDate}
+            onChange={(e) => {
+              const v = e.target.value;
+              setTestingDate(v);
+              debounceSave("testing_date", () => {
+                void onChange(unit.id, { testing_date: v || null });
+              });
+            }}
+            onBlur={() => {
+              void onChange(unit.id, { testing_date: testingDate || null });
+            }}
+            className="w-[130px] min-w-[130px] rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none"
+          />
+        ) : (
+          <div className="w-[130px] min-w-[130px] rounded-lg bg-white px-1 py-1 text-[12px] font-medium text-gray-700">
+            {formatDisplayDate(testingDate)}
+          </div>
+        )}
 
         <div className="flex min-w-[200px] items-center gap-2 overflow-visible">
           {editable ? (

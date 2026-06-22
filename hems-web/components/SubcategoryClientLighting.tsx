@@ -1035,7 +1035,7 @@ for (const u of allUnits) {
 
   if (loading) {
     return (
-      <div className="max-w-[1100px] mx-auto">
+      <div className="w-full">
         <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
           Loading fixtures...
         </div>
@@ -1045,7 +1045,7 @@ for (const u of allUnits) {
 
   if (err) {
     return (
-      <div className="max-w-[1100px] mx-auto">
+      <div className="w-full">
         <div className="bg-white border border-gray-200 rounded-2xl p-6 text-gray-900">
           <div className="font-semibold">Error</div>
 
@@ -1063,7 +1063,7 @@ for (const u of allUnits) {
   }
 
   return (
-    <div className="max-w-[1100px] mx-auto space-y-3">
+    <div className="w-full space-y-3">
       {editable && (
   <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-sm">
     <div className="mb-4">

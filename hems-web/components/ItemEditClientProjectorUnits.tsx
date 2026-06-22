@@ -145,7 +145,7 @@ export default function ItemEditClientProjectorUnits({
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 px-[2px] py-2 sm:p-3">
-        <div className="w-full max-w-none sm:max-w-[1100px] mx-auto space-y-3 px-0">
+        <div className="w-full max-w-none sm:w-full mx-auto space-y-3 px-0">
           <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
             Loading...
           </div>
@@ -157,7 +157,7 @@ export default function ItemEditClientProjectorUnits({
   if (!item) {
     return (
       <div className="min-h-screen bg-gray-50 px-[2px] py-2 sm:p-3">
-        <div className="w-full max-w-none sm:max-w-[1100px] mx-auto space-y-3 px-0">
+        <div className="w-full max-w-none sm:w-full mx-auto space-y-3 px-0">
           <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
             <div className="font-semibold">Item not found</div>
 
@@ -177,7 +177,7 @@ export default function ItemEditClientProjectorUnits({
 
   return (
     <div className="min-h-screen bg-gray-50 px-[2px] py-2 sm:p-3">
-      <div className="w-full max-w-none sm:max-w-[1100px] mx-auto space-y-3 px-0">
+      <div className="w-full max-w-none sm:w-full mx-auto space-y-3 px-0">
         <input
           ref={itemPhotoRef}
           type="file"

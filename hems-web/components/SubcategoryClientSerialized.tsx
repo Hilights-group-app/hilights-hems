@@ -984,7 +984,7 @@ export default function SubcategoryClientSerialized({
 
   if (loading) {
     return (
-      <div className="max-w-[1100px] mx-auto">
+      <div className="w-full">
         <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
           Loading items...
         </div>
@@ -994,7 +994,7 @@ export default function SubcategoryClientSerialized({
 
   if (err) {
     return (
-      <div className="max-w-[1100px] mx-auto">
+      <div className="w-full">
         <div className="bg-white border border-gray-200 rounded-2xl p-6 text-gray-900">
           <div className="font-semibold">Error</div>
           <div className="text-sm text-red-600 mt-1">{err}</div>
@@ -1011,7 +1011,7 @@ export default function SubcategoryClientSerialized({
   }
 
   return (
-    <div className="max-w-[1100px] mx-auto space-y-3">
+  <div className="w-full space-y-3">
       {editable && (
         <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-sm">
           <div className="mb-4">

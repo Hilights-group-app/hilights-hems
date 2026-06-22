@@ -523,7 +523,7 @@ export default function SubcategoryClientChainHoist({
 
   if (loading) {
     return (
-      <div className="max-w-[1100px] mx-auto">
+      <div className="w-full mx-auto">
         <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
           Loading chain hoist items...
         </div>
@@ -532,7 +532,7 @@ export default function SubcategoryClientChainHoist({
   }
 
   return (
-    <div className="max-w-[1100px] mx-auto space-y-3">
+    <div className="w-full mx-auto space-y-3">
       <input
         ref={listPhotoRef}
         type="file"

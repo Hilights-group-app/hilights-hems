@@ -1,7 +1,7 @@
 export default function Loading() {
   return (
     <div className="min-h-screen bg-gray-50 p-3">
-      <div className="mx-auto max-w-[1100px] space-y-3">
+      <div className="mx-auto w-full space-y-3">
         {Array.from({ length: 7 }).map((_, i) => (
           <div
             key={i}

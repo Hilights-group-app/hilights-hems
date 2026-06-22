@@ -57,7 +57,7 @@ export default function InventoryClient() {
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 p-3">
-        <div className="mx-auto max-w-[1100px] space-y-3">
+        <div className="mx-auto w-full space-y-3">
           {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="rounded-2xl border border-gray-200 bg-white px-4 py-4 shadow-sm">
               <div className="mb-4 h-4 w-32 animate-pulse rounded bg-gray-200" />
@@ -75,7 +75,7 @@ export default function InventoryClient() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-3">
-      <div className="mx-auto max-w-[1100px] space-y-3">
+      <div className="mx-auto w-full space-y-3">
         {categories.map((cat) => (
           <div key={cat.id} className="rounded-2xl border border-gray-200 bg-white px-4 py-4 shadow-sm sm:rounded-xl sm:px-3 sm:py-2">
             <div className="mb-3 flex items-center justify-between sm:mb-1.5">

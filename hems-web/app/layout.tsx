@@ -44,7 +44,7 @@ export default function RootLayout({
     <html lang="en">
       <body className="text-black">
         <TopBar />
-        <main className="w-full min-h-screen px-[2px] py-2 sm:max-w-6xl sm:mx-auto sm:p-6">
+        <main className="w-full min-h-screen px-2 py-2">
   {children}
 </main>
       </body>

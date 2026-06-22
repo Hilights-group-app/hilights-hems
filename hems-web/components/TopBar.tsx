@@ -257,7 +257,7 @@ if (!notifCache) {
   return (
     <>
       <header className="bg-white shadow-sm">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-2.5 py-2 sm:px-6">
+        <div className="flex w-full items-center justify-between px-4 py-2">
           <div className="flex min-w-0 items-center gap-2">
             {showPrivateNav ? (
               <button

@@ -774,7 +774,7 @@ export default function LedScreenRowReportPage() {
   if (loading || !role) {
     return (
       <div className="min-h-screen bg-gray-50 p-3">
-        <div className="max-w-[1100px] mx-auto space-y-3">
+        <div className="w-full mx-auto space-y-3">
           <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
             Loading...
           </div>
@@ -810,7 +810,7 @@ export default function LedScreenRowReportPage() {
   if (!rowId || !row) {
     return (
       <div className="min-h-screen bg-gray-50 p-3">
-        <div className="max-w-[1100px] mx-auto space-y-3">
+        <div className="w-full mx-auto space-y-3">
           <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
             LED screen report not found.
           </div>
@@ -821,7 +821,7 @@ export default function LedScreenRowReportPage() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-3">
-      <div className="max-w-[1100px] mx-auto space-y-3">
+      <div className="w-full mx-auto space-y-3">
         <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0 pt-1 pb-1">
