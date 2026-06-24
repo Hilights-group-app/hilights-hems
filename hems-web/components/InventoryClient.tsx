@@ -15,6 +15,7 @@ const CACHE_KEY = "hems:catalog:v4";
 
 function getCachedCatalog(): Category[] {
   if (typeof window === "undefined") return [];
+
   try {
     const cached = sessionStorage.getItem(CACHE_KEY);
     return cached ? JSON.parse(cached) : [];
@@ -23,18 +24,47 @@ function getCachedCatalog(): Category[] {
   }
 }
 
+function InventorySkeleton() {
+  return (
+    <div className="min-h-screen bg-gray-50 p-3">
+      <div className="mx-auto w-full space-y-3">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div
+            key={i}
+            className="rounded-2xl border border-gray-200 bg-white px-4 py-4 shadow-sm"
+          >
+            <div className="mb-4 h-4 w-32 animate-pulse rounded bg-gray-200" />
+
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+              {Array.from({ length: 6 }).map((_, j) => (
+                <div
+                  key={j}
+                  className="h-9 animate-pulse rounded-xl bg-gray-200 sm:h-7 sm:w-24 sm:rounded-full"
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function InventoryClient() {
-  const [categories, setCategories] = useState<Category[]>(() => getCachedCatalog());
-  const [loading, setLoading] = useState(() => getCachedCatalog().length === 0);
+  const [mounted, setMounted] = useState(false);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
   const [loadingSub, setLoadingSub] = useState<string | null>(null);
 
   useEffect(() => {
+    setMounted(true);
+
     const cached = getCachedCatalog();
 
     if (cached.length > 0) {
       setCategories(cached);
       setLoading(false);
-      return; // important: ma yaawedch fetch
+      return;
     }
 
     void loadCatalog();
@@ -46,7 +76,10 @@ export default function InventoryClient() {
       const cats = data.categories || [];
 
       setCategories(cats);
-      sessionStorage.setItem(CACHE_KEY, JSON.stringify(cats));
+
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify(cats));
+      }
     } catch (e) {
       console.error("Inventory load error:", e);
     } finally {
@@ -54,30 +87,22 @@ export default function InventoryClient() {
     }
   }
 
+  if (!mounted) {
+    return <InventorySkeleton />;
+  }
+
   if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 p-3">
-        <div className="mx-auto w-full space-y-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="rounded-2xl border border-gray-200 bg-white px-4 py-4 shadow-sm">
-              <div className="mb-4 h-4 w-32 animate-pulse rounded bg-gray-200" />
-              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-                {Array.from({ length: 6 }).map((_, j) => (
-                  <div key={j} className="h-9 animate-pulse rounded-xl bg-gray-200 sm:h-7 sm:w-24 sm:rounded-full" />
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
+    return <InventorySkeleton />;
   }
 
   return (
     <div className="min-h-screen bg-gray-50 p-3">
       <div className="mx-auto w-full space-y-3">
         {categories.map((cat) => (
-          <div key={cat.id} className="rounded-2xl border border-gray-200 bg-white px-4 py-4 shadow-sm sm:rounded-xl sm:px-3 sm:py-2">
+          <div
+            key={cat.id}
+            className="rounded-2xl border border-gray-200 bg-white px-4 py-4 shadow-sm sm:rounded-xl sm:px-3 sm:py-2"
+          >
             <div className="mb-3 flex items-center justify-between sm:mb-1.5">
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 shrink-0 rounded-full bg-red-500 sm:h-1.5 sm:w-1.5" />

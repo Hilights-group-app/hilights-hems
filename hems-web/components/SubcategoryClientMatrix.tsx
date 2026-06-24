@@ -2191,14 +2191,12 @@ export default function SubcategoryClientMatrix({
   }
 
   if (loading) {
-    return (
-      <div className="w-full">
-        <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
-          Loading items...
-        </div>
-      </div>
-    );
-  }
+  return (
+    <div className="rounded-xl border border-gray-200 bg-white px-5 py-6 text-gray-900">
+      Loading...
+    </div>
+  );
+}
 
   if (err) {
     return (
