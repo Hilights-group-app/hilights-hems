@@ -2042,10 +2042,25 @@ function SortableCabinetRow({
     <div
       ref={setNodeRef}
       style={style}
-      {...attributes}
-      {...listeners}
-      className={disabled ? "" : "cursor-grab touch-none active:cursor-grabbing"}
+      className="relative"
     >
+      {!disabled ? (
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          className="absolute -left-1 top-1/2 z-20 flex h-9 w-4 -translate-y-1/2 cursor-grab touch-none items-center justify-center rounded-r-md bg-white/90 text-gray-400 shadow-sm ring-1 ring-gray-200 hover:bg-gray-50 hover:text-red-500 active:cursor-grabbing"
+          aria-label="Drag to reorder cabinet"
+          title="Drag to reorder"
+        >
+          <span className="h-5 w-1 rounded-full bg-current" />
+        </button>
+      ) : null}
+
       {children}
     </div>
   );
