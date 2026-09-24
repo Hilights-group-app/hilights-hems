@@ -4,7 +4,7 @@ import Link from "next/link";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
-import { ChainHoistRowsBlock } from "@/app/equipment-report/update/chain-hoist/[itemId]/page";
+import { ChainHoistRowsBlock } from "@/components/ChainHoistRowsBlock";
 
 type DbItem = {
   id: string;

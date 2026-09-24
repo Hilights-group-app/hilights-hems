@@ -6,8 +6,12 @@ import { ChevronDown, Download } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { SerializedRowsBlock } from "@/app/equipment-report/update/[subcategory]/[itemId]/page";
 import { ChainHoistRowsBlock } from "@/app/equipment-report/update/chain-hoist/[itemId]/page";
-import html2canvas from "html2canvas";
-import jsPDF from "jspdf";
+import {
+  generateLightingPdf,
+  generateProjectorPdf,
+  generateChainHoistPdf,
+  generateLedScreenPdf,
+} from "@/components/reports/PdfTemplate";
 
 type ReportItem = {
   id: string;
@@ -524,41 +528,95 @@ export default function EquipmentReportPage() {
   }
 
   async function downloadPdf() {
-  const element = document.getElementById("report-preview");
-  if (!element) return;
+    if (!selectedItem) return;
 
-  const canvas = await html2canvas(element, {
-    scale: 2,
-    useCORS: true,
-    backgroundColor: "#ffffff",
-    windowWidth: 1400,
-  });
+    if (isLedScreen() && selectedLedRow) {
+      const { data, error } = await supabase
+        .from("led_maintenance_logs")
+        .select("problem_type, qty, team_name, event_name, event_date, note")
+        .eq("matrix_row_id", selectedLedRow.id)
+        .order("created_at", { ascending: false });
 
-  const imgData = canvas.toDataURL("image/png");
+      if (error) {
+        console.error("led pdf data error:", error);
+        alert("Failed to prepare LED Screen PDF.");
+        return;
+      }
 
-  const pdf = new jsPDF({
-    orientation: "landscape",
-    unit: "mm",
-    format: "a4",
-  });
+      generateLedScreenPdf({
+        title: selectedItem.name,
+        cabinetSize: selectedLedRow.size,
+        stats,
+        issues: data ?? [],
+      });
 
-  const pageWidth = pdf.internal.pageSize.getWidth();
-  const pageHeight = pdf.internal.pageSize.getHeight();
+      return;
+    }
 
-  const imgWidth = pageWidth;
-  const imgHeight = (canvas.height * imgWidth) / canvas.width;
+    if (isProjector()) {
+      const { data, error } = await supabase
+        .from("units")
+        .select("unit_no, serial, status, lamp_hours, notes, testing_date")
+        .eq("item_id", selectedItem.id)
+        .order("unit_no", { ascending: true });
 
-  pdf.addImage(
-    imgData,
-    "PNG",
-    0,
-    0,
-    imgWidth,
-    Math.min(imgHeight, pageHeight)
-  );
+      if (error) {
+        console.error("projector pdf data error:", error);
+        alert("Failed to prepare Projector PDF.");
+        return;
+      }
 
-  pdf.save(`${selectedTitle || "equipment-report"}.pdf`);
-}
+      generateProjectorPdf({
+        title: selectedItem.name,
+        stats,
+        units: data ?? [],
+      });
+
+      return;
+    }
+
+    if (isChainHoist()) {
+      const { data, error } = await supabase
+        .from("units")
+        .select("unit_no, serial, status, cert_date, expiry_date, notes")
+        .eq("item_id", selectedItem.id)
+        .order("unit_no", { ascending: true });
+
+      if (error) {
+        console.error("chain hoist pdf data error:", error);
+        alert("Failed to prepare Chain Hoist PDF.");
+        return;
+      }
+
+      generateChainHoistPdf({
+        title: selectedItem.name,
+        stats: chainStats,
+        units: data ?? [],
+      });
+
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("units")
+      .select("unit_no, serial, status, notes, testing_date")
+      .eq("item_id", selectedItem.id)
+      .order("unit_no", { ascending: true });
+
+    if (error) {
+      console.error("serialized pdf data error:", error);
+      alert("Failed to prepare PDF.");
+      return;
+    }
+
+    generateLightingPdf({
+      title: selectedItem.name,
+      category: selectedSubcategoryLabel,
+      photoUrl: selectedItem.photo_url,
+      stats,
+      units: data ?? [],
+    });
+  }
 
   const shownStats = displayStats();
   const canEditCurrent = canEditCurrentReport();
@@ -643,7 +701,7 @@ export default function EquipmentReportPage() {
             ) : (
               <div
   id="report-preview"
-  className="w-[1400px] max-w-none bg-white"
+  className="w-full bg-white"
 >
                 <div className="mb-3 rounded-2xl border border-gray-200 bg-white p-2 sm:p-6">
                   <div className="flex justify-between items-center gap-2 sm:gap-4">

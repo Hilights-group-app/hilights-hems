@@ -1,4 +1,4 @@
- "use client";
+"use client";
 
 import Link from "next/link";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -7,7 +7,7 @@ import { canEditInventory } from "@/lib/authStore";
 import {
   ProjectorRowsBlock,
   type Stats,
-} from "@/app/equipment-report/update/projectors/[itemId]/page";
+} from "@/components/ProjectorRowsBlock";
 
 type DbItem = {
   id: string;

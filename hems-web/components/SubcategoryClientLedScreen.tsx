@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
 import { ChevronDown, Trash2 } from "lucide-react";
@@ -399,6 +401,12 @@ export default function SubcategoryClientLedScreen({
 }) {
   const supabase = createClient();
   const editable = canEditInventory();
+  const pathname = usePathname();
+
+  const getReportHref = (rowId: string) => {
+    const basePath = pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
+    return `${basePath}/led-report/${encodeURIComponent(rowId)}`;
+  };
 
   const newPhotoFileRef = useRef<HTMLInputElement | null>(null);
   const addCabinetPhotoFileRef = useRef<HTMLInputElement | null>(null);
@@ -1400,6 +1408,7 @@ export default function SubcategoryClientLedScreen({
                 onOpenEdit={(row) => openEditPopup(row)}
                 onSaveRowDirect={saveRowDirect}
                 onRowsReorder={reorderRows}
+                getReportHref={getReportHref}
               />
               ))}
         </div>
@@ -1677,6 +1686,7 @@ function LedModelCard({
   onOpenEdit,
   onSaveRowDirect,
   onRowsReorder,
+  getReportHref,
 }: {
   model: MatrixModel;
   brand: string;
@@ -1693,6 +1703,7 @@ function LedModelCard({
   onOpenEdit: (row: MatrixRow) => void;
   onSaveRowDirect: (row: MatrixRow, patch: Partial<MatrixRow>) => Promise<void>;
   onRowsReorder: (modelId: string, activeId: string, overId: string) => Promise<void>;
+  getReportHref: (rowId: string) => string;
 }) {
   const rows = sortRows(model.matrix_rows);
   const sensors = useSensors(
@@ -1830,7 +1841,7 @@ function LedModelCard({
 
       <div className="mt-4 overflow-visible rounded-2xl border border-gray-200 bg-white">
         <div className="hidden sm:block">
-          <div className="grid grid-cols-[64px_1.1fr_1.1fr_repeat(5,96px)_28px] bg-gray-100 px-3 py-2 text-[10px] font-bold text-gray-600 items-center gap-1">
+          <div className="grid grid-cols-[64px_1.1fr_1.1fr_repeat(5,96px)_52px_28px] bg-gray-100 px-3 py-2 text-[10px] font-bold text-gray-600 items-center gap-1">
             <div>Photo</div>
             <div>Cabinet Model</div>
             <div>Cabinet Size</div>
@@ -1839,6 +1850,7 @@ function LedModelCard({
             <div className="text-center">In Use</div>
             <div className="text-center">Maintenance</div>
             <div className="text-center">In KSA</div>
+            <div className="text-center">Report</div>
             <div />
           </div>
 
@@ -1867,6 +1879,7 @@ function LedModelCard({
                       onSearchRowPhoto={onSearchRowPhoto}
                       onSaveRowDirect={onSaveRowDirect}
                       onDeleteRow={onDeleteRow}
+                      reportHref={getReportHref(r.id)}
                     />
                   </SortableCabinetRow>
                 ))}
@@ -1928,15 +1941,25 @@ function LedModelCard({
                               </div>
                             </div>
 
-                            {editable ? (
-                              <button
-                                type="button"
-                                onClick={() => onDeleteRow(r.id)}
-                                className="shrink-0 text-red-500 hover:text-black"
+                            <div className="flex shrink-0 items-center gap-2">
+                              <Link
+                                href={getReportHref(r.id)}
+                                onClick={(event) => event.stopPropagation()}
+                                className="rounded-full border border-gray-300 bg-white px-2 py-0.5 text-[8px] font-medium text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
                               >
-                                <Trash2 size={15} />
-                              </button>
-                            ) : null}
+                                Report
+                              </Link>
+
+                              {editable ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onDeleteRow(r.id)}
+                                  className="text-red-500 hover:text-black"
+                                >
+                                  <Trash2 size={15} />
+                                </button>
+                              ) : null}
+                            </div>
                           </div>
 
                           <div className="grid grid-cols-5 gap-x-1 gap-y-1 text-center">
@@ -2075,6 +2098,7 @@ function DesktopEditableCabinetRow({
   onSearchRowPhoto,
   onSaveRowDirect,
   onDeleteRow,
+  reportHref,
 }: {
   row: MatrixRow;
   editable: boolean;
@@ -2084,6 +2108,7 @@ function DesktopEditableCabinetRow({
   onSearchRowPhoto: (row: MatrixRow) => void;
   onSaveRowDirect: (row: MatrixRow, patch: Partial<MatrixRow>) => Promise<void>;
   onDeleteRow: (rowId: string) => void;
+  reportHref: string;
 }) {
   const available = rowAvailableFromTotal(
     clampQty(row.qty),
@@ -2127,7 +2152,7 @@ function DesktopEditableCabinetRow({
   }
 
   return (
-    <div className="grid grid-cols-[64px_1.1fr_1.1fr_repeat(5,96px)_28px] items-center gap-1 border-t border-gray-100 px-3 py-[2px] text-[9px] text-gray-900">
+    <div className="grid grid-cols-[64px_1.1fr_1.1fr_repeat(5,96px)_52px_28px] items-center gap-1 border-t border-gray-100 px-3 py-[2px] text-[9px] text-gray-900">
       <PhotoBox
         photo={row.photo_data}
         name={row.size}
@@ -2195,6 +2220,16 @@ function DesktopEditableCabinetRow({
           {formatSqm(toSqm(row.in_ksa_qty, row.size))} SQM
         </span>
       </button>
+
+      <div className="text-center">
+        <Link
+          href={reportHref}
+          onClick={(event) => event.stopPropagation()}
+          className="inline-flex rounded-full border border-gray-300 bg-white px-2 py-0.5 text-[8px] font-medium text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+        >
+          Report
+        </Link>
+      </div>
 
       <div>
         {editable ? (

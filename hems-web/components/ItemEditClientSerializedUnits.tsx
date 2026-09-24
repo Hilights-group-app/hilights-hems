@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
-import { SerializedRowsBlock } from "@/app/equipment-report/update/[subcategory]/[itemId]/page";
+import { SerializedRowsBlock } from "@/components/SerializedRowsBlock";
 
 type DbItem = {
   id: string;
@@ -309,9 +309,9 @@ export default function ItemEditClientSerializedUnits({
         <button
           type="button"
           onClick={() => {
-  setPhotoMenuOpen(false);
-  void searchGoogleImages(item.name);
-}}
+            setPhotoMenuOpen(false);
+            itemPhotoRef.current?.click();
+          }}
           className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-100"
         >
           Upload photo
