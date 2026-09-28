@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
@@ -53,7 +54,7 @@ type FixturesCache = {
 async function compressImageFile(
   file: File,
   maxSize = 260,
-  quality = 0.72
+  quality = 0.72,
 ): Promise<Blob> {
   const imageUrl = URL.createObjectURL(file);
 
@@ -92,9 +93,7 @@ async function compressImageFile(
 async function uploadPhotoBlob(blob: Blob): Promise<string> {
   const supabase = createClient();
 
-  const fileName = `${Date.now()}-${Math.random()
-    .toString(36)
-    .slice(2)}.webp`;
+  const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.webp`;
 
   const filePath = `items/thumbs/${fileName}`;
 
@@ -153,7 +152,7 @@ function sortItemsByBrand(items: ItemRow[]) {
     return (aParts.model || a.name).localeCompare(
       bParts.model || b.name,
       undefined,
-      { sensitivity: "base", numeric: true }
+      { sensitivity: "base", numeric: true },
     );
   });
 }
@@ -180,7 +179,7 @@ function cacheKeyFor(category: string, subcategory: string) {
 
 function readFixturesCache(
   category: string,
-  subcategory: string
+  subcategory: string,
 ): FixturesCache | null {
   if (typeof window === "undefined") return null;
 
@@ -195,14 +194,14 @@ function readFixturesCache(
 function writeFixturesCache(
   category: string,
   subcategory: string,
-  data: FixturesCache
+  data: FixturesCache,
 ) {
   if (typeof window === "undefined") return;
 
   try {
     sessionStorage.setItem(
       cacheKeyFor(category, subcategory),
-      JSON.stringify(data)
+      JSON.stringify(data),
     );
   } catch {}
 }
@@ -220,12 +219,12 @@ function StatPill({
     tone === "green"
       ? "bg-green-100 text-black"
       : tone === "blue"
-      ? "bg-blue-100 text-black"
-      : tone === "yellow"
-      ? "bg-yellow-100 text-black"
-      : tone === "purple"
-      ? "bg-purple-100 text-black"
-      : "bg-gray-100 text-black";
+        ? "bg-blue-100 text-black"
+        : tone === "yellow"
+          ? "bg-yellow-100 text-black"
+          : tone === "purple"
+            ? "bg-purple-100 text-black"
+            : "bg-gray-100 text-black";
 
   return (
     <span
@@ -270,7 +269,10 @@ function ItemPhoto({
       )}
 
       {editable ? (
-        <div className="absolute right-0 top-0 z-30" data-list-photo-menu="true">
+        <div
+          className="absolute right-0 top-0 z-30"
+          data-list-photo-menu="true"
+        >
           <button
             type="button"
             onClick={(e) => {
@@ -342,6 +344,14 @@ export default function SubcategoryClientLighting({
   const [qty, setQty] = useState<number>(1);
   const [photo, setPhoto] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState("");
+  const [sidebarTarget, setSidebarTarget] = useState<HTMLElement | null>(null);
+  const [selectedFixtureId, setSelectedFixtureId] = useState<string | null>(
+    null,
+  );
+  const [selectedBrandDraft, setSelectedBrandDraft] = useState("");
+  const [selectedModelDraft, setSelectedModelDraft] = useState("");
+  const [mobileMenuItemId, setMobileMenuItemId] = useState<string | null>(null);
+  const [mobileAddFixtureOpen, setMobileAddFixtureOpen] = useState(false);
 
   const [photoMenuOpen, setPhotoMenuOpen] = useState(false);
   const [searchPanelOpen, setSearchPanelOpen] = useState(false);
@@ -349,11 +359,8 @@ export default function SubcategoryClientLighting({
   const [imageResults, setImageResults] = useState<OnlineImage[]>([]);
   const [searchingImages, setSearchingImages] = useState(false);
 
-  const [listPhotoMenuItemId, setListPhotoMenuItemId] = useState<string | null>(
-    null
-  );
   const [editingPhotoItemId, setEditingPhotoItemId] = useState<string | null>(
-    null
+    null,
   );
 
   const fixtureName = useMemo(() => {
@@ -380,7 +387,7 @@ export default function SubcategoryClientLighting({
       fixtureType.trim().length > 0 &&
       fixtureName.trim().length > 0 &&
       qty >= 1,
-    [editable, fixtureType, fixtureName, qty]
+    [editable, fixtureType, fixtureName, qty],
   );
 
   const groupedItems = useMemo(() => {
@@ -395,10 +402,29 @@ export default function SubcategoryClientLighting({
       items.filter(
         (it) =>
           !it.fixture_type ||
-          !FIXTURE_TYPES.includes(it.fixture_type as FixtureType)
-      )
+          !FIXTURE_TYPES.includes(it.fixture_type as FixtureType),
+      ),
     );
   }, [items]);
+
+  const navigableItems = useMemo(
+    () => [
+      ...groupedItems.flatMap((group) => group.items),
+      ...uncategorizedItems,
+    ],
+    [groupedItems, uncategorizedItems],
+  );
+
+  const selectedFixture = useMemo(
+    () => items.find((item) => item.id === selectedFixtureId) ?? null,
+    [items, selectedFixtureId],
+  );
+
+  useEffect(() => {
+    const parsed = splitBrandModel(selectedFixture?.name ?? "");
+    setSelectedBrandDraft(parsed.brand);
+    setSelectedModelDraft(parsed.model);
+  }, [selectedFixtureId, selectedFixture?.name]);
 
   async function resolveSubcategoryId() {
     const catRes = await supabase
@@ -459,7 +485,6 @@ export default function SubcategoryClientLighting({
         .eq("subcategory_id", sid);
 
       if (itemsRes.error) throw itemsRes.error;
-      
 
       const list = sortItemsByBrand((itemsRes.data || []) as ItemRow[]);
       const ids = list.map((x) => x.id);
@@ -468,29 +493,29 @@ export default function SubcategoryClientLighting({
 
       if (ids.length > 0) {
         let allUnits: any[] = [];
-let from = 0;
-const pageSize = 1000;
+        let from = 0;
+        const pageSize = 1000;
 
-while (true) {
-  const unitsRes = await supabase
-    .from("units")
-    .select("item_id,status")
-    .in("item_id", ids)
-    .range(from, from + pageSize - 1);
+        while (true) {
+          const unitsRes = await supabase
+            .from("units")
+            .select("item_id,status")
+            .in("item_id", ids)
+            .range(from, from + pageSize - 1);
 
-  if (unitsRes.error) throw unitsRes.error;
+          if (unitsRes.error) throw unitsRes.error;
 
-  allUnits = [...allUnits, ...(unitsRes.data || [])];
+          allUnits = [...allUnits, ...(unitsRes.data || [])];
 
-  if (!unitsRes.data || unitsRes.data.length < pageSize) break;
+          if (!unitsRes.data || unitsRes.data.length < pageSize) break;
 
-  from += pageSize;
-}
+          from += pageSize;
+        }
 
-const by: Record<string, UnitStatus[]> = {};
-for (const itId of ids) by[itId] = [];
+        const by: Record<string, UnitStatus[]> = {};
+        for (const itId of ids) by[itId] = [];
 
-for (const u of allUnits) {
+        for (const u of allUnits) {
           const itemId = String((u as any).item_id || "");
           const status = String((u as any).status || "available") as UnitStatus;
 
@@ -508,7 +533,7 @@ for (const u of allUnits) {
 
       sessionStorage.setItem(
         cacheKey,
-        JSON.stringify({ subId: sid, items: list, statsByItem: stats })
+        JSON.stringify({ subId: sid, items: list, statsByItem: stats }),
       );
     } catch (e: any) {
       setErr(e?.message || "Failed to load");
@@ -523,17 +548,38 @@ for (const u of allUnits) {
   }, [category, subcategory]);
 
   useEffect(() => {
+    function syncSidebarTarget() {
+      const nextTarget = document.getElementById("right-sidebar-actions");
+      setSidebarTarget((current) =>
+        current === nextTarget ? current : nextTarget,
+      );
+    }
+
+    syncSidebarTarget();
+
+    const observer = new MutationObserver(syncSidebarTarget);
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       const target = e.target as HTMLElement;
-      const addMenu = document.getElementById("add-photo-menu");
-      const listMenu = target.closest("[data-list-photo-menu='true']");
+      const addMenu = target.closest("[data-add-photo-menu='true']");
+      const mobileFixtureMenu = target.closest(
+        "[data-mobile-fixture-menu='true']",
+      );
+      const mobileFixtureTools = target.closest(
+        "[data-mobile-lighting-tools='true']",
+      );
 
-      if (addMenu && !addMenu.contains(target)) {
+      if (!addMenu) {
         setPhotoMenuOpen(false);
       }
 
-      if (!listMenu) {
-        setListPhotoMenuItemId(null);
+      if (!mobileFixtureMenu && !mobileFixtureTools) {
+        setMobileMenuItemId(null);
       }
     }
 
@@ -549,8 +595,8 @@ for (const u of allUnits) {
 
     try {
       setSaveMsg("Uploading photo...");
-     const imageUrl = await uploadPhoto(f);
-     setPhoto(imageUrl);
+      const imageUrl = await uploadPhoto(f);
+      setPhoto(imageUrl);
       setSaveMsg("Photo selected");
       setTimeout(() => setSaveMsg(""), 1500);
     } catch (e: any) {
@@ -584,14 +630,17 @@ for (const u of allUnits) {
 
       const data = await res.json();
 
-      const results =
-        Array.isArray(data)
-          ? data
-          : Array.isArray(data?.images_results)
+      const results = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.images_results)
           ? data.images_results
           : Array.isArray(data?.items)
-          ? data.items
-          : [];
+            ? data.items
+            : Array.isArray(data?.results)
+              ? data.results
+              : Array.isArray(data?.images)
+                ? data.images
+                : [];
 
       setImageResults(results);
 
@@ -620,7 +669,7 @@ for (const u of allUnits) {
     }
 
     const nextItems = items.map((it) =>
-      it.id === itemId ? { ...it, photo_url: imageUrl } : it
+      it.id === itemId ? { ...it, photo_url: imageUrl } : it,
     );
 
     setItems(nextItems);
@@ -636,25 +685,25 @@ for (const u of allUnits) {
   }
 
   async function onPickListItemPhoto(e: React.ChangeEvent<HTMLInputElement>) {
-  if (!editable || !editingPhotoItemId) return;
+    if (!editable || !editingPhotoItemId) return;
 
-  const f = e.target.files?.[0];
-  if (!f) return;
+    const f = e.target.files?.[0];
+    if (!f) return;
 
-  try {
-    setSaveMsg("Uploading photo...");
+    try {
+      setSaveMsg("Uploading photo...");
 
-    const imageUrl = await uploadPhoto(f);
-    await updateItemPhoto(editingPhotoItemId, imageUrl);
-  } catch (error: any) {
-    console.error("Upload list item photo error:", error);
-    alert(error?.message || "Failed to upload photo");
-    setSaveMsg("");
-  } finally {
-    e.target.value = "";
-    setEditingPhotoItemId(null);
+      const imageUrl = await uploadPhoto(f);
+      await updateItemPhoto(editingPhotoItemId, imageUrl);
+    } catch (error: any) {
+      console.error("Upload list item photo error:", error);
+      alert(error?.message || "Failed to upload photo");
+      setSaveMsg("");
+    } finally {
+      e.target.value = "";
+      setEditingPhotoItemId(null);
+    }
   }
-}
 
   async function searchPhotoForItem(item: ItemRow) {
     setEditingPhotoItemId(item.id);
@@ -700,7 +749,10 @@ for (const u of allUnits) {
         finalImageUrl = data.url;
       }
     } catch (error) {
-      console.warn("Could not optimize online image, using thumbnail URL:", error);
+      console.warn(
+        "Could not optimize online image, using thumbnail URL:",
+        error,
+      );
       finalImageUrl = fallbackUrl;
     }
 
@@ -784,6 +836,7 @@ for (const u of allUnits) {
       setImageResults([]);
       setSearchPanelOpen(false);
       setPhotoMenuOpen(false);
+      setMobileAddFixtureOpen(false);
       setSaveMsg("Item added");
 
       setTimeout(() => {
@@ -794,10 +847,14 @@ for (const u of allUnits) {
     }
   }
 
-  async function onRename(itemId: string, current: string) {
+  async function onRename(
+    itemId: string,
+    current: string,
+    nextNameOverride?: string,
+  ) {
     if (!editable) return;
 
-    const nextName = prompt("Rename fixture:", current);
+    const nextName = nextNameOverride ?? prompt("Rename fixture:", current);
     if (!nextName) return;
 
     const clean = nextName.trim();
@@ -812,7 +869,7 @@ for (const u of allUnits) {
       if (upd.error) throw upd.error;
 
       const nextItems = sortItemsByBrand(
-        items.map((it) => (it.id === itemId ? { ...it, name: clean } : it))
+        items.map((it) => (it.id === itemId ? { ...it, name: clean } : it)),
       );
 
       setItems(nextItems);
@@ -832,6 +889,153 @@ for (const u of allUnits) {
       alert(e?.message || "Rename failed");
     }
   }
+
+  async function updateSelectedFixtureType(nextType: string) {
+    if (!editable || !selectedFixture) return;
+
+    const clean = nextType.trim();
+    if (!clean || clean === (selectedFixture.fixture_type || "")) return;
+
+    try {
+      const { error } = await supabase
+        .from("items")
+        .update({ fixture_type: clean })
+        .eq("id", selectedFixture.id);
+
+      if (error) throw error;
+
+      const nextItems = sortItemsByBrand(
+        items.map((item) =>
+          item.id === selectedFixture.id
+            ? { ...item, fixture_type: clean }
+            : item,
+        ),
+      );
+
+      setItems(nextItems);
+
+      writeFixturesCache(category, subcategory, {
+        subId,
+        items: nextItems,
+        statsByItem,
+      });
+
+      setSaveMsg("Fixture type updated");
+      setTimeout(() => {
+        setSaveMsg((previous) =>
+          previous === "Fixture type updated" ? "" : previous,
+        );
+      }, 1500);
+    } catch (error: any) {
+      alert(error?.message || "Failed to update fixture type");
+    }
+  }
+
+  async function saveSelectedFixtureName() {
+    if (!selectedFixture) return;
+
+    const clean = [selectedBrandDraft, selectedModelDraft]
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .join(" - ");
+
+    if (!clean) {
+      const parsed = splitBrandModel(selectedFixture.name);
+      setSelectedBrandDraft(parsed.brand);
+      setSelectedModelDraft(parsed.model);
+      return;
+    }
+
+    if (clean === selectedFixture.name) return;
+
+    await onRename(selectedFixture.id, selectedFixture.name, clean);
+  }
+
+  useEffect(() => {
+    function handleSelectionClickOutside(event: MouseEvent) {
+      if (!selectedFixtureId) return;
+
+      const target = event.target as HTMLElement;
+      const insideFixture = target.closest(
+        "[data-lighting-fixture-row='true']",
+      );
+      const insideSidebar = target.closest("#right-sidebar-actions");
+      const insideMobileTools = target.closest(
+        "[data-mobile-lighting-tools='true']",
+      );
+
+      if (insideFixture || insideSidebar || insideMobileTools) return;
+
+      void saveSelectedFixtureName();
+      setSelectedFixtureId(null);
+    }
+
+    document.addEventListener("mousedown", handleSelectionClickOutside);
+    return () =>
+      document.removeEventListener("mousedown", handleSelectionClickOutside);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedFixtureId,
+    selectedBrandDraft,
+    selectedModelDraft,
+    selectedFixture?.name,
+  ]);
+
+  useEffect(() => {
+    function handleArrowNavigation(event: KeyboardEvent) {
+      if (
+        !selectedFixtureId ||
+        (event.key !== "ArrowUp" && event.key !== "ArrowDown")
+      ) {
+        return;
+      }
+
+      const target = event.target as HTMLElement;
+      const isFormField = target.matches("input, textarea, select");
+      const isSelectedNameField = Boolean(
+        target.closest("[data-selected-fixture-name='true']"),
+      );
+
+      if (isFormField && !isSelectedNameField) return;
+
+      // Stop the browser from scrolling the page while a fixture is selected.
+      // Capture mode makes this run before inputs and other page handlers.
+      event.preventDefault();
+
+      const currentIndex = navigableItems.findIndex(
+        (item) => item.id === selectedFixtureId,
+      );
+      if (currentIndex < 0) return;
+
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      const nextIndex = Math.min(
+        navigableItems.length - 1,
+        Math.max(0, currentIndex + direction),
+      );
+
+      if (nextIndex === currentIndex) return;
+
+      void saveSelectedFixtureName();
+      const nextItemId = navigableItems[nextIndex].id;
+      setSelectedFixtureId(nextItemId);
+
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-lighting-fixture-id="${nextItemId}"]`)
+          ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      });
+    }
+
+    document.addEventListener("keydown", handleArrowNavigation, true);
+    return () =>
+      document.removeEventListener("keydown", handleArrowNavigation, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedFixtureId,
+    selectedBrandDraft,
+    selectedModelDraft,
+    navigableItems,
+  ]);
 
   async function onDelete(itemId: string) {
     if (!editable) return;
@@ -855,6 +1059,8 @@ for (const u of allUnits) {
 
       setItems(nextItems);
       setStatsByItem(nextStats);
+      setSelectedFixtureId((current) => (current === itemId ? null : current));
+      setMobileMenuItemId((current) => (current === itemId ? null : current));
 
       writeFixturesCache(category, subcategory, {
         subId,
@@ -870,6 +1076,15 @@ for (const u of allUnits) {
     } catch (e: any) {
       alert(e?.message || "Delete failed");
     }
+  }
+
+  async function closeMobileFixtureTools() {
+    await saveSelectedFixtureName();
+    setMobileMenuItemId(null);
+    setSelectedFixtureId(null);
+    setSearchPanelOpen(false);
+    setImageResults([]);
+    setEditingPhotoItemId(null);
   }
 
   function renderFixtureRow(it: ItemRow, isLast: boolean) {
@@ -888,146 +1103,156 @@ for (const u of allUnits) {
         key={it.id}
         className={!isLast ? "border-b border-gray-100 pb-4 mb-4" : ""}
       >
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
-            <Link
-              href={detailsHref}
-              className="flex items-start gap-3 min-w-0 flex-1 group"
-            >
-              <ItemPhoto
-                photo={it.photo_url}
-                name={it.name}
-                editable={editable}
-                menuOpen={listPhotoMenuItemId === it.id}
-                onToggleMenu={() =>
-                  setListPhotoMenuItemId((prev) =>
-                    prev === it.id ? null : it.id
-                  )
+        <div
+          data-lighting-fixture-row="true"
+          data-lighting-fixture-id={it.id}
+          className={`relative rounded-xl transition ${
+            selectedFixtureId === it.id
+              ? "bg-gray-50 ring-2 ring-black"
+              : "hover:bg-gray-50"
+          }`}
+        >
+          <button
+            type="button"
+            onClick={async () => {
+              if (window.matchMedia("(min-width: 640px)").matches) {
+                if (selectedFixtureId === it.id) {
+                  await saveSelectedFixtureName();
+                  setSelectedFixtureId(null);
+                  return;
                 }
-                onUploadPhoto={() => {
-                  setListPhotoMenuItemId(null);
-                  setEditingPhotoItemId(it.id);
-                  listPhotoFileRef.current?.click();
-                }}
-                onSearchPhoto={() => {
-                  setListPhotoMenuItemId(null);
-                  void searchPhotoForItem(it);
-                }}
-              />
 
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2 min-w-0">
-                  <h2
-                    className="truncate text-[10px] sm:text-[11px] text-gray-900"
-                    style={{ lineHeight: 1.1 }}
-                  >
-                    {renderFixtureName(it.name)}
-                  </h2>
+                await saveSelectedFixtureName();
+                setSelectedFixtureId(it.id);
+              } else {
+                window.location.href = detailsHref;
+              }
+            }}
+            className="flex w-full flex-col gap-3 p-2 pr-10 text-left sm:flex-row sm:items-start sm:pr-20"
+          >
+            <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
+              <div className="flex items-start gap-3 min-w-0 flex-1 group">
+                <ItemPhoto
+                  photo={it.photo_url}
+                  name={it.name}
+                  editable={false}
+                />
 
-                  {editable && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onRename(it.id, it.name);
-                      }}
-                      className="text-red-500 text-[12px] shrink-0 hover:text-black"
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <h2
+                      className="truncate text-[10px] sm:text-[11px] text-gray-900"
+                      style={{ lineHeight: 1.1 }}
                     >
-                      ✎
-                    </button>
-                  )}
+                      {renderFixtureName(it.name)}
+                    </h2>
+                  </div>
 
-                  {editable && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onDelete(it.id);
-                      }}
-                      className="ml-auto text-red-500 shrink-0 hover:text-black sm:hidden"
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  )}
-                </div>
+                  <div className="mt-2 sm:hidden">
+                    <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
+                      <div className="text-[8px] font-semibold text-gray-500">
+                        Total
+                      </div>
+                      <div className="text-[8px] font-semibold text-gray-500">
+                        Available
+                      </div>
+                      <div className="text-[8px] font-semibold text-gray-500">
+                        In Use
+                      </div>
+                      <div className="text-[8px] font-semibold text-gray-500">
+                        Maintenance
+                      </div>
+                      <div className="text-[8px] font-semibold text-gray-500">
+                        In KSA
+                      </div>
 
-                <div className="mt-2 sm:hidden">
-                  <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
-                    <div className="text-[8px] font-semibold text-gray-500">
-                      Total
-                    </div>
-                    <div className="text-[8px] font-semibold text-gray-500">
-                      Available
-                    </div>
-                    <div className="text-[8px] font-semibold text-gray-500">
-                      In Use
-                    </div>
-                    <div className="text-[8px] font-semibold text-gray-500">
-                      Maintenance
-                    </div>
-                    <div className="text-[8px] font-semibold text-gray-500">
-                      In KSA
-                    </div>
-
-                    <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">
-                      {stats.total}
-                    </div>
-                    <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
-                      {stats.available}
-                    </div>
-                    <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold">
-                      {stats.inUse}
-                    </div>
-                    <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
-                      {stats.maintenance}
-                    </div>
-                    <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold">
-                      {stats.inKsa}
+                      <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">
+                        {stats.total}
+                      </div>
+                      <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
+                        {stats.available}
+                      </div>
+                      <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold">
+                        {stats.inUse}
+                      </div>
+                      <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
+                        {stats.maintenance}
+                      </div>
+                      <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold">
+                        {stats.inKsa}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="mt-1 hidden sm:block">
-                  <div className="flex flex-wrap gap-2">
-                    <StatPill label="Total Qty" value={stats.total} />
-                    <StatPill
-                      label="Available Qty"
-                      value={stats.available}
-                      tone="green"
-                    />
-                    <StatPill
-                      label="In Use"
-                      value={stats.inUse}
-                      tone="blue"
-                    />
-                    <StatPill
-                      label="Maintenance"
-                      value={stats.maintenance}
-                      tone="yellow"
-                    />
-                    <StatPill
-                      label="In KSA"
-                      value={stats.inKsa}
-                      tone="purple"
-                    />
+                  <div className="mt-1 hidden sm:block">
+                    <div className="flex flex-wrap gap-2">
+                      <StatPill label="Total Qty" value={stats.total} />
+                      <StatPill
+                        label="Available Qty"
+                        value={stats.available}
+                        tone="green"
+                      />
+                      <StatPill
+                        label="In Use"
+                        value={stats.inUse}
+                        tone="blue"
+                      />
+                      <StatPill
+                        label="Maintenance"
+                        value={stats.maintenance}
+                        tone="yellow"
+                      />
+                      <StatPill
+                        label="In KSA"
+                        value={stats.inKsa}
+                        tone="purple"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
-            </Link>
-          </div>
+            </div>
+          </button>
 
-          <div className="hidden sm:flex items-center gap-2 shrink-0">
-            {editable && (
+          <Link
+            href={detailsHref}
+            onClick={(event) => event.stopPropagation()}
+            className="absolute right-2 top-2 hidden rounded-full border border-gray-300 bg-white px-2.5 py-1 text-[9px] font-medium text-gray-700 transition hover:border-red-200 hover:bg-red-50 hover:text-red-700 sm:block"
+          >
+            Report
+          </Link>
+
+          {editable ? (
+            <div
+              data-mobile-fixture-menu="true"
+              className="absolute right-2 top-2 z-30 sm:hidden"
+            >
               <button
-                onClick={() => onDelete(it.id)}
-                className="px-2 py-1 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
+                type="button"
+                aria-label={`Edit ${it.name}`}
+                aria-expanded={mobileMenuItemId === it.id}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+
+                  if (mobileMenuItemId === it.id) {
+                    void closeMobileFixtureTools();
+                    return;
+                  }
+
+                  void saveSelectedFixtureName();
+                  setSearchPanelOpen(false);
+                  setImageResults([]);
+                  setEditingPhotoItemId(null);
+                  setSelectedFixtureId(it.id);
+                  setMobileMenuItemId(it.id);
+                }}
+                className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold leading-none text-gray-700 shadow-sm hover:bg-gray-50"
               >
-                Delete
+                ⋮
               </button>
-            )}
-          </div>
+            </div>
+          ) : null}
         </div>
       </div>
     );
@@ -1062,69 +1287,349 @@ for (const u of allUnits) {
     );
   }
 
+  const addFixturePanel = editable ? (
+    <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-sm">
+      <div className="mb-4">
+        <h1 className="text-[13px] font-semibold leading-tight text-gray-900">
+          Add Fixtures
+        </h1>
+        <p className="mt-1 text-[10px] text-gray-500">
+          Select type, brand, model, quantity and optional photo.
+        </p>
+      </div>
+
+      <div className="add-fixture-grid grid grid-cols-1 gap-2 md:grid-cols-[210px_1fr_1fr_76px_116px_76px] md:items-center">
+        <select
+          value={fixtureType}
+          onChange={(e) => setFixtureType(e.target.value)}
+          className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+        >
+          <option value="">Select Type</option>
+          {FIXTURE_TYPES.map((type) => (
+            <option key={type} value={type}>
+              {type}
+            </option>
+          ))}
+        </select>
+
+        <input
+          value={brand}
+          onChange={(e) => {
+            setBrand(e.target.value);
+            if (!imageSearch)
+              setImageSearch(`${e.target.value} ${model}`.trim());
+          }}
+          placeholder="Brand (e.g. Ayrton)"
+          className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+        />
+
+        <input
+          value={model}
+          onChange={(e) => {
+            setModel(e.target.value);
+            if (!imageSearch)
+              setImageSearch(`${brand} ${e.target.value}`.trim());
+          }}
+          placeholder="Model (e.g. Cobra)"
+          className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+        />
+
+        <input
+          value={qty}
+          onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
+          type="number"
+          min={1}
+          className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+        />
+
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={onPickPhoto}
+        />
+
+        <div data-add-photo-menu="true" className="relative">
+          <button
+            type="button"
+            onClick={() => setPhotoMenuOpen((v) => !v)}
+            className="flex h-11 w-full items-center justify-center gap-1 rounded-2xl border border-gray-300 bg-white px-4 text-[12px] font-medium text-gray-700 shadow-sm transition hover:bg-red-50 hover:border-red-200 hover:text-red-700"
+          >
+            {photo ? "Photo ✔" : "Add photo"}
+            <ChevronDown size={13} />
+          </button>
+
+          {photoMenuOpen ? (
+            <div className="absolute right-0 top-full z-[9999] mt-2 w-40 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
+              <button
+                type="button"
+                onClick={() => {
+                  setPhotoMenuOpen(false);
+                  fileRef.current?.click();
+                }}
+                className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
+              >
+                Upload photo
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  setPhotoMenuOpen(false);
+                  setSearchPanelOpen(true);
+                  const query = fixtureSearchName.trim();
+                  setImageSearch(query);
+                  await searchOnlineImages(query);
+                }}
+                className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
+              >
+                Search photo
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        <button
+          onClick={onAdd}
+          disabled={!canAdd}
+          className="h-11 w-full rounded-2xl border border-black bg-black px-4 text-[12px] font-medium text-white shadow-sm transition hover:opacity-90 disabled:opacity-40"
+        >
+          + Add
+        </button>
+      </div>
+
+      {photo ? (
+        <div className="mt-3 flex items-center gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-2">
+          <img
+            src={photo}
+            alt="Selected"
+            loading="lazy"
+            decoding="async"
+            className="h-12 w-12 rounded-xl object-cover border border-gray-200 bg-white"
+          />
+
+          <button
+            type="button"
+            onClick={() => setPhoto(null)}
+            className="text-[10px] font-medium text-red-500 hover:text-black"
+          >
+            Remove photo
+          </button>
+        </div>
+      ) : null}
+
+      {searchPanelOpen ? (
+        <div className="mt-4 rounded-2xl border border-gray-200 p-3 relative z-50 bg-white">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <div className="text-[12px] font-semibold text-gray-900">
+              Search photo online
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setSearchPanelOpen(false);
+                setImageResults([]);
+                setEditingPhotoItemId(null);
+              }}
+              className="text-[10px] text-red-500 hover:text-black"
+            >
+              Close
+            </button>
+          </div>
+
+          <div className="flex gap-2">
+            <input
+              value={imageSearch}
+              onChange={(e) => setImageSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void searchOnlineImages();
+                }
+              }}
+              placeholder="Search image..."
+              className="h-10 flex-1 rounded-xl border border-gray-300 px-3 text-[12px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
+            />
+
+            <button
+              type="button"
+              onClick={() => void searchOnlineImages()}
+              disabled={searchingImages}
+              className="h-10 rounded-xl bg-black px-3 text-[11px] font-medium text-white disabled:opacity-40"
+            >
+              {searchingImages ? "Searching..." : "Search"}
+            </button>
+          </div>
+
+          {searchingImages ? (
+            <div className="mt-3 text-xs text-gray-500">
+              Searching images...
+            </div>
+          ) : null}
+
+          {imageResults.length > 0 ? (
+            <div className="fixture-image-grid mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-6">
+              {imageResults.map((img, index) => {
+                const imageUrl = img.original || img.image || img.thumbnail;
+                const thumb = img.thumbnail || imageUrl;
+
+                if (!imageUrl || !thumb) return null;
+
+                return (
+                  <button
+                    key={`${imageUrl}-${index}`}
+                    type="button"
+                    onClick={() => void selectOnlinePhoto(img)}
+                    className="overflow-hidden rounded-lg border border-gray-200 hover:border-blue-400"
+                    title={img.title || "Select photo"}
+                  >
+                    <img
+                      src={thumb}
+                      alt={img.title || "Online image"}
+                      loading="lazy"
+                      decoding="async"
+                      className="aspect-square w-full object-cover"
+                    />
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {saveMsg ? (
+        <div className="mt-3 text-xs text-gray-500">{saveMsg}</div>
+      ) : null}
+    </div>
+  ) : null;
+
+  const editFixturePanel = selectedFixture ? (
+    <div
+      data-lighting-tools="true"
+      className="mb-4 rounded-2xl border-2 border-black bg-white p-3 shadow-sm"
+    >
+      <div className="mb-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
+            Selected Fixture
+          </div>
+          <select
+            value={selectedFixture.fixture_type || ""}
+            onChange={(event) =>
+              void updateSelectedFixtureType(event.target.value)
+            }
+            disabled={!editable}
+            className="mt-2 h-8 w-full rounded-lg border border-gray-300 bg-white px-2.5 text-[9px] font-semibold text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+          >
+            <option value="" disabled>
+              Select Fixture Type
+            </option>
+            {FIXTURE_TYPES.map((type) => (
+              <option key={type} value={type}>
+                {type}
+              </option>
+            ))}
+          </select>
+          <div
+            data-selected-fixture-name="true"
+            className="mt-1 grid grid-cols-1 gap-1.5"
+          >
+            <input
+              value={selectedBrandDraft}
+              onChange={(event) => setSelectedBrandDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void saveSelectedFixtureName();
+                }
+              }}
+              placeholder="Brand"
+              disabled={!editable}
+              className="h-8 w-full rounded-lg border border-gray-300 bg-white px-2.5 text-[9px] font-semibold text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+            />
+            <input
+              value={selectedModelDraft}
+              onChange={(event) => setSelectedModelDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void saveSelectedFixtureName();
+                }
+              }}
+              placeholder="Model"
+              disabled={!editable}
+              className="h-8 w-full rounded-lg border border-gray-300 bg-white px-2.5 text-[9px] font-medium text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-3 flex items-center gap-3 rounded-xl bg-gray-50 p-2">
+        {selectedFixture.photo_url ? (
+          <img
+            src={selectedFixture.photo_url}
+            alt={selectedFixture.name}
+            className="h-16 w-16 rounded-xl bg-white object-cover"
+          />
+        ) : (
+          <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-white text-[9px] text-gray-400">
+            No photo
+          </div>
+        )}
+
+        <div className="min-w-0 text-[10px] text-gray-500">
+          Select an action below to edit this fixture.
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-2">
+        <Link
+          href={`/inventory/${category}/${subcategory}/${selectedFixture.id}`}
+          className="rounded-xl bg-black px-3 py-2.5 text-center text-[11px] font-medium text-white hover:opacity-90"
+        >
+          Open Fixture / Report
+        </Link>
+
+        {editable ? (
+          <>
+            <button
+              type="button"
+              onClick={() => {
+                setEditingPhotoItemId(selectedFixture.id);
+                listPhotoFileRef.current?.click();
+              }}
+              className="rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-left text-[11px] font-medium text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+            >
+              Upload New Photo
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void searchPhotoForItem(selectedFixture)}
+              className="rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-left text-[11px] font-medium text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+            >
+              Search Photo Online
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void onDelete(selectedFixture.id)}
+              className="flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-[11px] font-medium text-red-700 hover:bg-red-100"
+            >
+              <Trash2 size={14} />
+              Delete Fixture
+            </button>
+          </>
+        ) : null}
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div className="w-full space-y-3">
-      {editable && (
-  <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-sm">
-    <div className="mb-4">
-      <h1 className="text-[13px] font-semibold leading-tight text-gray-900">
-        Add Fixtures
-      </h1>
-      <p className="mt-1 text-[10px] text-gray-500">
-        Select type, brand, model, quantity and optional photo.
-      </p>
-    </div>
-
-    <div className="grid grid-cols-1 gap-2 md:grid-cols-[210px_1fr_1fr_76px_116px_76px] md:items-center">
-      <select
-        value={fixtureType}
-        onChange={(e) => setFixtureType(e.target.value)}
-        className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
-      >
-        <option value="">Select Type</option>
-        {FIXTURE_TYPES.map((type) => (
-          <option key={type} value={type}>
-            {type}
-          </option>
-        ))}
-      </select>
-
-      <input
-        value={brand}
-        onChange={(e) => {
-          setBrand(e.target.value);
-          if (!imageSearch) setImageSearch(`${e.target.value} ${model}`.trim());
-        }}
-        placeholder="Brand (e.g. Ayrton)"
-        className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
-      />
-
-      <input
-        value={model}
-        onChange={(e) => {
-          setModel(e.target.value);
-          if (!imageSearch) setImageSearch(`${brand} ${e.target.value}`.trim());
-        }}
-        placeholder="Model (e.g. Cobra)"
-        className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
-      />
-
-      <input
-        value={qty}
-        onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
-        type="number"
-        min={1}
-        className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
-      />
-
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={onPickPhoto}
-      />
-
       <input
         ref={listPhotoFileRef}
         type="file"
@@ -1133,158 +1638,191 @@ for (const u of allUnits) {
         onChange={onPickListItemPhoto}
       />
 
-      <div id="add-photo-menu" className="relative">
-        <button
-          type="button"
-          onClick={() => setPhotoMenuOpen((v) => !v)}
-          className="flex h-11 w-full items-center justify-center gap-1 rounded-2xl border border-gray-300 bg-white px-4 text-[12px] font-medium text-gray-700 shadow-sm transition hover:bg-red-50 hover:border-red-200 hover:text-red-700"
+      {editable && mobileMenuItemId && selectedFixture ? (
+        <div
+          data-mobile-lighting-tools="true"
+          className="fixed inset-0 z-[9998] sm:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${selectedFixture.name} tools`}
         >
-          {photo ? "Photo ✔" : "Add photo"}
-          <ChevronDown size={13} />
-        </button>
-
-        {photoMenuOpen ? (
-          <div className="absolute right-0 top-full z-[9999] mt-2 w-40 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
-            <button
-              type="button"
-              onClick={() => {
-                setPhotoMenuOpen(false);
-                fileRef.current?.click();
-              }}
-              className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
-            >
-              Upload photo
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setPhotoMenuOpen(false);
-                setSearchPanelOpen(true);
-                setImageSearch(fixtureSearchName);
-                setTimeout(() => void searchOnlineImages(fixtureSearchName), 50);
-              }}
-              className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
-            >
-              Search photo
-            </button>
-          </div>
-        ) : null}
-      </div>
-
-      <button
-        onClick={onAdd}
-        disabled={!canAdd}
-        className="h-11 w-full rounded-2xl border border-black bg-black px-4 text-[12px] font-medium text-white shadow-sm transition hover:opacity-90 disabled:opacity-40"
-      >
-        + Add
-      </button>
-    </div>
-
-    {photo ? (
-      <div className="mt-3 flex items-center gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-2">
-        <img
-          src={photo}
-          alt="Selected"
-          loading="lazy"
-          decoding="async"
-          className="h-12 w-12 rounded-xl object-cover border border-gray-200 bg-white"
-        />
-
-        <button
-          type="button"
-          onClick={() => setPhoto(null)}
-          className="text-[10px] font-medium text-red-500 hover:text-black"
-        >
-          Remove photo
-        </button>
-      </div>
-    ) : null}
-
-    {searchPanelOpen ? (
-      <div className="mt-4 rounded-2xl border border-gray-200 p-3 relative z-50 bg-white">
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <div className="text-[12px] font-semibold text-gray-900">
-            Search photo online
-          </div>
-
           <button
             type="button"
-            onClick={() => {
-              setSearchPanelOpen(false);
-              setImageResults([]);
-              setEditingPhotoItemId(null);
-            }}
-            className="text-[10px] text-red-500 hover:text-black"
-          >
-            Close
-          </button>
-        </div>
-
-        <div className="flex gap-2">
-          <input
-            value={imageSearch}
-            onChange={(e) => setImageSearch(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void searchOnlineImages();
-              }
-            }}
-            placeholder="Search image..."
-            className="h-10 flex-1 rounded-xl border border-gray-300 px-3 text-[12px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
+            aria-label="Close fixture tools"
+            onClick={() => void closeMobileFixtureTools()}
+            className="absolute inset-0 bg-black/45"
           />
 
+          <div className="absolute inset-x-0 bottom-0 flex h-[75dvh] flex-col rounded-t-3xl bg-gray-50 shadow-2xl">
+            <div className="flex shrink-0 items-center justify-between px-4 pb-2 pt-3">
+              <div className="h-1 w-10 rounded-full bg-gray-300" />
+
+              <div className="text-[11px] font-semibold text-gray-700">
+                Fixture Tools
+              </div>
+
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => void closeMobileFixtureTools()}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-lg leading-none text-gray-700"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-[calc(env(safe-area-inset-bottom)+16px)]">
+              {editFixturePanel}
+
+              {searchPanelOpen &&
+              editingPhotoItemId === selectedFixture.id ? (
+                <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className="text-[12px] font-semibold text-gray-900">
+                      Search Photo Online
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchPanelOpen(false);
+                        setImageResults([]);
+                        setEditingPhotoItemId(null);
+                      }}
+                      className="text-[10px] text-red-500 hover:text-black"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input
+                      value={imageSearch}
+                      onChange={(event) => setImageSearch(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void searchOnlineImages();
+                        }
+                      }}
+                      placeholder="Search image..."
+                      className="h-10 min-w-0 flex-1 rounded-xl border border-gray-300 px-3 text-[12px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => void searchOnlineImages()}
+                      disabled={searchingImages}
+                      className="h-10 rounded-xl bg-black px-3 text-[11px] font-medium text-white disabled:opacity-40"
+                    >
+                      {searchingImages ? "..." : "Search"}
+                    </button>
+                  </div>
+
+                  {searchingImages ? (
+                    <div className="mt-3 text-[11px] text-gray-500">
+                      Searching images...
+                    </div>
+                  ) : null}
+
+                  {imageResults.length > 0 ? (
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      {imageResults.map((img, index) => {
+                        const imageUrl =
+                          img.original || img.image || img.thumbnail;
+                        const thumb = img.thumbnail || imageUrl;
+
+                        if (!imageUrl || !thumb) return null;
+
+                        return (
+                          <button
+                            key={`${imageUrl}-${index}`}
+                            type="button"
+                            onClick={() => void selectOnlinePhoto(img)}
+                            className="overflow-hidden rounded-xl border border-gray-200"
+                            title={img.title || "Select photo"}
+                          >
+                            <img
+                              src={thumb}
+                              alt={img.title || "Online image"}
+                              loading="lazy"
+                              decoding="async"
+                              className="aspect-square w-full object-cover"
+                            />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      <div className="hidden sm:block xl:hidden">
+        {editFixturePanel}
+        {!selectedFixtureId ? addFixturePanel : null}
+      </div>
+
+      {editable && !selectedFixtureId ? (
+        <>
           <button
             type="button"
-            onClick={() => void searchOnlineImages()}
-            disabled={searchingImages}
-            className="h-10 rounded-xl bg-black px-3 text-[11px] font-medium text-white disabled:opacity-40"
+            aria-label="Add fixture"
+            aria-expanded={mobileAddFixtureOpen}
+            onClick={() => setMobileAddFixtureOpen(true)}
+            className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl transition active:scale-95 sm:hidden"
           >
-            {searchingImages ? "Searching..." : "Search"}
+            +
           </button>
-        </div>
 
-        {searchingImages ? (
-          <div className="mt-3 text-xs text-gray-500">Searching images...</div>
-        ) : null}
+          {mobileAddFixtureOpen ? (
+            <div className="fixed inset-0 z-[9998] sm:hidden">
+              <button
+                type="button"
+                aria-label="Close add fixture form"
+                onClick={() => {
+                  setMobileAddFixtureOpen(false);
+                  setPhotoMenuOpen(false);
+                }}
+                className="absolute inset-0 bg-black/45"
+              />
 
-        {imageResults.length > 0 ? (
-          <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-6">
-            {imageResults.map((img, index) => {
-              const imageUrl = img.original || img.image || img.thumbnail;
-              const thumb = img.thumbnail || imageUrl;
+              <div className="absolute inset-x-0 bottom-0 max-h-[88dvh] overflow-y-auto rounded-t-3xl bg-gray-50 p-3 pb-[calc(env(safe-area-inset-bottom)+16px)] shadow-2xl">
+                <div className="mb-2 flex items-center justify-between px-1">
+                  <div className="h-1 w-10 rounded-full bg-gray-300" />
 
-              if (!imageUrl || !thumb) return null;
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMobileAddFixtureOpen(false);
+                      setPhotoMenuOpen(false);
+                    }}
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-lg leading-none text-gray-700"
+                    aria-label="Close"
+                  >
+                    ×
+                  </button>
+                </div>
 
-              return (
-                <button
-                  key={`${imageUrl}-${index}`}
-                  type="button"
-                  onClick={() => void selectOnlinePhoto(img)}
-                  className="overflow-hidden rounded-lg border border-gray-200 hover:border-blue-400"
-                  title={img.title || "Select photo"}
-                >
-                  <img
-                    src={thumb}
-                    alt={img.title || "Online image"}
-                    loading="lazy"
-                    decoding="async"
-                    className="aspect-square w-full object-cover"
-                  />
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
-      </div>
-    ) : null}
+                {addFixturePanel}
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
 
-    {saveMsg ? (
-      <div className="mt-3 text-xs text-gray-500">{saveMsg}</div>
-    ) : null}
-  </div>
-)}
+      {sidebarTarget
+        ? createPortal(
+            <div className="[&_.add-fixture-grid]:!grid-cols-1 [&_.fixture-image-grid]:!grid-cols-2 [&>div]:rounded-xl [&>div]:p-3">
+              {editFixturePanel}
+              {!selectedFixtureId ? addFixturePanel : null}
+            </div>,
+            sidebarTarget,
+          )
+        : null}
 
       {groupedItems.map((group) => (
         <div
@@ -1292,14 +1830,14 @@ for (const u of allUnits) {
           className="bg-white border border-gray-200 rounded-2xl p-6"
         >
           <div className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
-  <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-  <h2 className="text-[8px] font-semibold uppercase tracking-wide text-gray-500">
-    {group.type}
-  </h2>
-</div>
+            <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+            <h2 className="text-[8px] font-semibold uppercase tracking-wide text-gray-500">
+              {group.type}
+            </h2>
+          </div>
 
           {group.items.map((it, index) =>
-            renderFixtureRow(it, index === group.items.length - 1)
+            renderFixtureRow(it, index === group.items.length - 1),
           )}
         </div>
       ))}
@@ -1313,7 +1851,7 @@ for (const u of allUnits) {
           </div>
 
           {uncategorizedItems.map((it, index) =>
-            renderFixtureRow(it, index === uncategorizedItems.length - 1)
+            renderFixtureRow(it, index === uncategorizedItems.length - 1),
           )}
         </div>
       ) : null}

@@ -1,10 +1,12 @@
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
+import { logActivity } from "@/lib/activityStore";
 import { ChevronDown, Trash2 } from "lucide-react";
 import {
   DndContext,
@@ -452,6 +454,31 @@ export default function SubcategoryClientLedScreen({
   const [imageSearch, setImageSearch] = useState("");
   const [imageResults, setImageResults] = useState<OnlineImage[]>([]);
   const [searchingImages, setSearchingImages] = useState(false);
+  const [sidebarTarget, setSidebarTarget] = useState<HTMLElement | null>(null);
+  const [selectedRowId, setSelectedRowId] = useState<string | null>(null);
+  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const [selectedModelBrand, setSelectedModelBrand] = useState("");
+  const [selectedModelName, setSelectedModelName] = useState("");
+  const [mobileAddOpen, setMobileAddOpen] = useState(false);
+
+  const selectedCabinetInfo = useMemo(() => {
+    for (const currentModel of models) {
+      const row = (currentModel.matrix_rows ?? []).find(
+        (currentRow) => currentRow.id === selectedRowId
+      );
+      if (row) return { model: currentModel, row };
+    }
+    return null;
+  }, [models, selectedRowId]);
+
+  const selectedModel =
+    models.find((currentModel) => currentModel.id === selectedModelId) ?? null;
+
+  useEffect(() => {
+    const parsed = parseLedName(selectedModel?.name ?? "");
+    setSelectedModelBrand(parsed.brand);
+    setSelectedModelName(parsed.model);
+  }, [selectedModelId, selectedModel?.name]);
 
   async function resolveCategoryId(subId: string) {
     if (categoryId) {
@@ -566,17 +593,41 @@ export default function SubcategoryClientLedScreen({
   }, [subcategoryId, categoryId]);
 
   useEffect(() => {
+    function syncSidebarTarget() {
+      const nextTarget = document.getElementById("right-sidebar-actions");
+      setSidebarTarget((current) =>
+        current === nextTarget ? current : nextTarget
+      );
+    }
+
+    syncSidebarTarget();
+    const observer = new MutationObserver(syncSidebarTarget);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       const target = e.target as HTMLElement;
       const addMenu = document.getElementById("led-add-photo-menu");
       const addCabinetMenu = document.getElementById("led-add-cabinet-photo-menu");
       const rowMenu = target.closest("[data-led-photo-menu='true']");
+      const keepsSelection = target.closest(
+        "[data-led-model-select='true'], [data-led-cabinet-row='true'], [data-led-sidebar-tools='true']"
+      );
 
       if (addMenu && !addMenu.contains(target)) setAddPhotoMenuOpen(false);
       if (addCabinetMenu && !addCabinetMenu.contains(target)) {
         setAddCabinetPhotoMenuOpen(false);
       }
       if (!rowMenu) setRowPhotoMenuId(null);
+
+      if (!keepsSelection) {
+        window.setTimeout(() => {
+          setSelectedModelId(null);
+          setSelectedRowId(null);
+        }, 0);
+      }
     }
 
     document.addEventListener("mousedown", handleClickOutside);
@@ -648,6 +699,10 @@ export default function SubcategoryClientLedScreen({
     }
 
     const rowId = target.rowId;
+    const targetModel = models.find((model) =>
+      (model.matrix_rows ?? []).some((row) => row.id === rowId)
+    );
+    const targetRow = targetModel?.matrix_rows?.find((row) => row.id === rowId);
 
     const { error } = await supabase
       .from("matrix_rows")
@@ -667,9 +722,14 @@ export default function SubcategoryClientLedScreen({
         ),
       }))
     );
-
     setSaveMsg("Photo updated");
     setTimeout(() => setSaveMsg(""), 1500);
+
+    await logActivity({
+      title: `updated an LED cabinet photo`,
+      message: `${targetModel?.name || "LED Screen"} — ${targetRow?.size || "cabinet"}`,
+      link: getReportHref(rowId),
+    });
   }
 
   async function onPickPhotoFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -869,6 +929,12 @@ export default function SubcategoryClientLedScreen({
         1500
       );
 
+      await logActivity({
+        title: `added LED model ${fullName}`,
+        message: "A new LED screen model was added",
+        link: pathname,
+      });
+
       void loadModels(subcategoryId);
     } catch (e: any) {
       setErrorMsg(e?.message || "Failed to add LED screen model.");
@@ -966,6 +1032,16 @@ export default function SubcategoryClientLedScreen({
       }))
     );
 
+    const editedModel = models.find((model) =>
+      (model.matrix_rows ?? []).some((row) => row.id === editingRow.id)
+    );
+
+    await logActivity({
+      title: `edited ${editedModel?.name || "LED Screen"}`,
+      message: `${editingRow.size} cabinet quantities were updated`,
+      link: getReportHref(editingRow.id),
+    });
+
     closeEditPopup();
   }
 
@@ -1016,6 +1092,14 @@ export default function SubcategoryClientLedScreen({
       )
     );
 
+    const parentModel = models.find((model) => model.id === addingModelId);
+
+    await logActivity({
+      title: `added a cabinet to ${parentModel?.name || "LED Screen"}`,
+      message: `${cabinetModel} — ${size} — Qty ${total}`,
+      link: getReportHref(newRow.id),
+    });
+
     if (subcategoryId) {
       setSaveMsg("Cabinet added");
       setTimeout(
@@ -1029,18 +1113,16 @@ export default function SubcategoryClientLedScreen({
     closeAddCabinetPopup();
   }
 
-  async function renameModel(modelId: string, current: string) {
+  async function renameModel(
+    modelId: string,
+    current: string,
+    nextBrand: string,
+    nextModel: string
+  ) {
     if (!editable) return;
 
-    const parsed = parseLedName(current);
-    const nextBrand = prompt("Brand:", parsed.brand);
-    if (nextBrand === null) return;
-
-    const nextModel = prompt("Model / Pixel Pitch:", parsed.model);
-    if (nextModel === null) return;
-
     const cleanName = buildLedName(nextBrand, nextModel);
-    if (!cleanName) return;
+    if (!cleanName || cleanName === current) return;
 
     const { error } = await supabase
       .from("matrix_models")
@@ -1052,14 +1134,22 @@ export default function SubcategoryClientLedScreen({
       return;
     }
 
-    if (subcategoryId) {
-      setSaveMsg("Model renamed");
-      setTimeout(
-        () => setSaveMsg((prev) => (prev === "Model renamed" ? "" : prev)),
-        1500
-      );
-      await loadModels(subcategoryId);
-    }
+    setModels((prev) =>
+      prev.map((item) =>
+        item.id === modelId ? { ...item, name: cleanName } : item
+      )
+    );
+    setSaveMsg("Model renamed");
+    setTimeout(
+      () => setSaveMsg((prev) => (prev === "Model renamed" ? "" : prev)),
+      1500
+    );
+
+    await logActivity({
+      title: `renamed LED model ${current}`,
+      message: `New name: ${cleanName}`,
+      link: pathname,
+    });
   }
 
   async function saveRowDirect(row: MatrixRow, patch: Partial<MatrixRow>) {
@@ -1071,6 +1161,15 @@ export default function SubcategoryClientLedScreen({
     const nextInUse = clampQty(patch.in_use_qty ?? row.in_use_qty);
     const nextMaintenance = clampQty(row.maintenance_qty);
     const nextInKsa = clampQty(patch.in_ksa_qty ?? row.in_ksa_qty);
+
+    const changed =
+      nextSize !== normalizeText(row.size) ||
+      nextCabinetModel !== normalizeText(row.cabinet_model ?? "") ||
+      nextTotal !== clampQty(row.qty) ||
+      nextInUse !== clampQty(row.in_use_qty) ||
+      nextInKsa !== clampQty(row.in_ksa_qty);
+
+    if (!changed) return;
 
     if (!nextSize) {
       alert("Cabinet size cannot be empty");
@@ -1123,7 +1222,15 @@ export default function SubcategoryClientLedScreen({
     if (error) {
       alert("Failed to save row");
       if (subcategoryId) await loadModels(subcategoryId);
+      return;
     }
+
+    const parentModel = models.find((model) => model.id === row.model_id);
+    await logActivity({
+      title: `edited ${parentModel?.name || "LED Screen"}`,
+      message: `${nextCabinetModel || "Cabinet"} — ${nextSize} was updated`,
+      link: getReportHref(row.id),
+    });
   }
 
   async function reorderRows(modelId: string, activeId: string, overId: string) {
@@ -1162,12 +1269,22 @@ export default function SubcategoryClientLedScreen({
     if (failed?.error) {
       alert("Failed to save row order");
       if (subcategoryId) void loadModels(subcategoryId);
+      return;
     }
+
+    const reorderedModel = models.find((model) => model.id === modelId);
+    await logActivity({
+      title: `reordered cabinets for ${reorderedModel?.name || "LED Screen"}`,
+      message: "Cabinet order was updated",
+      link: pathname,
+    });
   }
 
   async function deleteModel(modelId: string) {
     if (!editable) return;
     if (!confirm("Delete this LED model?")) return;
+
+    const deletedModel = models.find((model) => model.id === modelId);
 
     await supabase.from("matrix_rows").delete().eq("model_id", modelId);
 
@@ -1178,6 +1295,8 @@ export default function SubcategoryClientLedScreen({
       return;
     }
 
+    setSelectedModelId((current) => (current === modelId ? null : current));
+
     if (subcategoryId) {
       setSaveMsg("Model deleted");
       setTimeout(
@@ -1186,11 +1305,22 @@ export default function SubcategoryClientLedScreen({
       );
       await loadModels(subcategoryId);
     }
+
+    await logActivity({
+      title: `deleted LED model ${deletedModel?.name || "LED Screen"}`,
+      message: "The model and all its cabinets were deleted",
+      link: pathname,
+    });
   }
 
   async function deleteRow(rowId: string) {
     if (!editable) return;
     if (!confirm("Delete this cabinet row?")) return;
+
+    const parentModel = models.find((model) =>
+      (model.matrix_rows ?? []).some((row) => row.id === rowId)
+    );
+    const deletedRow = parentModel?.matrix_rows?.find((row) => row.id === rowId);
 
     const { error } = await supabase.from("matrix_rows").delete().eq("id", rowId);
 
@@ -1205,7 +1335,310 @@ export default function SubcategoryClientLedScreen({
         matrix_rows: (m.matrix_rows ?? []).filter((r) => r.id !== rowId),
       }))
     );
+    setSelectedRowId((current) => (current === rowId ? null : current));
+
+    await logActivity({
+      title: `deleted a cabinet from ${parentModel?.name || "LED Screen"}`,
+      message: `${deletedRow?.cabinet_model || "Cabinet"} — ${deletedRow?.size || ""}`,
+      link: pathname,
+    });
   }
+
+  async function saveSelectedModelName() {
+    if (!selectedModel) return;
+    await renameModel(
+      selectedModel.id,
+      selectedModel.name,
+      selectedModelBrand,
+      selectedModelName
+    );
+  }
+
+  const selectedModelPanel = selectedModel ? (
+    <div
+      key={selectedModel.id}
+      data-led-sidebar-tools="true"
+      className="mb-4 rounded-2xl border-2 border-black bg-white p-3 shadow-sm"
+    >
+      <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
+        Selected LED Model
+      </div>
+      <div className="mt-2 grid grid-cols-1 gap-2">
+        <input
+          value={selectedModelBrand}
+          onChange={(event) => setSelectedModelBrand(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              event.currentTarget.blur();
+            }
+          }}
+          onBlur={() => void saveSelectedModelName()}
+          placeholder="Brand"
+          disabled={!editable}
+          className="h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] font-semibold text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+        />
+        <input
+          value={selectedModelName}
+          onChange={(event) => setSelectedModelName(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              event.currentTarget.blur();
+            }
+          }}
+          onBlur={() => void saveSelectedModelName()}
+          placeholder="Model / Pixel Pitch"
+          disabled={!editable}
+          className="h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+        />
+      </div>
+
+      {editable ? (
+        <div className="mt-3 grid grid-cols-1 gap-2">
+          <button
+            type="button"
+            onClick={() => openAddCabinetPopup(selectedModel.id)}
+            className="rounded-xl bg-black px-3 py-2.5 text-[11px] font-medium text-white hover:opacity-90"
+          >
+            + Add Cabinet
+          </button>
+          <button
+            type="button"
+            onClick={() => void deleteModel(selectedModel.id)}
+            className="flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-[11px] font-medium text-red-700 hover:bg-red-100"
+          >
+            <Trash2 size={14} /> Delete Model
+          </button>
+        </div>
+      ) : null}
+    </div>
+  ) : null;
+
+  const selectedCabinetPanel = selectedCabinetInfo ? (
+    <div
+      key={selectedCabinetInfo.row.id}
+      data-led-sidebar-tools="true"
+      className="mb-4 rounded-2xl border-2 border-black bg-white p-3 shadow-sm"
+    >
+      <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
+        Selected Cabinet
+      </div>
+      <div className="mt-1 text-[10px] font-semibold text-gray-900">
+        {selectedCabinetInfo.model.name}
+      </div>
+
+      <div className="mt-3 grid grid-cols-1 gap-2">
+        <input
+          defaultValue={selectedCabinetInfo.row.cabinet_model || ""}
+          placeholder="Cabinet Model"
+          disabled={!editable}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+          }}
+          onBlur={(event) => {
+            const clean = normalizeText(event.currentTarget.value);
+            if (
+              clean &&
+              clean !== (selectedCabinetInfo.row.cabinet_model || "")
+            ) {
+              void saveRowDirect(selectedCabinetInfo.row, {
+                cabinet_model: clean,
+              });
+            }
+          }}
+          className="h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] font-semibold text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+        />
+        <input
+          defaultValue={selectedCabinetInfo.row.size}
+          placeholder="Cabinet Size"
+          disabled={!editable}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+          }}
+          onBlur={(event) => {
+            const clean = normalizeText(event.currentTarget.value);
+            if (clean && clean !== selectedCabinetInfo.row.size) {
+              void saveRowDirect(selectedCabinetInfo.row, { size: clean });
+            }
+          }}
+          className="h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+        />
+
+        <div className="grid grid-cols-3 gap-2">
+          <label className="text-[8px] font-semibold text-gray-500">
+            Total
+            <input
+              type="number"
+              min={0}
+              defaultValue={selectedCabinetInfo.row.qty}
+              disabled={!editable}
+              onBlur={(event) =>
+                void saveRowDirect(selectedCabinetInfo.row, {
+                  qty: clampQty(event.currentTarget.value),
+                })
+              }
+              className="mt-1 h-8 w-full rounded-lg border border-gray-300 px-2 text-[9px] text-gray-900 outline-none focus:border-black"
+            />
+          </label>
+          <label className="text-[8px] font-semibold text-gray-500">
+            In Use
+            <input
+              type="number"
+              min={0}
+              defaultValue={selectedCabinetInfo.row.in_use_qty}
+              disabled={!editable}
+              onBlur={(event) =>
+                void saveRowDirect(selectedCabinetInfo.row, {
+                  in_use_qty: clampQty(event.currentTarget.value),
+                })
+              }
+              className="mt-1 h-8 w-full rounded-lg border border-gray-300 px-2 text-[9px] text-gray-900 outline-none focus:border-black"
+            />
+          </label>
+          <label className="text-[8px] font-semibold text-gray-500">
+            In KSA
+            <input
+              type="number"
+              min={0}
+              defaultValue={selectedCabinetInfo.row.in_ksa_qty}
+              disabled={!editable}
+              onBlur={(event) =>
+                void saveRowDirect(selectedCabinetInfo.row, {
+                  in_ksa_qty: clampQty(event.currentTarget.value),
+                })
+              }
+              className="mt-1 h-8 w-full rounded-lg border border-gray-300 px-2 text-[9px] text-gray-900 outline-none focus:border-black"
+            />
+          </label>
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center gap-3 rounded-xl bg-gray-50 p-2">
+        {selectedCabinetInfo.row.photo_data ? (
+          <img
+            src={selectedCabinetInfo.row.photo_data}
+            alt={selectedCabinetInfo.row.cabinet_model || "LED cabinet"}
+            className="h-14 w-14 rounded-lg bg-white object-cover"
+          />
+        ) : (
+          <div className="flex h-14 w-14 items-center justify-center rounded-lg bg-white text-[8px] text-gray-400">
+            No photo
+          </div>
+        )}
+        <div className="text-[9px] text-gray-500">
+          Changes save when you leave a field.
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-1 gap-2">
+        <Link
+          href={getReportHref(selectedCabinetInfo.row.id)}
+          className="rounded-xl bg-black px-3 py-2.5 text-center text-[11px] font-medium text-white hover:opacity-90"
+        >
+          Open Cabinet / Report
+        </Link>
+        {editable ? (
+          <>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPhotoTarget({
+                    type: "row",
+                    rowId: selectedCabinetInfo.row.id,
+                  });
+                  rowPhotoFileRef.current?.click();
+                }}
+                className="rounded-xl border border-gray-300 bg-white px-2 py-2.5 text-[10px] font-medium text-gray-700 hover:bg-red-50"
+              >
+                Upload Photo
+              </button>
+              <button
+                type="button"
+                onClick={() => startSearchForRowPhoto(selectedCabinetInfo.row)}
+                className="rounded-xl border border-gray-300 bg-white px-2 py-2.5 text-[10px] font-medium text-gray-700 hover:bg-red-50"
+              >
+                Search Photo
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => openAddCabinetPopup(selectedCabinetInfo.model.id)}
+              className="rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-[10px] font-medium text-gray-700 hover:bg-gray-50"
+            >
+              + Add Cabinet to this Model
+            </button>
+            <button
+              type="button"
+              onClick={() => void deleteRow(selectedCabinetInfo.row.id)}
+              className="flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-[11px] font-medium text-red-700 hover:bg-red-100"
+            >
+              <Trash2 size={14} /> Delete Cabinet
+            </button>
+          </>
+        ) : null}
+      </div>
+    </div>
+  ) : null;
+
+  const addLedScreenPanel = editable ? (
+    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="mb-4">
+        <h2 className="text-[13px] font-semibold text-gray-900">
+          Add LED Screen
+        </h2>
+        <p className="mt-1 text-[10px] text-gray-500">
+          Add model once, then add cabinet sizes inside it.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-2">
+        <input
+          list="led-brand-list"
+          value={brand}
+          onChange={(event) => setBrand(event.target.value)}
+          placeholder="Brand"
+          className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none focus:border-black"
+        />
+        <datalist id="led-brand-list">
+          {brandSuggestions.map((item) => (
+            <option key={item} value={item} />
+          ))}
+        </datalist>
+        <input
+          list="led-model-list"
+          value={model}
+          onChange={(event) => setModel(event.target.value)}
+          placeholder="Model / PH"
+          className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none focus:border-black"
+        />
+        <datalist id="led-model-list">
+          {modelSuggestions.map((item) => (
+            <option key={item} value={item} />
+          ))}
+        </datalist>
+        <button
+          type="button"
+          onClick={addLedScreen}
+          disabled={submitting}
+          className="h-11 w-full rounded-2xl bg-black px-4 text-[12px] font-medium text-white disabled:opacity-40"
+        >
+          {submitting ? "Adding..." : "+ Add LED Screen"}
+        </button>
+      </div>
+
+      {(errorMsg || saveMsg) && (
+        <div
+          className={`mt-3 text-[10px] ${
+            errorMsg ? "text-red-600" : "text-gray-500"
+          }`}
+        >
+          {errorMsg || saveMsg}
+        </div>
+      )}
+    </div>
+  ) : null;
 
   if (loading) {
     return (
@@ -1243,61 +1676,62 @@ export default function SubcategoryClientLedScreen({
         onChange={onPickPhotoFile}
       />
 
-      {editable && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-sm">
-          <div className="mb-4">
-            <h1 className="text-[13px] font-semibold leading-tight text-gray-900">
-              Add LED Screen
-            </h1>
-            <p className="mt-1 text-[10px] text-gray-500">
-              Add model once, then add cabinet sizes inside it.
-            </p>
-          </div>
+      {editable ? (
+        <>
+          <button
+            type="button"
+            aria-label="Add LED screen"
+            onClick={() => setMobileAddOpen(true)}
+            className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl active:scale-95 sm:hidden"
+          >
+            +
+          </button>
 
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_76px] md:items-center">
-            <input
-              list="led-brand-list"
-              value={brand}
-              onChange={(e) => setBrand(e.target.value)}
-              placeholder="Brand"
-              className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
-            />
-            <datalist id="led-brand-list">
-              {brandSuggestions.map((b) => (
-                <option key={b} value={b} />
-              ))}
-            </datalist>
-
-            <input
-              list="led-model-list"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              placeholder="Model / PH"
-              className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
-            />
-            <datalist id="led-model-list">
-              {modelSuggestions.map((m) => (
-                <option key={m} value={m} />
-              ))}
-            </datalist>
-
-            <button
-              type="button"
-              onClick={addLedScreen}
-              disabled={submitting}
-              className="h-11 w-full rounded-2xl border border-black bg-black px-4 text-[12px] font-medium text-white shadow-sm transition hover:opacity-90 disabled:opacity-40"
-            >
-              {submitting ? "Adding..." : "+ Add"}
-            </button>
-          </div>
-
-          {(errorMsg || saveMsg) && (
-            <div className={`mt-3 text-xs ${errorMsg ? "text-red-600" : "text-gray-500"}`}>
-              {errorMsg || saveMsg}
+          {mobileAddOpen ? (
+            <div className="fixed inset-0 z-[9998] sm:hidden">
+              <button
+                type="button"
+                aria-label="Close add LED screen form"
+                onClick={() => setMobileAddOpen(false)}
+                className="absolute inset-0 bg-black/45"
+              />
+              <div className="absolute inset-x-0 bottom-0 max-h-[88dvh] overflow-y-auto rounded-t-3xl bg-gray-50 p-3 pb-[calc(env(safe-area-inset-bottom)+16px)] shadow-2xl">
+                <div className="mb-2 flex items-center justify-between px-1">
+                  <div className="h-1 w-10 rounded-full bg-gray-300" />
+                  <button
+                    type="button"
+                    onClick={() => setMobileAddOpen(false)}
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-lg text-gray-700"
+                    aria-label="Close"
+                  >
+                    ×
+                  </button>
+                </div>
+                {addLedScreenPanel}
+              </div>
             </div>
-          )}
-        </div>
-      )}
+          ) : null}
+        </>
+      ) : null}
+
+      {sidebarTarget
+        ? createPortal(
+            <div>
+              {selectedModelPanel}
+              {selectedCabinetPanel}
+              {!selectedModelId && !selectedRowId
+                ? addLedScreenPanel
+                : null}
+            </div>,
+            sidebarTarget
+          )
+        : null}
+
+      <div className="hidden sm:block xl:hidden">{selectedModelPanel}</div>
+      <div className="hidden sm:block xl:hidden">{selectedCabinetPanel}</div>
+      {!selectedModelId && !selectedRowId ? (
+        <div className="hidden sm:block xl:hidden">{addLedScreenPanel}</div>
+      ) : null}
 
       {searchPanelOpen && photoTarget?.type !== "addCabinet" ? (
         <div className="rounded-2xl border border-gray-200 p-3 relative z-50 bg-white">
@@ -1391,22 +1825,16 @@ export default function SubcategoryClientLedScreen({
                 brand={m.parsed.brand}
                 modelName={m.parsed.model}
                 editable={editable}
-                rowPhotoMenuId={rowPhotoMenuId}
-                onToggleRowPhotoMenu={(rowId) =>
-                  setRowPhotoMenuId((prev) => (prev === rowId ? null : rowId))
-                }
-                onUploadRowPhoto={(row) => {
-                  setPhotoTarget({ type: "row", rowId: row.id });
-                  setRowPhotoMenuId(null);
-                  rowPhotoFileRef.current?.click();
+                selectedModel={selectedModelId === m.id}
+                onSelectModel={() => {
+                  setSelectedModelId(m.id);
+                  setSelectedRowId(null);
                 }}
-                onSearchRowPhoto={(row) => startSearchForRowPhoto(row)}
-                onRename={() => renameModel(m.id, m.name)}
-                onDelete={() => deleteModel(m.id)}
-                onAddRow={() => openAddCabinetPopup(m.id)}
-                onDeleteRow={(rowId) => deleteRow(rowId)}
-                onOpenEdit={(row) => openEditPopup(row)}
-                onSaveRowDirect={saveRowDirect}
+                selectedRowId={selectedRowId}
+                onSelectRow={(rowId) => {
+                  setSelectedRowId(rowId);
+                  setSelectedModelId(null);
+                }}
                 onRowsReorder={reorderRows}
                 getReportHref={getReportHref}
               />
@@ -1675,16 +2103,10 @@ function LedModelCard({
   brand,
   modelName,
   editable,
-  rowPhotoMenuId,
-  onToggleRowPhotoMenu,
-  onUploadRowPhoto,
-  onSearchRowPhoto,
-  onRename,
-  onDelete,
-  onAddRow,
-  onDeleteRow,
-  onOpenEdit,
-  onSaveRowDirect,
+  selectedModel,
+  onSelectModel,
+  selectedRowId,
+  onSelectRow,
   onRowsReorder,
   getReportHref,
 }: {
@@ -1692,16 +2114,10 @@ function LedModelCard({
   brand: string;
   modelName: string;
   editable: boolean;
-  rowPhotoMenuId: string | null;
-  onToggleRowPhotoMenu: (rowId: string) => void;
-  onUploadRowPhoto: (row: MatrixRow) => void;
-  onSearchRowPhoto: (row: MatrixRow) => void;
-  onRename: () => void;
-  onDelete: () => void;
-  onAddRow: () => void;
-  onDeleteRow: (rowId: string) => void;
-  onOpenEdit: (row: MatrixRow) => void;
-  onSaveRowDirect: (row: MatrixRow, patch: Partial<MatrixRow>) => Promise<void>;
+  selectedModel: boolean;
+  onSelectModel: () => void;
+  selectedRowId: string | null;
+  onSelectRow: (rowId: string) => void;
   onRowsReorder: (modelId: string, activeId: string, overId: string) => Promise<void>;
   getReportHref: (rowId: string) => string;
 }) {
@@ -1733,41 +2149,6 @@ function LedModelCard({
     0
   );
 
-  async function promptEditSize(row: MatrixRow) {
-    if (!editable) return;
-    const nextSize = prompt("Edit cabinet size:", row.size);
-    if (nextSize === null) return;
-
-    const clean = normalizeText(nextSize);
-    if (!clean) return;
-
-    await onSaveRowDirect(row, { size: clean });
-  }
-
-  async function promptEditCabinetModel(row: MatrixRow) {
-    if (!editable) return;
-    const nextModel = prompt("Edit cabinet model:", row.cabinet_model || "");
-    if (nextModel === null) return;
-
-    const clean = normalizeText(nextModel);
-    if (!clean) return;
-
-    await onSaveRowDirect(row, { cabinet_model: clean });
-  }
-
-  async function promptEditQty(
-    row: MatrixRow,
-    field: "qty" | "in_use_qty" | "in_ksa_qty",
-    label: string,
-    current: number
-  ) {
-    if (!editable) return;
-    const nextValue = prompt(`Edit ${label}:`, String(current ?? 0));
-    if (nextValue === null) return;
-
-    await onSaveRowDirect(row, { [field]: clampQty(nextValue) } as Partial<MatrixRow>);
-  }
-
   function handleDragEnd(event: any) {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
@@ -1775,12 +2156,24 @@ function LedModelCard({
   }
 
   return (
-    <div className="rounded-2xl border border-gray-200 bg-white p-3 sm:p-4">
+    <div
+      data-led-model-card="true"
+      className={`rounded-2xl border bg-white p-3 transition sm:p-4 ${
+        selectedModel
+          ? "border-black ring-2 ring-black"
+          : "border-gray-200"
+      }`}
+    >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
   <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
     <div className="min-w-0 flex-1">
       <div className="flex items-start justify-between gap-2 min-w-0">
-        <div className="relative min-w-0 inline-block pr-5">
+        <button
+          type="button"
+          data-led-model-select="true"
+          onClick={onSelectModel}
+          className="relative min-w-0 flex-1 cursor-pointer text-left"
+        >
           <h2
             className="truncate text-[13px] sm:text-[15px] text-gray-900"
             style={{ lineHeight: 1.1 }}
@@ -1788,32 +2181,7 @@ function LedModelCard({
             <span className="font-bold">{brand}</span>
             {modelName ? <span>{` ${modelName}`}</span> : null}
           </h2>
-
-          {editable ? (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onRename();
-              }}
-              className="absolute -top-3 right-0 text-red-500 text-[12px] hover:text-black"
-              title="Rename model"
-            >
-              ✎
-            </button>
-          ) : null}
-        </div>
-
-        {editable ? (
-          <button
-            type="button"
-            onClick={onDelete}
-            className="flex h-6 w-6 items-center justify-center rounded-full text-red-500 hover:bg-red-50 hover:text-black shrink-0"
-          >
-            <Trash2 size={14} />
-          </button>
-        ) : null}
+        </button>
       </div>
 
       <div className="mt-2 sm:hidden">
@@ -1872,13 +2240,8 @@ function LedModelCard({
                   <SortableCabinetRow key={r.id} id={r.id} disabled={!editable}>
                     <DesktopEditableCabinetRow
                       row={r}
-                      editable={editable}
-                      rowPhotoMenuId={rowPhotoMenuId}
-                      onToggleRowPhotoMenu={onToggleRowPhotoMenu}
-                      onUploadRowPhoto={onUploadRowPhoto}
-                      onSearchRowPhoto={onSearchRowPhoto}
-                      onSaveRowDirect={onSaveRowDirect}
-                      onDeleteRow={onDeleteRow}
+                      selected={selectedRowId === r.id}
+                      onSelect={() => onSelectRow(r.id)}
                       reportHref={getReportHref(r.id)}
                     />
                   </SortableCabinetRow>
@@ -1905,71 +2268,47 @@ function LedModelCard({
               >
                 {rows.map((r) => (
                   <SortableCabinetRow key={r.id} id={r.id} disabled={!editable}>
-                    <div className="rounded-2xl border border-gray-100 bg-white px-2 py-2">
+                    <div
+                      onClick={() => {
+                        window.location.href = getReportHref(r.id);
+                      }}
+                      className="cursor-pointer rounded-2xl border border-gray-100 bg-white px-2 py-2"
+                    >
                       <div className="flex items-start gap-3">
                         <PhotoBox
                           photo={r.photo_data}
                           name={r.size}
-                          editable={editable}
-                          menuOpen={rowPhotoMenuId === r.id}
-                          onToggleMenu={() => onToggleRowPhotoMenu(r.id)}
-                          onUploadPhoto={() => onUploadRowPhoto(r)}
-                          onSearchPhoto={() => onSearchRowPhoto(r)}
                         />
 
                         <div className="min-w-0 flex-1">
                           <div className="mb-2 flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
                               <div className="flex min-w-0 items-baseline gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => promptEditCabinetModel(r)}
-                                  className="min-w-0 truncate text-left text-[10px] font-bold text-gray-900 hover:text-red-500"
+                                <div
+                                  className="min-w-0 truncate text-left text-[10px] font-bold text-gray-900"
                                   title={r.cabinet_model || "No model"}
                                 >
                                   {r.cabinet_model || "No model"}
-                                </button>
+                                </div>
 
-                                <button
-                                  type="button"
-                                  onClick={() => promptEditSize(r)}
-                                  className="min-w-0 truncate text-left text-[9px] font-medium text-gray-500 hover:text-red-500"
+                                <div
+                                  className="min-w-0 truncate text-left text-[9px] font-medium text-gray-500"
                                   title={r.size}
                                 >
                                   {r.size}
-                                </button>
+                                </div>
                               </div>
                             </div>
 
-                            <div className="flex shrink-0 items-center gap-2">
-                              <Link
-                                href={getReportHref(r.id)}
-                                onClick={(event) => event.stopPropagation()}
-                                className="rounded-full border border-gray-300 bg-white px-2 py-0.5 text-[8px] font-medium text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
-                              >
-                                Report
-                              </Link>
-
-                              {editable ? (
-                                <button
-                                  type="button"
-                                  onClick={() => onDeleteRow(r.id)}
-                                  className="text-red-500 hover:text-black"
-                                >
-                                  <Trash2 size={15} />
-                                </button>
-                              ) : null}
-                            </div>
+                            <div />
                           </div>
 
                           <div className="grid grid-cols-5 gap-x-1 gap-y-1 text-center">
-                            <button
-                              type="button"
-                              onClick={() => promptEditQty(r, "qty", "Total Qty", r.qty)}
-                              className="hover:text-red-500"
-                            >
-                              <MobileStat label="Total" value={toSqm(r.qty, r.size)} tone="gray" />
-                            </button>
+                            <MobileStat
+                              label="Total"
+                              value={toSqm(r.qty, r.size)}
+                              tone="gray"
+                            />
 
                             <MobileStat
                               label="Available"
@@ -1977,19 +2316,11 @@ function LedModelCard({
                               tone="green"
                             />
 
-                            <button
-                              type="button"
-                              onClick={() =>
-                                promptEditQty(r, "in_use_qty", "In Use", r.in_use_qty)
-                              }
-                              className="hover:text-red-500"
-                            >
-                              <MobileStat
-                                label="In Use"
-                                value={toSqm(r.in_use_qty, r.size)}
-                                tone="blue"
-                              />
-                            </button>
+                            <MobileStat
+                              label="In Use"
+                              value={toSqm(r.in_use_qty, r.size)}
+                              tone="blue"
+                            />
 
                             <MobileStat
                               label="Maintenance"
@@ -1997,19 +2328,11 @@ function LedModelCard({
                               tone="yellow"
                             />
 
-                            <button
-                              type="button"
-                              onClick={() =>
-                                promptEditQty(r, "in_ksa_qty", "In KSA", r.in_ksa_qty)
-                              }
-                              className="hover:text-red-500"
-                            >
-                              <MobileStat
-                                label="In KSA"
-                                value={toSqm(r.in_ksa_qty, r.size)}
-                                tone="purple"
-                              />
-                            </button>
+                            <MobileStat
+                              label="In KSA"
+                              value={toSqm(r.in_ksa_qty, r.size)}
+                              tone="purple"
+                            />
                           </div>
                         </div>
                       </div>
@@ -2022,15 +2345,6 @@ function LedModelCard({
         </div>
       </div>
 
-      {editable ? (
-        <button
-          type="button"
-          onClick={onAddRow}
-          className="mt-2 text-[10px] font-medium text-red-500 hover:text-black"
-        >
-          + Add cabinet
-        </button>
-      ) : null}
     </div>
   );
 }
@@ -2091,23 +2405,13 @@ function SortableCabinetRow({
 
 function DesktopEditableCabinetRow({
   row,
-  editable,
-  rowPhotoMenuId,
-  onToggleRowPhotoMenu,
-  onUploadRowPhoto,
-  onSearchRowPhoto,
-  onSaveRowDirect,
-  onDeleteRow,
+  selected,
+  onSelect,
   reportHref,
 }: {
   row: MatrixRow;
-  editable: boolean;
-  rowPhotoMenuId: string | null;
-  onToggleRowPhotoMenu: (rowId: string) => void;
-  onUploadRowPhoto: (row: MatrixRow) => void;
-  onSearchRowPhoto: (row: MatrixRow) => void;
-  onSaveRowDirect: (row: MatrixRow, patch: Partial<MatrixRow>) => Promise<void>;
-  onDeleteRow: (rowId: string) => void;
+  selected: boolean;
+  onSelect: () => void;
   reportHref: string;
 }) {
   const available = rowAvailableFromTotal(
@@ -2117,77 +2421,36 @@ function DesktopEditableCabinetRow({
     clampQty(row.in_ksa_qty)
   );
 
-  async function promptEditSize() {
-    if (!editable) return;
-    const nextSize = prompt("Edit cabinet size:", row.size);
-    if (nextSize === null) return;
-
-    const clean = normalizeText(nextSize);
-    if (!clean) return;
-
-    await onSaveRowDirect(row, { size: clean });
-  }
-
-  async function promptEditCabinetModel() {
-    if (!editable) return;
-    const nextModel = prompt("Edit cabinet model:", row.cabinet_model || "");
-    if (nextModel === null) return;
-
-    const clean = normalizeText(nextModel);
-    if (!clean) return;
-
-    await onSaveRowDirect(row, { cabinet_model: clean });
-  }
-
-  async function promptEditQty(
-    field: "qty" | "in_use_qty" | "in_ksa_qty",
-    label: string,
-    current: number
-  ) {
-    if (!editable) return;
-    const nextValue = prompt(`Edit ${label}:`, String(current ?? 0));
-    if (nextValue === null) return;
-
-    await onSaveRowDirect(row, { [field]: clampQty(nextValue) } as Partial<MatrixRow>);
-  }
-
   return (
-    <div className="grid grid-cols-[64px_1.1fr_1.1fr_repeat(5,96px)_52px_28px] items-center gap-1 border-t border-gray-100 px-3 py-[2px] text-[9px] text-gray-900">
+    <div
+      data-led-cabinet-row="true"
+      onClick={onSelect}
+      className={`grid cursor-pointer grid-cols-[64px_1.1fr_1.1fr_repeat(5,96px)_52px_28px] items-center gap-1 border-t border-gray-100 px-3 py-[2px] text-[9px] text-gray-900 transition ${
+        selected ? "bg-gray-50 ring-2 ring-inset ring-black" : "hover:bg-gray-50"
+      }`}
+    >
       <PhotoBox
         photo={row.photo_data}
         name={row.size}
-        editable={editable}
-        menuOpen={rowPhotoMenuId === row.id}
-        onToggleMenu={() => onToggleRowPhotoMenu(row.id)}
-        onUploadPhoto={() => onUploadRowPhoto(row)}
-        onSearchPhoto={() => onSearchRowPhoto(row)}
       />
 
-      <button
-        type="button"
-        onClick={promptEditCabinetModel}
-        className="truncate text-left font-bold hover:text-red-500"
+      <div
+        className="truncate text-left font-bold"
         title={row.cabinet_model || "No model"}
       >
         {row.cabinet_model || "No model"}
-      </button>
+      </div>
 
-      <button
-        type="button"
-        onClick={promptEditSize}
-        className="truncate text-left font-medium text-gray-600 hover:text-red-500"
+      <div
+        className="truncate text-left font-medium text-gray-600"
         title={row.size}
       >
         {row.size}
-      </button>
+      </div>
 
-      <button
-        type="button"
-        onClick={() => promptEditQty("qty", "Total Qty", row.qty)}
-        className="text-center hover:text-red-500"
-      >
+      <div className="text-center">
         {formatSqm(toSqm(row.qty, row.size))} SQM
-      </button>
+      </div>
 
       <div className="text-center">
         <span className="inline-flex min-w-7 justify-center rounded-lg bg-green-100 px-2 py-1 font-bold">
@@ -2195,15 +2458,11 @@ function DesktopEditableCabinetRow({
 </span>
       </div>
 
-      <button
-        type="button"
-        onClick={() => promptEditQty("in_use_qty", "In Use", row.in_use_qty)}
-        className="text-center"
-      >
-        <span className="inline-flex min-w-7 justify-center rounded-lg bg-blue-100 px-2 py-1 font-bold hover:text-red-500">
+      <div className="text-center">
+        <span className="inline-flex min-w-7 justify-center rounded-lg bg-blue-100 px-2 py-1 font-bold">
           {formatSqm(toSqm(row.in_use_qty, row.size))} SQM
         </span>
-      </button>
+      </div>
 
       <div className="text-center">
         <span className="inline-flex min-w-7 justify-center rounded-lg bg-yellow-100 px-2 py-1 font-bold">
@@ -2211,15 +2470,11 @@ function DesktopEditableCabinetRow({
         </span>
       </div>
 
-      <button
-        type="button"
-        onClick={() => promptEditQty("in_ksa_qty", "In KSA", row.in_ksa_qty)}
-        className="text-center"
-      >
-        <span className="inline-flex min-w-7 justify-center rounded-lg bg-purple-100 px-2 py-1 font-bold hover:text-red-500">
+      <div className="text-center">
+        <span className="inline-flex min-w-7 justify-center rounded-lg bg-purple-100 px-2 py-1 font-bold">
           {formatSqm(toSqm(row.in_ksa_qty, row.size))} SQM
         </span>
-      </button>
+      </div>
 
       <div className="text-center">
         <Link
@@ -2231,17 +2486,7 @@ function DesktopEditableCabinetRow({
         </Link>
       </div>
 
-      <div>
-        {editable ? (
-          <button
-            type="button"
-            onClick={() => onDeleteRow(row.id)}
-            className="flex h-7 w-7 items-center justify-center rounded-full text-red-500 hover:bg-red-50 hover:text-black"
-          >
-            <Trash2 size={15} />
-          </button>
-        ) : null}
-      </div>
+      <div />
     </div>
   );
 }

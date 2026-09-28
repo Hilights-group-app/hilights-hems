@@ -1,9 +1,8 @@
 "use client";
-
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { ImagePlus, Trash2 } from "lucide-react";
-
+import { logActivity } from "@/lib/activityStore";
 type Unit = {
   id: string;
   unit_no: string | null;
@@ -14,11 +13,9 @@ type Unit = {
   expiry_date: string | null;
   damage_photos: string[] | null;
 };
-
 type UnitPatch = Partial<
   Pick<Unit, "unit_no" | "serial" | "status" | "notes" | "cert_date" | "damage_photos">
 >;
-
 type Stats = {
   total: number;
   available: number;
@@ -27,18 +24,15 @@ type Stats = {
   ksa: number;
   expired: number;
 };
-
 function addOneYear(dateStr: string) {
   const s = (dateStr || "").trim();
   if (!s) return "";
   const d = new Date(s);
   if (Number.isNaN(d.getTime())) return "";
-
   const next = new Date(d);
   next.setFullYear(next.getFullYear() + 1);
   return next.toISOString().split("T")[0];
 }
-
 function getStatusTextColor(status: string | null) {
   switch (status) {
     case "available":
@@ -53,14 +47,18 @@ function getStatusTextColor(status: string | null) {
       return "#374151";
   }
 }
-
 function getStatusLabel(status: string | null) {
   if (status === "in_use") return "In Use";
   if (status === "in_ksa") return "In KSA";
   if (status === "maintenance") return "Maintenance";
   return "Available";
 }
-
+function valuesMatch(a: unknown, b: unknown) {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
+  }
+  return String(a ?? "") === String(b ?? "");
+}
 async function fileToDataUrl(file: File): Promise<string> {
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -69,9 +67,10 @@ async function fileToDataUrl(file: File): Promise<string> {
     reader.readAsDataURL(file);
   });
 }
-
 export function ChainHoistRowsBlock({
   itemId,
+  itemName,
+  activityLink,
   onStatsChange,
   editable = true,
   allowAdd = true,
@@ -79,6 +78,8 @@ export function ChainHoistRowsBlock({
   allowUpload = true,
 }: {
   itemId: string;
+  itemName?: string;
+  activityLink?: string;
   onStatsChange?: (stats: Stats) => void;
   editable?: boolean;
   allowAdd?: boolean;
@@ -87,58 +88,49 @@ export function ChainHoistRowsBlock({
 }) {
   const supabase = createClient();
   const [units, setUnits] = useState<Unit[]>([]);
-const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
-
+  const unitsRef = useRef<Unit[]>([]);
+  const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
   useEffect(() => {
     void loadUnits();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemId]);
-
   async function loadUnits() {
     const { data, error } = await supabase
       .from("units")
       .select("id, unit_no, serial, status, notes, cert_date, expiry_date, damage_photos")
       .eq("item_id", itemId)
       .order("unit_no", { ascending: true });
-
     if (error) {
       console.error("loadUnits error:", error);
       return;
     }
-
-    setUnits((data ?? []) as Unit[]);
+    const nextUnits = (data ?? []) as Unit[];
+    unitsRef.current = nextUnits;
+    setUnits(nextUnits);
   }
-
   function isExpired(unit: Unit) {
     if (!unit.expiry_date) return false;
-
     const now = new Date();
     now.setHours(0, 0, 0, 0);
-
     const expiry = new Date(unit.expiry_date);
     if (Number.isNaN(expiry.getTime())) return false;
     expiry.setHours(0, 0, 0, 0);
-
     return expiry.getTime() < now.getTime();
   }
-
   useEffect(() => {
     let available = 0;
     let inuse = 0;
     let maintenance = 0;
     let ksa = 0;
     let expired = 0;
-
     units.forEach((u) => {
       const expiredNow = isExpired(u);
-
       if (u.status === "available" && !expiredNow) available++;
       if (u.status === "in_use") inuse++;
       if (u.status === "maintenance") maintenance++;
       if (u.status === "in_ksa") ksa++;
       if (expiredNow) expired++;
     });
-
     onStatsChange?.({
       total: units.length,
       available,
@@ -148,85 +140,83 @@ const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
       expired,
     });
   }, [units, onStatsChange]);
-
   async function updateUnit(id: string, patch: UnitPatch) {
     if (!editable) return;
-
+    const previous = unitsRef.current.find((unit) => unit.id === id);
+    if (!previous) return;
     const nextPatch: Partial<Unit> = { ...patch };
-
     if (patch.unit_no !== undefined) {
       nextPatch.unit_no = String(patch.unit_no).trim();
     }
-
     if (patch.cert_date !== undefined) {
       nextPatch.expiry_date = patch.cert_date ? addOneYear(patch.cert_date) : null;
     }
-
-    setUnits((prev) =>
-      prev.map((u) => (u.id === id ? { ...u, ...nextPatch } : u))
+    const changedEntries = Object.entries(nextPatch).filter(
+      ([key, value]) => !valuesMatch(previous[key as keyof Unit], value)
     );
-
+    if (changedEntries.length === 0) return;
+    const optimisticUnits = unitsRef.current.map((unit) =>
+      unit.id === id ? { ...unit, ...nextPatch } : unit
+    );
+    unitsRef.current = optimisticUnits;
+    setUnits(optimisticUnits);
     const { error } = await supabase.from("units").update(nextPatch).eq("id", id);
-
     if (error) {
       console.error("updateUnit error:", error);
       await loadUnits();
+      return;
     }
+    const unitLabel = `Unit #${nextPatch.unit_no ?? previous.unit_no ?? "-"}`;
+    const keys = changedEntries.map(([key]) => key);
+    let message = `${unitLabel} was updated`;
+    if (keys.includes("status")) {
+      message = `${unitLabel} status changed to ${getStatusLabel(nextPatch.status ?? previous.status)}`;
+    } else if (keys.includes("serial")) {
+      message = `${unitLabel} serial changed to ${nextPatch.serial || "empty"}`;
+    } else if (keys.includes("cert_date")) {
+      message = nextPatch.cert_date
+        ? `${unitLabel} certificate updated; expiry ${nextPatch.expiry_date}`
+        : `${unitLabel} certificate date was removed`;
+    } else if (keys.includes("notes")) {
+      message = `${unitLabel} notes were updated`;
+    } else if (keys.includes("damage_photos")) {
+      message = `${unitLabel} damage photos were updated`;
+    } else if (keys.includes("unit_no")) {
+      message = `${unitLabel} number was updated`;
+    }
+    await logActivity({
+      title: `edited ${itemName || "Chain Hoist"}`,
+      message,
+      link: activityLink,
+    });
   }
-
   function validStatus(unit: Unit) {
     return isExpired(unit) ? "expired" : "valid";
   }
-
   async function uploadPhoto(unitId: string, file: File) {
     if (!allowUpload) return;
-
     const unit = units.find((u) => u.id === unitId);
     if (!unit) return;
-
     const currentPhotos = unit.damage_photos ?? [];
 if (currentPhotos.length >= 3) return;
-
 const dataUrl = await fileToDataUrl(file);
 const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
-
-    setUnits((prev) =>
-      prev.map((u) =>
-        u.id === unitId ? { ...u, damage_photos: nextPhotos } : u
-      )
-    );
-
-    const { error } = await supabase
-      .from("units")
-      .update({ damage_photos: nextPhotos })
-      .eq("id", unitId);
-
-    if (error) {
-      console.error("uploadPhoto error:", error);
-      await loadUnits();
-    }
+    await updateUnit(unitId, { damage_photos: nextPhotos });
   }
-
   function deleteDamagePhoto(unitId: string, photoIndex: number) {
     if (!allowUpload) return;
-
     const unit = units.find((u) => u.id === unitId);
     if (!unit) return;
-
     const currentPhotos = unit.damage_photos ?? [];
     const nextPhotos = currentPhotos.filter((_, idx) => idx !== photoIndex);
-
     void updateUnit(unitId, { damage_photos: nextPhotos });
   }
-
   async function addRow() {
     if (!allowAdd) return;
-
     const nextNo =
       units.length > 0
         ? Math.max(...units.map((u) => Number(u.unit_no || 0))) + 1
         : 1;
-
     const { data, error } = await supabase
       .from("units")
       .insert({
@@ -241,33 +231,40 @@ const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
       })
       .select("id, unit_no, serial, status, notes, cert_date, expiry_date, damage_photos")
       .single();
-
     if (error) {
       console.error("addRow error:", error);
       return;
     }
-
-    setUnits((prev) => [...prev, data as Unit]);
+    const nextUnits = [...unitsRef.current, data as Unit];
+    unitsRef.current = nextUnits;
+    setUnits(nextUnits);
+    await logActivity({
+      title: `added a unit to ${itemName || "Chain Hoist"}`,
+      message: `Unit #${(data as Unit).unit_no ?? nextNo} was added`,
+      link: activityLink,
+    });
   }
-
   async function deleteRow(unitId: string) {
     if (!allowDelete) return;
     if (!confirm("Delete this row?")) return;
-
+    const deletedUnit = unitsRef.current.find((unit) => unit.id === unitId);
     const { error } = await supabase.from("units").delete().eq("id", unitId);
-
     if (error) {
       console.error("deleteRow error:", error);
       return;
     }
-
-    setUnits((prev) => prev.filter((u) => u.id !== unitId));
+    const nextUnits = unitsRef.current.filter((unit) => unit.id !== unitId);
+    unitsRef.current = nextUnits;
+    setUnits(nextUnits);
+    await logActivity({
+      title: `deleted a unit from ${itemName || "Chain Hoist"}`,
+      message: `Unit #${deletedUnit?.unit_no ?? "-"} was deleted`,
+      link: activityLink,
+    });
   }
-
   function openPhoto(url: string) {
   setPreviewPhoto(url);
 }
-
   return (
   <>
     {previewPhoto ? (
@@ -279,7 +276,6 @@ const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
         >
           Close
         </button>
-
         <img
           src={previewPhoto}
           alt="Damage Photo"
@@ -287,19 +283,18 @@ const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
         />
       </div>
     ) : null}
-
-    <div className="bg-white border border-gray-200 rounded-xl px-[2px] sm:px-5 pt-4 sm:pt-5 pb-5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
-      <div className="hidden sm:flex items-center gap-2 text-[11px] font-semibold text-gray-600 pt-2 pb-4">
-        <div className="w-[16px] min-w-[16px] sm:w-[32px] sm:min-w-[32px] text-center">ID</div>
-        <div className="w-[42px] min-w-[42px] sm:w-[120px] sm:min-w-[120px]">Serial</div>
-        <div className="w-[56px] min-w-[56px] sm:w-[130px] sm:min-w-[130px]">Cert</div>
-        <div className="w-[56px] min-w-[56px] sm:w-[130px] sm:min-w-[130px]">Expiry</div>
-        <div className="w-[36px] min-w-[36px] sm:w-[70px] sm:min-w-[70px]">Valid</div>
-        <div className="w-[48px] min-w-[48px] sm:w-[95px] sm:min-w-[95px]">Status</div>
-        <div className="w-[48px] min-w-[48px] sm:w-[230px] sm:min-w-[230px]">Note</div>
-        <div className="flex-1 min-w-[48px] sm:min-w-[200px]">Damage</div>
+    <div className="w-full min-w-0 overflow-hidden bg-white border border-gray-200 rounded-xl px-[2px] sm:px-5 pt-4 sm:pt-5 pb-5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+      <div className="hidden lg:grid w-full min-w-0 grid-cols-[32px_minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,1.05fr)_minmax(0,0.65fr)_minmax(0,0.85fr)_minmax(0,1.2fr)_minmax(0,1.3fr)_24px] items-center gap-1 pt-2 pb-4 text-[10px] font-semibold text-gray-600">
+        <div className="min-w-0 text-center">ID</div>
+        <div className="min-w-0 truncate">Serial</div>
+        <div className="min-w-0 truncate">Cert</div>
+        <div className="min-w-0 truncate">Expiry</div>
+        <div className="min-w-0 truncate text-center">Valid</div>
+        <div className="min-w-0 truncate">Status</div>
+        <div className="min-w-0 truncate">Note</div>
+        <div className="min-w-0 truncate">Damage</div>
+        <div aria-hidden="true" />
       </div>
-
       {units.length === 0 ? (
         <div className="text-sm text-gray-500">No units found.</div>
       ) : (
@@ -319,7 +314,6 @@ const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
           />
         ))
       )}
-
       {allowAdd ? (
         <div className="flex justify-start mt-8 pb-4">
           <button
@@ -335,7 +329,6 @@ const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
   </>
 );
 }
-
 function DamagePhotoThumb({
   photo,
   index,
@@ -350,7 +343,6 @@ function DamagePhotoThumb({
   onOpenPhoto: (url: string) => void;
 }) {
   const [hover, setHover] = useState(false);
-
   return (
     <div
       className="relative w-[10px] h-[10px] sm:w-10 sm:h-10 overflow-visible bg-white shrink-0"
@@ -363,7 +355,6 @@ function DamagePhotoThumb({
         className="w-[10px] h-[10px] sm:w-10 sm:h-10 object-cover cursor-pointer rounded-[2px] sm:rounded-lg"
         onClick={() => onOpenPhoto(photo)}
       />
-
       {canDeletePhoto ? (
         <button
           type="button"
@@ -377,7 +368,6 @@ function DamagePhotoThumb({
           ✕
         </button>
       ) : null}
-
       {hover ? (
         <div
           className="hidden sm:block"
@@ -413,7 +403,6 @@ function DamagePhotoThumb({
     </div>
   );
 }
-
 function ChainHoistEditableRow({
   unit,
   validStatus,
@@ -446,29 +435,23 @@ function ChainHoistEditableRow({
   const fileRef = useRef<HTMLInputElement | null>(null);
   const timerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const didInitRef = useRef(false);
-
   useEffect(() => {
     if (didInitRef.current) return;
-
     setUnitNo(String(unit.unit_no));
     setSerial(unit.serial || "");
     setStatus(unit.status || "available");
     setNotes(unit.notes || "");
     setCertDate(unit.cert_date || "");
     setExpiryDate(unit.expiry_date || "");
-
     didInitRef.current = true;
   }, [unit]);
-
   function debounceSave(key: string, fn: () => void) {
     if (timerRef.current[key]) clearTimeout(timerRef.current[key]);
     timerRef.current[key] = setTimeout(fn, 800);
   }
-
   const photos = unit.damage_photos ?? [];
-
   return (
-    <div className="border-t border-gray-200 pt-3">
+    <div className="min-w-0 overflow-hidden border-t border-gray-200 pt-3">
       <input
         ref={fileRef}
         type="file"
@@ -482,7 +465,6 @@ function ChainHoistEditableRow({
           e.target.value = "";
         }}
       />
-
       {/* MOBILE CARD STYLE */}
       <div className="lg:hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
         <div className="mb-3 flex items-start justify-between gap-3">
@@ -490,7 +472,6 @@ function ChainHoistEditableRow({
             <div className="text-[11px] font-semibold text-gray-400">
               Chain Hoist Unit
             </div>
-
             <input
               value={unitNo}
               readOnly={!editable}
@@ -509,7 +490,6 @@ function ChainHoistEditableRow({
               className="mt-1 w-full border-none bg-transparent p-0 text-[18px] font-bold text-gray-900 outline-none"
             />
           </div>
-
           <div className="flex items-center gap-2">
             <span
               className={`rounded-full px-2 py-1 text-[10px] font-semibold ${
@@ -520,7 +500,6 @@ function ChainHoistEditableRow({
             >
               {validStatus === "expired" ? "Expired" : "Valid"}
             </span>
-
             {allowDelete ? (
               <Trash2
                 size={16}
@@ -530,7 +509,6 @@ function ChainHoistEditableRow({
             ) : null}
           </div>
         </div>
-
         <div className="grid grid-cols-2 gap-2">
           <label className="rounded-xl bg-gray-50 p-2">
             <div className="text-[10px] font-semibold text-gray-400">Serial</div>
@@ -553,7 +531,6 @@ function ChainHoistEditableRow({
               className="mt-1 w-full border-none bg-transparent p-0 text-[12px] font-medium text-gray-800 outline-none"
             />
           </label>
-
           <label className="rounded-xl bg-gray-50 p-2">
             <div className="text-[10px] font-semibold text-gray-400">Status</div>
             {editable ? (
@@ -581,7 +558,6 @@ function ChainHoistEditableRow({
               </div>
             )}
           </label>
-
           <label className="rounded-xl bg-gray-50 p-2">
             <div className="text-[10px] font-semibold text-gray-400">Cert Date</div>
             {editable ? (
@@ -591,10 +567,8 @@ function ChainHoistEditableRow({
                 onChange={(e) => {
                   const v = e.target.value;
                   setCertDate(v);
-
                   const newExpiry = v ? addOneYear(v) : "";
                   setExpiryDate(newExpiry);
-
                   debounceSave("cert_mobile", () => {
                     void onSave(unit.id, { cert_date: v || null });
                   });
@@ -610,7 +584,6 @@ function ChainHoistEditableRow({
               </div>
             )}
           </label>
-
           <label className="rounded-xl bg-gray-50 p-2">
             <div className="text-[10px] font-semibold text-gray-400">Expiry</div>
             <div className="mt-1 w-full text-[11px] text-gray-500">
@@ -618,7 +591,6 @@ function ChainHoistEditableRow({
             </div>
           </label>
         </div>
-
         <label className="mt-2 block rounded-xl bg-gray-50 p-2">
           <div className="text-[10px] font-semibold text-gray-400">Note</div>
           <textarea
@@ -641,13 +613,11 @@ function ChainHoistEditableRow({
             className="mt-1 w-full resize-none border-none bg-transparent p-0 text-[12px] text-gray-800 outline-none"
           />
         </label>
-
         <div className="mt-3 rounded-xl bg-gray-50 p-2">
           <div className="mb-2 flex items-center justify-between">
             <div className="text-[10px] font-semibold text-gray-400">
               Damage Photos ({photos.length}/3)
             </div>
-
             {allowUpload ? (
               <ImagePlus
                 size={17}
@@ -656,7 +626,6 @@ function ChainHoistEditableRow({
               />
             ) : null}
           </div>
-
           {photos.length > 0 ? (
             <div className="flex flex-wrap gap-2">
               {photos.slice(0, 3).map((photo, idx) => (
@@ -667,7 +636,6 @@ function ChainHoistEditableRow({
       onClick={() => onOpenPhoto(photo)}
       className="h-12 w-12 cursor-pointer rounded-lg object-cover"
     />
-
     {allowUpload ? (
       <button
         type="button"
@@ -679,7 +647,6 @@ function ChainHoistEditableRow({
     ) : null}
   </div>
 ))}
-
 {photos.length > 3 ? (
   <span className="flex h-12 w-12 items-center justify-center rounded-lg bg-gray-100 text-[11px] font-semibold text-gray-500">
     +{photos.length - 3}
@@ -691,9 +658,8 @@ function ChainHoistEditableRow({
           )}
         </div>
       </div>
-
       {/* DESKTOP TABLE STYLE */}
-      <div className="hidden lg:flex items-center gap-2 flex-nowrap overflow-visible">
+      <div className="hidden lg:grid w-full min-w-0 grid-cols-[32px_minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,1.05fr)_minmax(0,0.65fr)_minmax(0,0.85fr)_minmax(0,1.2fr)_minmax(0,1.3fr)_24px] items-center gap-1">
         <input
           value={unitNo}
           readOnly={!editable}
@@ -709,9 +675,8 @@ function ChainHoistEditableRow({
             if (!editable) return;
             void onSave(unit.id, { unit_no: unitNo.trim() });
           }}
-          className="w-[32px] min-w-[32px] rounded-lg border-none bg-white px-0 py-1 text-center text-[11px] outline-none read-only:text-gray-700"
+          className="w-full min-w-0 rounded-lg border-none bg-white px-0 py-1 text-center text-[10px] outline-none read-only:text-gray-700"
         />
-
         <input
           value={serial}
           readOnly={!editable}
@@ -728,9 +693,8 @@ function ChainHoistEditableRow({
             if (!editable) return;
             void onSave(unit.id, { serial });
           }}
-          className="w-[120px] min-w-[120px] truncate rounded-lg border-none bg-white px-2 py-1 text-[12px] outline-none read-only:text-gray-700"
+          className="w-full min-w-0 truncate rounded-lg border-none bg-white px-1 py-1 text-[11px] outline-none read-only:text-gray-700"
         />
-
         {editable ? (
           <input
             type="date"
@@ -747,20 +711,18 @@ function ChainHoistEditableRow({
             onBlur={() => {
               void onSave(unit.id, { cert_date: certDate || null });
             }}
-            className="w-[130px] min-w-[130px] rounded-lg border-none bg-white px-1 py-1 text-[11px] outline-none"
+            className="w-full min-w-0 rounded-lg border-none bg-white px-0.5 py-1 text-[10px] outline-none"
           />
         ) : (
-          <div className="w-[130px] min-w-[130px] rounded-lg bg-white px-1 py-1 text-[11px] text-gray-700">
+          <div className="w-full min-w-0 truncate rounded-lg bg-white px-1 py-1 text-[10px] text-gray-700">
             {certDate || "-"}
           </div>
         )}
-
-        <div className="w-[130px] min-w-[130px] rounded-lg bg-white px-1 py-1 text-[11px] text-gray-500">
+        <div className="w-full min-w-0 truncate rounded-lg bg-white px-1 py-1 text-[10px] text-gray-500">
           {expiryDate || "-"}
         </div>
-
         <div
-          className={`w-[70px] min-w-[70px] rounded-lg px-2 py-1 text-[11px] font-semibold text-center ${
+          className={`w-full min-w-0 truncate rounded-lg px-1 py-1 text-[9px] font-semibold text-center ${
             validStatus === "expired"
               ? "bg-red-100 text-red-700"
               : "bg-green-100 text-green-700"
@@ -768,7 +730,6 @@ function ChainHoistEditableRow({
         >
           {validStatus === "expired" ? "Expired" : "Valid"}
         </div>
-
         {editable ? (
           <select
             value={status}
@@ -778,7 +739,7 @@ function ChainHoistEditableRow({
               void onSave(unit.id, { status: v });
             }}
             style={{ color: getStatusTextColor(status) }}
-            className="w-[95px] min-w-[95px] rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none"
+            className="w-full min-w-0 rounded-lg border-none bg-white px-0.5 py-1 text-[10px] outline-none"
           >
             <option value="available">Available</option>
             <option value="in_use">In Use</option>
@@ -788,12 +749,11 @@ function ChainHoistEditableRow({
         ) : (
           <div
             style={{ color: getStatusTextColor(status) }}
-            className="w-[95px] min-w-[95px] rounded-lg bg-white px-1 py-1 text-[12px] font-semibold"
+            className="w-full min-w-0 truncate rounded-lg bg-white px-1 py-1 text-[10px] font-semibold"
           >
             {getStatusLabel(status)}
           </div>
         )}
-
         <textarea
           value={notes}
           readOnly={!editable}
@@ -811,10 +771,9 @@ function ChainHoistEditableRow({
             void onSave(unit.id, { notes });
           }}
           rows={1}
-          className="w-[230px] min-w-[230px] resize-none overflow-hidden rounded-lg border-none bg-white px-2 py-1 text-[12px] outline-none read-only:text-gray-700"
+          className="w-full min-w-0 resize-none overflow-hidden rounded-lg border-none bg-white px-1 py-1 text-[10px] outline-none read-only:text-gray-700"
         />
-
-        <div className="flex min-w-[200px] items-center gap-2 overflow-visible">
+        <div className="flex min-w-0 items-center gap-1 overflow-hidden">
           {allowUpload ? (
             <ImagePlus
               size={20}
@@ -825,13 +784,11 @@ function ChainHoistEditableRow({
               onClick={() => fileRef.current?.click()}
             />
           ) : null}
-
           {allowUpload ? (
             <span className="text-xs text-gray-400 shrink-0">{photos.length}/3</span>
           ) : null}
-
           {photos.length > 0 ? (
-            <div className="flex items-center gap-2 overflow-visible">
+            <div className="flex min-w-0 items-center gap-1 overflow-hidden">
               {photos.slice(0, 3).map((photo, idx) => (
                 <DamagePhotoThumb
                   key={`${unit.id}-${idx}`}
@@ -842,7 +799,6 @@ function ChainHoistEditableRow({
                   onDelete={() => onDeleteDamagePhoto(unit.id, idx)}
                 />
               ))}
-
               {photos.length > 3 ? (
                 <span className="text-xs text-gray-400 shrink-0">
                   +{photos.length - 3}
@@ -853,8 +809,7 @@ function ChainHoistEditableRow({
             <span className="text-xs text-gray-400 shrink-0">No photos</span>
           ) : null}
         </div>
-
-        <div className="w-[28px] min-w-[28px] flex justify-center">
+        <div className="flex w-full min-w-0 justify-center">
           {allowDelete ? (
             <Trash2
               size={16}

@@ -1,5 +1,6 @@
 import "./globals.css";
 import TopBar from "@/components/TopBar";
+import AppShellClient from "@/components/AppShellClient";
 
 export const metadata = {
   title: "Hilights Equipment Management System",
@@ -42,11 +43,9 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="text-black">
+      <body className="bg-white text-black">
         <TopBar />
-        <main className="w-full min-h-screen px-2 py-2">
-  {children}
-</main>
+        <AppShellClient>{children}</AppShellClient>
       </body>
     </html>
   );

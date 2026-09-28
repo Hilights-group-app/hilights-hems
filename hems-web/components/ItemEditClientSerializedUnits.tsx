@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
 import { SerializedRowsBlock } from "@/components/SerializedRowsBlock";
+import { logActivity } from "@/lib/activityStore";
 
 type DbItem = {
   id: string;
@@ -56,6 +57,10 @@ export default function ItemEditClientSerializedUnits({
     const safeSubcategory = encodeURIComponent(subcategory);
     return `/inventory/${safeCategory}/${safeSubcategory}`;
   }, [category, subcategory]);
+
+  const activityLink = useMemo(() => {
+    return `${backHref}/${encodeURIComponent(itemId)}`;
+  }, [backHref, itemId]);
 
   const [item, setItem] = useState<DbItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -123,6 +128,8 @@ export default function ItemEditClientSerializedUnits({
   async function updateItem(patch: Partial<Pick<DbItem, "name" | "photo_url">>) {
     if (!editable || !item) return;
 
+    const previousItem = item;
+
     const { data, error } = await supabase
       .from("items")
       .update(patch)
@@ -136,7 +143,25 @@ export default function ItemEditClientSerializedUnits({
       return;
     }
 
-    setItem(data as DbItem);
+    const nextItem = data as DbItem;
+    setItem(nextItem);
+
+    if (patch.name !== undefined && patch.name !== previousItem.name) {
+      await logActivity({
+        title: `renamed ${previousItem.name}`,
+        message: `New name: ${nextItem.name}`,
+        link: activityLink,
+      });
+    } else if (
+      patch.photo_url !== undefined &&
+      patch.photo_url !== previousItem.photo_url
+    ) {
+      await logActivity({
+        title: `updated the photo for ${previousItem.name}`,
+        message: "Equipment photo was updated",
+        link: activityLink,
+      });
+    }
   }
 
   async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
@@ -453,6 +478,8 @@ export default function ItemEditClientSerializedUnits({
 ) : null}
         <SerializedRowsBlock
           itemId={itemId}
+          itemName={item.name}
+          activityLink={activityLink}
           editable={editable}
           onStatsChange={setStats}
         />

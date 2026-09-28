@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
 import { Trash2, ChevronDown } from "lucide-react";
@@ -583,6 +584,45 @@ export default function SubcategoryClientMatrix({
   const [dragItemId, setDragItemId] = useState<string | null>(null);
   const [dragItemBlock, setDragItemBlock] = useState<string | null>(null);
   const [dragBlockName, setDragBlockName] = useState<string | null>(null);
+  const [sidebarTarget, setSidebarTarget] = useState<HTMLElement | null>(null);
+  const [desktopSidebarActive, setDesktopSidebarActive] = useState(false);
+  const [selectedBlockName, setSelectedBlockName] = useState<string | null>(
+    null,
+  );
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [selectedCableRow, setSelectedCableRow] = useState<{
+    itemId: string;
+    rowId: string;
+  } | null>(null);
+  const [selectedBrand, setSelectedBrand] = useState("");
+  const [selectedModel, setSelectedModel] = useState("");
+  const [selectedName, setSelectedName] = useState("");
+  const [selectedBlockDraft, setSelectedBlockDraft] = useState("");
+
+  const selectedItem = useMemo(
+    () => items.find((item) => item.id === selectedItemId) ?? null,
+    [items, selectedItemId],
+  );
+
+  const selectedCableRowInfo = useMemo(() => {
+    if (!selectedCableRow) return null;
+    const item = items.find((current) => current.id === selectedCableRow.itemId);
+    const row = (cableRowsByItem[selectedCableRow.itemId] || []).find(
+      (current) => current.id === selectedCableRow.rowId,
+    );
+    return item && row ? { item, row } : null;
+  }, [items, cableRowsByItem, selectedCableRow]);
+
+  useEffect(() => {
+    if (!selectedItem) return;
+    const parsed = splitBrandModel(selectedItem.name);
+    setSelectedBrand(parsed.brand);
+    setSelectedModel(parsed.model);
+    setSelectedName(selectedItem.name);
+    setSelectedBlockDraft(itemBlockName(selectedItem));
+    // Drafts are initialized only when a different item is selected.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedItemId]);
 
   const itemName = useMemo(() => {
     if (itemType === "cable" || itemType === "rack") return cableModel.trim();
@@ -671,10 +711,10 @@ export default function SubcategoryClientMatrix({
     });
   }
 
-  async function renameBlock(oldName: string) {
+  async function renameBlock(oldName: string, requestedName?: string) {
     if (!editable) return;
 
-    const nextName = prompt("Rename block:", oldName);
+    const nextName = requestedName ?? prompt("Rename block:", oldName);
     if (!nextName) return;
 
     const clean = nextName.trim();
@@ -712,6 +752,7 @@ export default function SubcategoryClientMatrix({
 
     setItems(sortItemsByBrand(nextItems));
     saveManualOrder(nextBlockOrder, nextItemOrderByBlock);
+    setSelectedBlockName(clean);
     setSaveMsg("Block renamed");
     setTimeout(() => setSaveMsg(""), 1500);
   }
@@ -982,10 +1023,35 @@ export default function SubcategoryClientMatrix({
   }, [category, subcategory]);
 
   useEffect(() => {
+    function syncSidebarTarget() {
+      const nextTarget = document.getElementById("right-sidebar-actions");
+      setSidebarTarget((current) =>
+        current === nextTarget ? current : nextTarget,
+      );
+    }
+
+    syncSidebarTarget();
+    const observer = new MutationObserver(syncSidebarTarget);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia("(min-width: 1280px)");
+    const sync = () => setDesktopSidebarActive(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       const target = e.target as HTMLElement;
       const addMenu = document.getElementById("add-photo-menu");
       const listMenu = target.closest("[data-list-photo-menu='true']");
+      const keepsSelection = target.closest(
+        "[data-matrix-select='true'], [data-matrix-tools='true']",
+      );
 
       if (addMenu && !addMenu.contains(target)) {
         setPhotoMenuOpen(false);
@@ -993,6 +1059,14 @@ export default function SubcategoryClientMatrix({
 
       if (!listMenu) {
         setListPhotoMenuItemId(null);
+      }
+
+      if (!keepsSelection) {
+        window.setTimeout(() => {
+          setSelectedBlockName(null);
+          setSelectedItemId(null);
+          setSelectedCableRow(null);
+        }, 0);
       }
     }
 
@@ -1263,70 +1337,6 @@ export default function SubcategoryClientMatrix({
     }));
   }
 
-  async function updateCableQty(
-    rowId: string,
-    itemId: string,
-    field: "total_qty" | "in_use_qty" | "maintenance_qty" | "in_ksa_qty",
-    current: number | null,
-  ) {
-    if (!editable) return;
-
-    const nextValue = prompt("Edit quantity:", String(current ?? 0));
-    if (nextValue === null) return;
-
-    const clean = clampQty(nextValue);
-
-    const { error } = await supabase
-      .from("matrix_rows")
-      .update({ [field]: clean })
-      .eq("id", rowId);
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    setCableRowsByItem((prev) => ({
-      ...prev,
-      [itemId]: (prev[itemId] || []).map((row) =>
-        row.id === rowId ? { ...row, [field]: clean } : row,
-      ),
-    }));
-  }
-
-  async function updateCableLength(
-    rowId: string,
-    itemId: string,
-    current: string,
-  ) {
-    if (!editable) return;
-
-    const nextLength = prompt("Edit cable length:", current);
-    if (!nextLength) return;
-
-    const clean = nextLength.trim();
-    if (!clean) return;
-
-    const { error } = await supabase
-      .from("matrix_rows")
-      .update({ cable_length: clean })
-      .eq("id", rowId);
-
-    if (error) {
-      alert(error.message);
-      return;
-    }
-
-    setCableRowsByItem((prev) => ({
-      ...prev,
-      [itemId]: sortCableRows(
-        (prev[itemId] || []).map((row) =>
-          row.id === rowId ? { ...row, cable_length: clean } : row,
-        ),
-      ),
-    }));
-  }
-
   async function updateItemQty(
     itemId: string,
     field: "total_qty" | "in_use_qty" | "maintenance_qty" | "in_ksa_qty",
@@ -1372,10 +1382,14 @@ export default function SubcategoryClientMatrix({
     }
   }
 
-  async function onRename(itemId: string, current: string) {
+  async function onRename(
+    itemId: string,
+    current: string,
+    requestedName?: string,
+  ) {
     if (!editable) return;
 
-    const nextName = prompt("Rename item:", current);
+    const nextName = requestedName ?? prompt("Rename item:", current);
     if (!nextName) return;
 
     const clean = nextName.trim();
@@ -1414,6 +1428,125 @@ export default function SubcategoryClientMatrix({
     }
   }
 
+  async function saveSelectedItemName() {
+    if (!selectedItem) return;
+
+    const clean =
+      selectedItem.item_type === "unit"
+        ? [selectedBrand.trim(), selectedModel.trim()]
+            .filter(Boolean)
+            .join(" - ")
+        : selectedName.trim();
+
+    if (!clean || clean === selectedItem.name) return;
+    await onRename(selectedItem.id, selectedItem.name, clean);
+  }
+
+  async function updateItemDirect(
+    itemId: string,
+    patch: Partial<
+      Pick<
+        MatrixItemRow,
+        | "block_name"
+        | "total_qty"
+        | "in_use_qty"
+        | "maintenance_qty"
+        | "in_ksa_qty"
+      >
+    >,
+  ) {
+    if (!editable) return;
+
+    const { error } = await supabase
+      .from("matrix_models")
+      .update(patch)
+      .eq("id", itemId);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    const nextItems = sortItemsByBrand(
+      items.map((item) =>
+        item.id === itemId ? { ...item, ...patch } : item,
+      ),
+    );
+    const updatedItem = nextItems.find((item) => item.id === itemId);
+    const nextStats = {
+      ...statsByItem,
+      ...(updatedItem ? { [itemId]: statsFromItem(updatedItem) } : {}),
+    };
+
+    setItems(nextItems);
+    setStatsByItem(nextStats);
+
+    if (categoryId && subcategoryId) {
+      writeItemsCache(categoryId, subcategoryId, {
+        categoryId,
+        subcategoryId,
+        items: nextItems,
+        statsByItem: nextStats,
+      });
+    }
+  }
+
+  async function updateCableRowDirect(
+    itemId: string,
+    rowId: string,
+    patch: Partial<
+      Pick<
+        CableRow,
+        | "cable_length"
+        | "total_qty"
+        | "in_use_qty"
+        | "maintenance_qty"
+        | "in_ksa_qty"
+      >
+    >,
+  ) {
+    if (!editable) return;
+
+    const { error } = await supabase
+      .from("matrix_rows")
+      .update(patch)
+      .eq("id", rowId);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    setCableRowsByItem((prev) => ({
+      ...prev,
+      [itemId]: sortCableRows(
+        (prev[itemId] || []).map((row) =>
+          row.id === rowId ? { ...row, ...patch } : row,
+        ),
+      ),
+    }));
+  }
+
+  async function deleteCableRow(itemId: string, rowId: string) {
+    if (!editable || !confirm("Delete this row?")) return;
+
+    const { error } = await supabase
+      .from("matrix_rows")
+      .delete()
+      .eq("id", rowId);
+
+    if (error) {
+      alert(error.message);
+      return;
+    }
+
+    setCableRowsByItem((prev) => ({
+      ...prev,
+      [itemId]: (prev[itemId] || []).filter((row) => row.id !== rowId),
+    }));
+    setSelectedCableRow(null);
+  }
+
   async function onDelete(itemId: string) {
     if (!editable) return;
     if (!confirm("Delete this item?")) return;
@@ -1436,6 +1569,7 @@ export default function SubcategoryClientMatrix({
       setItems(nextItems);
       setStatsByItem(nextStats);
       setCableRowsByItem(nextCableRows);
+      setSelectedItemId((current) => (current === itemId ? null : current));
 
       if (categoryId && subcategoryId) {
         writeItemsCache(categoryId, subcategoryId, {
@@ -1456,6 +1590,253 @@ export default function SubcategoryClientMatrix({
     }
   }
 
+  const selectedBlockPanel = selectedBlockName ? (
+    <div
+      data-matrix-tools="true"
+      className="mb-4 rounded-2xl border-2 border-black bg-white p-3 shadow-sm"
+    >
+      <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
+        Selected Block
+      </div>
+      <input
+        key={selectedBlockName}
+        defaultValue={selectedBlockName}
+        disabled={!editable}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+        }}
+        onBlur={(event) =>
+          void renameBlock(selectedBlockName, event.currentTarget.value)
+        }
+        className="mt-2 h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] font-semibold text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+        placeholder="Block name"
+      />
+    </div>
+  ) : null;
+
+  const selectedItemPanel = selectedItem ? (
+    <div
+      key={selectedItem.id}
+      data-matrix-tools="true"
+      className="mb-4 rounded-2xl border-2 border-black bg-white p-3 shadow-sm"
+    >
+      <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
+        Selected {selectedItem.item_type || "Item"}
+      </div>
+
+      <div className="mt-2 grid grid-cols-1 gap-2">
+        {selectedItem.item_type !== "cable" &&
+        selectedItem.item_type !== "rack" ? (
+          <>
+            <input
+              value={selectedBrand}
+              onChange={(event) => setSelectedBrand(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur();
+              }}
+              onBlur={() => void saveSelectedItemName()}
+              disabled={!editable}
+              placeholder="Brand"
+              className="h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] font-semibold text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+            />
+            <input
+              value={selectedModel}
+              onChange={(event) => setSelectedModel(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur();
+              }}
+              onBlur={() => void saveSelectedItemName()}
+              disabled={!editable}
+              placeholder="Model"
+              className="h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+            />
+          </>
+        ) : (
+          <input
+            value={selectedName}
+            onChange={(event) => setSelectedName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+            onBlur={() => void saveSelectedItemName()}
+            disabled={!editable}
+            placeholder={
+              selectedItem.item_type === "rack" ? "Rack name" : "Cable model"
+            }
+            className="h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] font-semibold text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+          />
+        )}
+
+        <input
+          value={selectedBlockDraft}
+          onChange={(event) => setSelectedBlockDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+          }}
+          onBlur={(event) => {
+            const clean = event.currentTarget.value.trim();
+            if (clean && clean !== itemBlockName(selectedItem)) {
+              void updateItemDirect(selectedItem.id, { block_name: clean });
+            }
+          }}
+          disabled={!editable}
+          placeholder="Block name"
+          className="h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+        />
+
+        {selectedItem.item_type !== "cable" ? (
+          <div className="grid grid-cols-2 gap-2">
+            {(
+              [
+                ["Total", "total_qty"],
+                ["In Use", "in_use_qty"],
+                ["Maintenance", "maintenance_qty"],
+                ["In KSA", "in_ksa_qty"],
+              ] as const
+            ).map(([label, field]) => (
+              <label key={field} className="text-[8px] font-semibold text-gray-500">
+                {label}
+                <input
+                  type="number"
+                  min={0}
+                  defaultValue={selectedItem[field] ?? 0}
+                  disabled={!editable}
+                  onBlur={(event) =>
+                    void updateItemDirect(selectedItem.id, {
+                      [field]: clampQty(event.currentTarget.value),
+                    })
+                  }
+                  className="mt-1 h-8 w-full rounded-lg border border-gray-300 px-2 text-[9px] text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+                />
+              </label>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      {editable ? (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setEditingPhotoItemId(selectedItem.id);
+              listPhotoFileRef.current?.click();
+            }}
+            className="rounded-xl border border-gray-300 bg-white px-2 py-2.5 text-[10px] font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Upload Photo
+          </button>
+          <button
+            type="button"
+            onClick={() => void searchPhotoForItem(selectedItem)}
+            className="rounded-xl border border-gray-300 bg-white px-2 py-2.5 text-[10px] font-medium text-gray-700 hover:bg-gray-50"
+          >
+            Search Photo
+          </button>
+
+          {selectedItem.item_type === "cable" ||
+          selectedItem.item_type === "rack" ? (
+            <button
+              type="button"
+              onClick={() => void addCableLength(selectedItem.id)}
+              className="col-span-2 rounded-xl bg-black px-3 py-2.5 text-[10px] font-medium text-white hover:opacity-90"
+            >
+              + Add {selectedItem.item_type === "rack" ? "Rack Item" : "Cable Length"}
+            </button>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={() => void onDelete(selectedItem.id)}
+            className="col-span-2 flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-[10px] font-medium text-red-700 hover:bg-red-100"
+          >
+            <Trash2 size={13} /> Delete Item
+          </button>
+        </div>
+      ) : null}
+    </div>
+  ) : null;
+
+  const selectedCableRowPanel = selectedCableRowInfo ? (
+    <div
+      key={selectedCableRowInfo.row.id}
+      data-matrix-tools="true"
+      className="mb-4 rounded-2xl border-2 border-black bg-white p-3 shadow-sm"
+    >
+      <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
+        Selected {selectedCableRowInfo.item.item_type === "rack" ? "Rack Item" : "Cable Length"}
+      </div>
+      <div className="mt-1 truncate text-[9px] font-semibold text-gray-700">
+        {selectedCableRowInfo.item.name}
+      </div>
+
+      <div className="mt-2 grid grid-cols-1 gap-2">
+        <input
+          defaultValue={selectedCableRowInfo.row.cable_length}
+          disabled={!editable}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+          }}
+          onBlur={(event) => {
+            const clean = event.currentTarget.value.trim();
+            if (clean && clean !== selectedCableRowInfo.row.cable_length) {
+              void updateCableRowDirect(
+                selectedCableRowInfo.item.id,
+                selectedCableRowInfo.row.id,
+                { cable_length: clean },
+              );
+            }
+          }}
+          className="h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] font-semibold text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+        />
+
+        <div className="grid grid-cols-2 gap-2">
+          {(
+            [
+              ["Total", "total_qty"],
+              ["In Use", "in_use_qty"],
+              ["Maintenance", "maintenance_qty"],
+              ["In KSA", "in_ksa_qty"],
+            ] as const
+          ).map(([label, field]) => (
+            <label key={field} className="text-[8px] font-semibold text-gray-500">
+              {label}
+              <input
+                type="number"
+                min={0}
+                defaultValue={selectedCableRowInfo.row[field] ?? 0}
+                disabled={!editable}
+                onBlur={(event) =>
+                  void updateCableRowDirect(
+                    selectedCableRowInfo.item.id,
+                    selectedCableRowInfo.row.id,
+                    { [field]: clampQty(event.currentTarget.value) },
+                  )
+                }
+                className="mt-1 h-8 w-full rounded-lg border border-gray-300 px-2 text-[9px] text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+              />
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {editable ? (
+        <button
+          type="button"
+          onClick={() =>
+            void deleteCableRow(
+              selectedCableRowInfo.item.id,
+              selectedCableRowInfo.row.id,
+            )
+          }
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-[10px] font-medium text-red-700 hover:bg-red-100"
+        >
+          <Trash2 size={13} /> Delete Row
+        </button>
+      ) : null}
+    </div>
+  ) : null;
+
   function renderItemRow(it: MatrixItemRow, isLast: boolean) {
     const stats = statsByItem[it.id] || statsFromItem(it);
 
@@ -1463,6 +1844,12 @@ export default function SubcategoryClientMatrix({
       return (
         <div
           key={it.id}
+          data-matrix-select="true"
+          onClick={() => {
+            setSelectedItemId(it.id);
+            setSelectedBlockName(null);
+            setSelectedCableRow(null);
+          }}
           draggable={editable}
           onDragStart={() => onItemDragStart(it.id, itemBlockName(it))}
           onDragOver={(e) => editable && e.preventDefault()}
@@ -1470,7 +1857,9 @@ export default function SubcategoryClientMatrix({
             e.preventDefault();
             void dropItemOnItem(it.id, itemBlockName(it));
           }}
-          className={`${!isLast ? "border-b border-gray-100 pb-6 mb-6" : ""} ${
+          className={`rounded-xl p-2 transition ${
+            selectedItemId === it.id ? "ring-2 ring-black" : ""
+          } ${!isLast ? "border-b border-gray-100 pb-6 mb-6" : ""} ${
             editable ? "cursor-grab active:cursor-grabbing" : ""
           }`}
         >
@@ -1480,23 +1869,8 @@ export default function SubcategoryClientMatrix({
                 <ItemPhoto
                   photo={it.photo_data}
                   name={it.name}
-                  editable={editable}
+                  editable={false}
                   big
-                  menuOpen={listPhotoMenuItemId === it.id}
-                  onToggleMenu={() =>
-                    setListPhotoMenuItemId((prev) =>
-                      prev === it.id ? null : it.id,
-                    )
-                  }
-                  onUploadPhoto={() => {
-                    setListPhotoMenuItemId(null);
-                    setEditingPhotoItemId(it.id);
-                    listPhotoFileRef.current?.click();
-                  }}
-                  onSearchPhoto={() => {
-                    setListPhotoMenuItemId(null);
-                    void searchPhotoForItem(it);
-                  }}
                 />
 
                 <div className="min-w-0 flex-1">
@@ -1508,33 +1882,6 @@ export default function SubcategoryClientMatrix({
                       <span className="font-bold">{it.name}</span>
                     </h2>
 
-                    {editable && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          onRename(it.id, it.name);
-                        }}
-                        className="text-red-500 text-[12px] shrink-0 hover:text-black"
-                      >
-                        ✎
-                      </button>
-                    )}
-
-                    {editable && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          onDelete(it.id);
-                        }}
-                        className="ml-auto text-red-500 shrink-0 hover:text-black sm:hidden"
-                      >
-                        <Trash2 className="h-3.5 w-3.5 sm:h-[15px] sm:w-[15px]" />
-                      </button>
-                    )}
                   </div>
 
                   <div className="mt-2 sm:hidden">
@@ -1555,49 +1902,21 @@ export default function SubcategoryClientMatrix({
                         In KSA
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() =>
-                          updateItemQty(it.id, "total_qty", it.total_qty)
-                        }
-                        className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
-                      >
+                      <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">
                         {stats.total}
-                      </button>
+                      </div>
                       <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
                         {stats.available}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          updateItemQty(it.id, "in_use_qty", it.in_use_qty)
-                        }
-                        className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
-                      >
+                      <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold">
                         {stats.inUse}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          updateItemQty(
-                            it.id,
-                            "maintenance_qty",
-                            it.maintenance_qty,
-                          )
-                        }
-                        className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
-                      >
+                      </div>
+                      <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
                         {stats.maintenance}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          updateItemQty(it.id, "in_ksa_qty", it.in_ksa_qty)
-                        }
-                        className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
-                      >
+                      </div>
+                      <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold">
                         {stats.inKsa}
-                      </button>
+                      </div>
                     </div>
                   </div>
 
@@ -1606,9 +1925,6 @@ export default function SubcategoryClientMatrix({
                       <StatPill
                         label="Total Qty"
                         value={stats.total}
-                        onClick={() =>
-                          updateItemQty(it.id, "total_qty", it.total_qty)
-                        }
                       />
                       <StatPill
                         label="Available Qty"
@@ -1619,29 +1935,16 @@ export default function SubcategoryClientMatrix({
                         label="In Use"
                         value={stats.inUse}
                         tone="blue"
-                        onClick={() =>
-                          updateItemQty(it.id, "in_use_qty", it.in_use_qty)
-                        }
                       />
                       <StatPill
                         label="Maintenance"
                         value={stats.maintenance}
                         tone="yellow"
-                        onClick={() =>
-                          updateItemQty(
-                            it.id,
-                            "maintenance_qty",
-                            it.maintenance_qty,
-                          )
-                        }
                       />
                       <StatPill
                         label="In KSA"
                         value={stats.inKsa}
                         tone="purple"
-                        onClick={() =>
-                          updateItemQty(it.id, "in_ksa_qty", it.in_ksa_qty)
-                        }
                       />
                     </div>
                   </div>
@@ -1649,16 +1952,6 @@ export default function SubcategoryClientMatrix({
               </div>
             </div>
 
-            <div className="hidden sm:flex items-center gap-2 shrink-0">
-              {editable && (
-                <button
-                  onClick={() => onDelete(it.id)}
-                  className="px-2 py-1 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
-                >
-                  Delete
-                </button>
-              )}
-            </div>
           </div>
 
           <div className="mt-4 w-full sm:w-[410px] rounded-2xl border border-gray-200 overflow-hidden bg-white">
@@ -1670,73 +1963,36 @@ export default function SubcategoryClientMatrix({
               sortCableRows(cableRowsByItem[it.id] || []).map((row) => (
                 <div
                   key={row.id}
-                  className="grid grid-cols-[1fr_64px_24px] items-center gap-2 px-4 py-2 text-[6px] sm:text-[8px] border-t first:border-t-0 border-gray-100"
+                  data-matrix-select="true"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setSelectedCableRow({ itemId: it.id, rowId: row.id });
+                    setSelectedItemId(null);
+                    setSelectedBlockName(null);
+                  }}
+                  className={`grid cursor-pointer grid-cols-[1fr_64px] items-center gap-2 border-t border-gray-100 px-4 py-2 text-[6px] first:border-t-0 sm:text-[8px] ${
+                    selectedCableRow?.rowId === row.id
+                      ? "ring-2 ring-inset ring-black"
+                      : "hover:bg-gray-50"
+                  }`}
                 >
-                  <button
-                    type="button"
-                    onClick={() =>
-                      updateCableLength(row.id, it.id, row.cable_length)
-                    }
-                    className="truncate text-left font-semibold text-gray-900 hover:text-red-500"
+                  <div
+                    className="truncate text-left font-semibold text-gray-900"
                     title={row.cable_length}
                   >
                     {row.cable_length}
-                  </button>
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={() =>
-                      updateCableQty(row.id, it.id, "total_qty", row.total_qty)
-                    }
-                    className="text-right font-bold text-gray-900 hover:text-red-500 whitespace-nowrap"
+                  <div
+                    className="text-right font-bold text-gray-900 whitespace-nowrap"
                   >
                     Qty: {row.total_qty ?? 0}
-                  </button>
-
-                  {editable ? (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        if (!confirm("Delete rack item?")) return;
-
-                        const { error } = await supabase
-                          .from("matrix_rows")
-                          .delete()
-                          .eq("id", row.id);
-
-                        if (error) {
-                          alert(error.message);
-                          return;
-                        }
-
-                        setCableRowsByItem((prev) => ({
-                          ...prev,
-                          [it.id]: (prev[it.id] || []).filter(
-                            (x) => x.id !== row.id,
-                          ),
-                        }));
-                      }}
-                      className="flex h-5 w-5 items-center justify-center rounded-full text-red-500 hover:bg-red-50 hover:text-black"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                  ) : (
-                    <div />
-                  )}
+                  </div>
                 </div>
               ))
             )}
           </div>
 
-          {editable ? (
-            <button
-              type="button"
-              onClick={() => addCableLength(it.id)}
-              className="mt-2 text-[10px] font-medium text-red-500 hover:text-black"
-            >
-              + Add rack item
-            </button>
-          ) : null}
         </div>
       );
     }
@@ -1745,6 +2001,12 @@ export default function SubcategoryClientMatrix({
       return (
         <div
           key={it.id}
+          data-matrix-select="true"
+          onClick={() => {
+            setSelectedItemId(it.id);
+            setSelectedBlockName(null);
+            setSelectedCableRow(null);
+          }}
           draggable={editable}
           onDragStart={() => onItemDragStart(it.id, itemBlockName(it))}
           onDragOver={(e) => editable && e.preventDefault()}
@@ -1752,7 +2014,9 @@ export default function SubcategoryClientMatrix({
             e.preventDefault();
             void dropItemOnItem(it.id, itemBlockName(it));
           }}
-          className={`${!isLast ? "border-b border-gray-100 pb-8 mb-8" : ""} ${
+          className={`rounded-xl p-2 transition ${
+            selectedItemId === it.id ? "ring-2 ring-black" : ""
+          } ${!isLast ? "border-b border-gray-100 pb-8 mb-8" : ""} ${
             editable ? "cursor-grab active:cursor-grabbing" : ""
           }`}
         >
@@ -1761,23 +2025,8 @@ export default function SubcategoryClientMatrix({
               <ItemPhoto
                 photo={it.photo_data}
                 name={it.name}
-                editable={editable}
+                editable={false}
                 big
-                menuOpen={listPhotoMenuItemId === it.id}
-                onToggleMenu={() =>
-                  setListPhotoMenuItemId((prev) =>
-                    prev === it.id ? null : it.id,
-                  )
-                }
-                onUploadPhoto={() => {
-                  setListPhotoMenuItemId(null);
-                  setEditingPhotoItemId(it.id);
-                  listPhotoFileRef.current?.click();
-                }}
-                onSearchPhoto={() => {
-                  setListPhotoMenuItemId(null);
-                  void searchPhotoForItem(it);
-                }}
               />
 
               <div className="relative min-w-0">
@@ -1788,57 +2037,20 @@ export default function SubcategoryClientMatrix({
                   {renderItemName(it.name, it.item_type)}
                 </h2>
 
-                {editable ? (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onRename(it.id, it.name);
-                    }}
-                    className="absolute -top-4 right-0 text-red-500 text-[12px] hover:text-black"
-                    title="Rename"
-                  >
-                    ✎
-                  </button>
-                ) : null}
               </div>
             </div>
 
-            {editable ? (
-              <>
-                <button
-                  onClick={() => onDelete(it.id)}
-                  className="hidden sm:block px-3 py-1.5 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
-                >
-                  Delete
-                </button>
-
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    onDelete(it.id);
-                  }}
-                  className="sm:hidden text-red-500 shrink-0 hover:text-black"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              </>
-            ) : null}
           </div>
 
           <div className="mt-5 overflow-x-auto pr-0">
             <div className="rounded-2xl border border-gray-200 overflow-hidden min-w-0">
-              <div className="grid grid-cols-[74px_repeat(5,45px)_20px] md:grid-cols-[160px_repeat(5,130px)_32px] bg-gray-100 items-center gap-[1px] px-2 lg:px-6 py-1 lg:py-2 text-[7px] lg:text-[9px] font-bold text-gray-600">
+              <div className="grid grid-cols-[74px_repeat(5,45px)] md:grid-cols-[160px_repeat(5,130px)] bg-gray-100 items-center gap-[1px] px-2 lg:px-6 py-1 lg:py-2 text-[7px] lg:text-[9px] font-bold text-gray-600">
                 <div className="text-left">Length</div>
                 <div className="text-center">Total</div>
                 <div className="text-center">Available</div>
                 <div className="text-center">In Use</div>
                 <div className="text-center">Maintenance</div>
                 <div className="text-center">In KSA</div>
-                <div />
               </div>
 
               {(cableRowsByItem[it.id] || []).length === 0 ? (
@@ -1852,32 +2064,26 @@ export default function SubcategoryClientMatrix({
                   return (
                     <div
                       key={row.id}
-                      className="grid grid-cols-[74px_repeat(5,45px)_20px] md:grid-cols-[160px_repeat(5,130px)_32px] items-center gap-[1px] px-2 lg:px-6 py-[1px] lg:py-[2px] text-[7px] lg:text-[9px] text-gray-900 border-t border-gray-100"
+                      data-matrix-select="true"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setSelectedCableRow({ itemId: it.id, rowId: row.id });
+                        setSelectedItemId(null);
+                        setSelectedBlockName(null);
+                      }}
+                      className={`grid cursor-pointer grid-cols-[74px_repeat(5,45px)] items-center gap-[1px] border-t border-gray-100 px-2 py-[1px] text-[7px] text-gray-900 md:grid-cols-[160px_repeat(5,130px)] lg:px-6 lg:py-[2px] lg:text-[9px] ${
+                        selectedCableRow?.rowId === row.id
+                          ? "ring-2 ring-inset ring-black"
+                          : "hover:bg-gray-50"
+                      }`}
                     >
-                      <button
-                        type="button"
-                        onClick={() =>
-                          updateCableLength(row.id, it.id, row.cable_length)
-                        }
-                        className="text-left font-bold hover:text-red-500"
-                      >
+                      <div className="text-left font-bold">
                         {row.cable_length}
-                      </button>
+                      </div>
 
-                      <button
-                        type="button"
-                        onClick={() =>
-                          updateCableQty(
-                            row.id,
-                            it.id,
-                            "total_qty",
-                            row.total_qty,
-                          )
-                        }
-                        className="text-center hover:text-red-500"
-                      >
+                      <div className="text-center">
                         {s.total}
-                      </button>
+                      </div>
 
                       <div className="text-center">
                         <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-green-100 px-1 lg:px-1.5 py-0 lg:py-[2px] font-bold">
@@ -1885,88 +2091,23 @@ export default function SubcategoryClientMatrix({
                         </span>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() =>
-                          updateCableQty(
-                            row.id,
-                            it.id,
-                            "in_use_qty",
-                            row.in_use_qty,
-                          )
-                        }
-                        className="text-center"
-                      >
-                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-blue-100 px-1 lg:px-1.5 py-0 lg:py-[2px] font-bold hover:text-red-500">
+                      <div className="text-center">
+                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-blue-100 px-1 lg:px-1.5 py-0 lg:py-[2px] font-bold">
                           {s.inUse}
                         </span>
-                      </button>
+                      </div>
 
-                      <button
-                        type="button"
-                        onClick={() =>
-                          updateCableQty(
-                            row.id,
-                            it.id,
-                            "maintenance_qty",
-                            row.maintenance_qty,
-                          )
-                        }
-                        className="text-center"
-                      >
-                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-yellow-100 px-1 lg:px-1.5 py-0 lg:py-[2px] font-bold hover:text-red-500">
+                      <div className="text-center">
+                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-yellow-100 px-1 lg:px-1.5 py-0 lg:py-[2px] font-bold">
                           {s.maintenance}
                         </span>
-                      </button>
+                      </div>
 
-                      <button
-                        type="button"
-                        onClick={() =>
-                          updateCableQty(
-                            row.id,
-                            it.id,
-                            "in_ksa_qty",
-                            row.in_ksa_qty,
-                          )
-                        }
-                        className="text-center"
-                      >
-                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-purple-100 px-1 lg:px-1.5 py-0 lg:py-[2px] font-bold hover:text-red-500">
+                      <div className="text-center">
+                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-purple-100 px-1 lg:px-1.5 py-0 lg:py-[2px] font-bold">
                           {s.inKsa}
                         </span>
-                      </button>
-
-                      {editable ? (
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            if (!confirm("Delete cable length?")) return;
-
-                            const { error } = await supabase
-                              .from("matrix_rows")
-                              .delete()
-                              .eq("id", row.id);
-
-                            if (error) {
-                              alert(error.message);
-                              return;
-                            }
-
-                            setCableRowsByItem((prev) => ({
-                              ...prev,
-                              [it.id]: (prev[it.id] || []).filter(
-                                (x) => x.id !== row.id,
-                              ),
-                            }));
-                          }}
-                          className="flex h-5 w-5 lg:h-7 lg:w-7 items-center justify-center rounded-full text-red-500 hover:bg-red-50 hover:text-black"
-                        >
-                          <Trash2 size={11} className="lg:hidden" />
-                          <Trash2 size={15} className="hidden lg:block" />
-                        </button>
-                      ) : (
-                        <div />
-                      )}
+                      </div>
                     </div>
                   );
                 })
@@ -1974,15 +2115,6 @@ export default function SubcategoryClientMatrix({
             </div>
           </div>
 
-          {editable ? (
-            <button
-              type="button"
-              onClick={() => addCableLength(it.id)}
-              className="mt-2 text-[10px] font-medium text-red-500 hover:text-black"
-            >
-              + Add cable length
-            </button>
-          ) : null}
         </div>
       );
     }
@@ -1990,6 +2122,12 @@ export default function SubcategoryClientMatrix({
     return (
       <div
         key={it.id}
+        data-matrix-select="true"
+        onClick={() => {
+          setSelectedItemId(it.id);
+          setSelectedBlockName(null);
+          setSelectedCableRow(null);
+        }}
         draggable={editable}
         onDragStart={() => onItemDragStart(it.id, itemBlockName(it))}
         onDragOver={(e) => editable && e.preventDefault()}
@@ -1997,7 +2135,9 @@ export default function SubcategoryClientMatrix({
           e.preventDefault();
           void dropItemOnItem(it.id, itemBlockName(it));
         }}
-        className={`${!isLast ? "border-b border-gray-100 pb-4 mb-4" : ""} ${
+        className={`rounded-xl p-2 transition ${
+          selectedItemId === it.id ? "ring-2 ring-black" : ""
+        } ${!isLast ? "border-b border-gray-100 pb-4 mb-4" : ""} ${
           editable ? "cursor-grab active:cursor-grabbing" : ""
         }`}
       >
@@ -2007,22 +2147,7 @@ export default function SubcategoryClientMatrix({
               <ItemPhoto
                 photo={it.photo_data}
                 name={it.name}
-                editable={editable}
-                menuOpen={listPhotoMenuItemId === it.id}
-                onToggleMenu={() =>
-                  setListPhotoMenuItemId((prev) =>
-                    prev === it.id ? null : it.id,
-                  )
-                }
-                onUploadPhoto={() => {
-                  setListPhotoMenuItemId(null);
-                  setEditingPhotoItemId(it.id);
-                  listPhotoFileRef.current?.click();
-                }}
-                onSearchPhoto={() => {
-                  setListPhotoMenuItemId(null);
-                  void searchPhotoForItem(it);
-                }}
+                editable={false}
               />
 
               <div className="min-w-0 flex-1">
@@ -2034,33 +2159,6 @@ export default function SubcategoryClientMatrix({
                     {renderItemName(it.name, it.item_type)}
                   </h2>
 
-                  {editable && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onRename(it.id, it.name);
-                      }}
-                      className="text-red-500 text-[12px] shrink-0 hover:text-black"
-                    >
-                      ✎
-                    </button>
-                  )}
-
-                  {editable && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onDelete(it.id);
-                      }}
-                      className="ml-auto text-red-500 shrink-0 hover:text-black sm:hidden"
-                    >
-                      <Trash2 className="h-3.5 w-3.5 sm:h-[15px] sm:w-[15px]" />
-                    </button>
-                  )}
                 </div>
 
                 <div className="mt-2 sm:hidden">
@@ -2081,49 +2179,21 @@ export default function SubcategoryClientMatrix({
                       In KSA
                     </div>
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        updateItemQty(it.id, "total_qty", it.total_qty)
-                      }
-                      className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
-                    >
+                    <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">
                       {stats.total}
-                    </button>
+                    </div>
                     <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
                       {stats.available}
                     </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        updateItemQty(it.id, "in_use_qty", it.in_use_qty)
-                      }
-                      className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
-                    >
+                    <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold">
                       {stats.inUse}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        updateItemQty(
-                          it.id,
-                          "maintenance_qty",
-                          it.maintenance_qty,
-                        )
-                      }
-                      className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
-                    >
+                    </div>
+                    <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
                       {stats.maintenance}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        updateItemQty(it.id, "in_ksa_qty", it.in_ksa_qty)
-                      }
-                      className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold hover:ring-1 hover:ring-red-300"
-                    >
+                    </div>
+                    <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold">
                       {stats.inKsa}
-                    </button>
+                    </div>
                   </div>
                 </div>
 
@@ -2132,9 +2202,6 @@ export default function SubcategoryClientMatrix({
                     <StatPill
                       label="Total Qty"
                       value={stats.total}
-                      onClick={() =>
-                        updateItemQty(it.id, "total_qty", it.total_qty)
-                      }
                     />
                     <StatPill
                       label="Available Qty"
@@ -2145,29 +2212,16 @@ export default function SubcategoryClientMatrix({
                       label="In Use"
                       value={stats.inUse}
                       tone="blue"
-                      onClick={() =>
-                        updateItemQty(it.id, "in_use_qty", it.in_use_qty)
-                      }
                     />
                     <StatPill
                       label="Maintenance"
                       value={stats.maintenance}
                       tone="yellow"
-                      onClick={() =>
-                        updateItemQty(
-                          it.id,
-                          "maintenance_qty",
-                          it.maintenance_qty,
-                        )
-                      }
                     />
                     <StatPill
                       label="In KSA"
                       value={stats.inKsa}
                       tone="purple"
-                      onClick={() =>
-                        updateItemQty(it.id, "in_ksa_qty", it.in_ksa_qty)
-                      }
                     />
                   </div>
                 </div>
@@ -2175,16 +2229,6 @@ export default function SubcategoryClientMatrix({
             </div>
           </div>
 
-          <div className="hidden sm:flex items-center gap-2 shrink-0">
-            {editable && (
-              <button
-                onClick={() => onDelete(it.id)}
-                className="px-2 py-1 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
-              >
-                Delete
-              </button>
-            )}
-          </div>
         </div>
       </div>
     );
@@ -2218,8 +2262,33 @@ export default function SubcategoryClientMatrix({
 
   return (
     <div className="w-full mx-auto space-y-3">
-      {editable && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-sm">
+      {sidebarTarget
+        ? createPortal(
+            <div>
+              {selectedBlockPanel}
+              {selectedItemPanel}
+              {selectedCableRowPanel}
+            </div>,
+            sidebarTarget,
+          )
+        : null}
+
+      <div className="block xl:hidden">{selectedBlockPanel}</div>
+      <div className="block xl:hidden">{selectedItemPanel}</div>
+      <div className="block xl:hidden">{selectedCableRowPanel}</div>
+
+      {editable &&
+        !selectedBlockName &&
+        !selectedItemId &&
+        !selectedCableRow &&
+        (() => {
+          const addItemsPanel = (
+        <div
+          data-matrix-tools="true"
+          className={`bg-white border border-gray-200 rounded-2xl shadow-sm ${
+            desktopSidebarActive ? "mb-4 p-3" : "p-4 sm:p-5"
+          }`}
+        >
           <div className="mb-4">
             <h1 className="text-[13px] font-semibold leading-tight text-gray-900">
               Add Items
@@ -2231,7 +2300,9 @@ export default function SubcategoryClientMatrix({
 
           <div
             className={
-              itemType === "unit"
+              desktopSidebarActive
+                ? "grid grid-cols-1 gap-2"
+                : itemType === "unit"
                 ? "grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_1fr_76px_1fr_1fr_116px_76px] md:items-center"
                 : itemType === "rack"
                   ? "grid grid-cols-1 gap-2 md:grid-cols-[120px_1fr_76px_1fr_1fr_116px_76px] md:items-center"
@@ -2480,7 +2551,13 @@ export default function SubcategoryClientMatrix({
               ) : null}
 
               {imageResults.length > 0 ? (
-                <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-6">
+                <div
+                  className={
+                    desktopSidebarActive
+                      ? "mt-3 grid grid-cols-2 gap-2"
+                      : "mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-6"
+                  }
+                >
                   {imageResults.map((img, index) => {
                     const imageUrl = img.original || img.image || img.thumbnail;
                     const thumb = img.thumbnail || imageUrl;
@@ -2514,7 +2591,12 @@ export default function SubcategoryClientMatrix({
             <div className="mt-3 text-xs text-gray-500">{saveMsg}</div>
           ) : null}
         </div>
-      )}
+          );
+
+          return sidebarTarget && desktopSidebarActive
+            ? createPortal(addItemsPanel, sidebarTarget)
+            : addItemsPanel;
+        })()}
 
       {items.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
@@ -2534,9 +2616,11 @@ export default function SubcategoryClientMatrix({
               }
             }}
             className={`bg-white border rounded-2xl p-2 sm:p-4 ${
-              dragItemId || dragBlockName
-                ? "border-red-200 bg-red-50/20"
-                : "border-gray-200"
+              selectedBlockName?.toLowerCase() === group.brand.toLowerCase()
+                ? "border-black ring-2 ring-black"
+                : dragItemId || dragBlockName
+                  ? "border-red-200 bg-red-50/20"
+                  : "border-gray-200"
             }`}
           >
             <div className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
@@ -2558,9 +2642,14 @@ export default function SubcategoryClientMatrix({
 
               <button
                 type="button"
-                onClick={() => void renameBlock(group.brand)}
+                data-matrix-select="true"
+                onClick={() => {
+                  setSelectedBlockName(group.brand);
+                  setSelectedItemId(null);
+                  setSelectedCableRow(null);
+                }}
                 className="text-left text-[8px] font-semibold uppercase tracking-wide text-gray-500 hover:text-red-500"
-                title="Rename block"
+                title="Select block"
               >
                 {group.brand}
               </button>

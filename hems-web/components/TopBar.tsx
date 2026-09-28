@@ -1,7 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { Bell, ChevronDown, Menu, X } from "lucide-react";
+import {
+  Bell,
+  ChevronDown,
+  Loader2,
+  Menu,
+  Search,
+  X,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -17,11 +24,87 @@ type NotificationRow = {
   actor_name: string | null;
 };
 
+type CategoryRow = {
+  id: string;
+  slug?: string | null;
+  name?: string | null;
+  label?: string | null;
+  title?: string | null;
+};
+
+type SubcategoryRow = CategoryRow & {
+  category_id: string;
+};
+
+type ItemRow = {
+  id: string;
+  name: string;
+  subcategory_id: string;
+};
+
+type UnitRow = {
+  id: string;
+  item_id: string;
+  unit_no: number | null;
+  serial: string | null;
+};
+
+type MatrixModelRow = {
+  id: string;
+  name: string;
+  category_id: string;
+  subcategory_id: string;
+};
+
+type MatrixRow = {
+  id: string;
+  model_id: string;
+  size: string | null;
+  cabinet_model: string | null;
+};
+
+type SearchIndex = {
+  categories: CategoryRow[];
+  subcategories: SubcategoryRow[];
+  items: ItemRow[];
+  units: UnitRow[];
+  matrixModels: MatrixModelRow[];
+  matrixRows: MatrixRow[];
+};
+
+type SearchResult = {
+  key: string;
+  kind: string;
+  title: string;
+  subtitle: string;
+  href: string;
+  score: number;
+};
+
+function rowName(row: CategoryRow) {
+  return String(row.name || row.label || row.title || row.slug || "").trim();
+}
+
+function normalizeSearch(value: unknown) {
+  return String(value ?? "").trim().toLocaleLowerCase();
+}
+
+function matchScore(value: unknown, query: string) {
+  const text = normalizeSearch(value);
+  if (!text || !text.includes(query)) return null;
+  if (text === query) return 0;
+  if (text.startsWith(query)) return 1;
+  return 2;
+}
+
 export default function TopBar() {
   const pathname = usePathname();
   const router = useRouter();
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const notifRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const searchLoadRef = useRef<Promise<void> | null>(null);
 
   const [userName, setUserNameState] = useState<string | null>(null);
   const [loggedIn, setLoggedIn] = useState(false);
@@ -31,6 +114,11 @@ export default function TopBar() {
   const [loggingOut, setLoggingOut] = useState(false);
   const [avatarLoaded, setAvatarLoaded] = useState(false);
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchFocused, setSearchFocused] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [searchIndex, setSearchIndex] = useState<SearchIndex | null>(null);
 
   const [profile, setProfile] = useState<{
     role?: string;
@@ -45,13 +133,15 @@ export default function TopBar() {
     };
   });
 
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const showPrivateNav = loggedIn && pathname !== "/login";
 
   useEffect(() => {
     setSidebarOpen(false);
     setOpen(false);
     setNotifOpen(false);
+    setSearchQuery("");
+    setSearchFocused(false);
   }, [pathname]);
 
   async function loadNotifications() {
@@ -77,6 +167,225 @@ export default function TopBar() {
 
     if (error) await loadNotifications();
   }
+
+  async function fetchAllRows(table: string, columns: string) {
+    const rows: any[] = [];
+    const pageSize = 1000;
+    let from = 0;
+
+    while (true) {
+      const { data, error } = await (supabase as any)
+        .from(table)
+        .select(columns)
+        .range(from, from + pageSize - 1);
+
+      if (error) throw error;
+
+      const page = (data ?? []) as any[];
+      rows.push(...page);
+
+      if (page.length < pageSize) break;
+      from += pageSize;
+    }
+
+    return rows;
+  }
+
+  async function loadSearchIndex() {
+    if (searchIndex || searchLoadRef.current) {
+      return searchLoadRef.current ?? Promise.resolve();
+    }
+
+    setSearchLoading(true);
+    setSearchError("");
+
+    const request = (async () => {
+      try {
+        const [categories, subcategories, items, units, matrixModels, matrixRows] =
+          await Promise.all([
+            fetchAllRows("categories", "*"),
+            fetchAllRows("subcategories", "*"),
+            fetchAllRows("items", "id,name,subcategory_id"),
+            fetchAllRows("units", "id,item_id,unit_no,serial"),
+            fetchAllRows(
+              "matrix_models",
+              "id,name,category_id,subcategory_id"
+            ),
+            fetchAllRows("matrix_rows", "id,model_id,size,cabinet_model"),
+          ]);
+
+        setSearchIndex({
+          categories: categories as CategoryRow[],
+          subcategories: subcategories as SubcategoryRow[],
+          items: items as ItemRow[],
+          units: units as UnitRow[],
+          matrixModels: matrixModels as MatrixModelRow[],
+          matrixRows: matrixRows as MatrixRow[],
+        });
+      } catch (error: any) {
+        console.error("inventory search error:", error);
+        setSearchError(error?.message || "Failed to load inventory search.");
+      } finally {
+        setSearchLoading(false);
+        searchLoadRef.current = null;
+      }
+    })();
+
+    searchLoadRef.current = request;
+    return request;
+  }
+
+  const searchResults = useMemo<SearchResult[]>(() => {
+    const query = normalizeSearch(searchQuery);
+    if (query.length < 2 || !searchIndex) return [];
+
+    const results: SearchResult[] = [];
+    const categoriesById = new Map(
+      searchIndex.categories.map((category) => [category.id, category])
+    );
+    const subcategoriesById = new Map(
+      searchIndex.subcategories.map((subcategory) => [subcategory.id, subcategory])
+    );
+    const itemsById = new Map(searchIndex.items.map((item) => [item.id, item]));
+    const modelsById = new Map(
+      searchIndex.matrixModels.map((model) => [model.id, model])
+    );
+
+    function locationForSubcategory(subcategoryId: string) {
+      const subcategory = subcategoriesById.get(subcategoryId);
+      const category = subcategory
+        ? categoriesById.get(subcategory.category_id)
+        : undefined;
+
+      if (!subcategory?.slug || !category?.slug) return null;
+
+      return {
+        category,
+        subcategory,
+        baseHref: `/inventory/${encodeURIComponent(
+          category.slug
+        )}/${encodeURIComponent(subcategory.slug)}`,
+      };
+    }
+
+    for (const category of searchIndex.categories) {
+      const name = rowName(category);
+      const score = matchScore(`${name} ${category.slug ?? ""}`, query);
+      if (score === null || !category.slug) continue;
+
+      results.push({
+        key: `category-${category.id}`,
+        kind: "Category",
+        title: name || category.slug,
+        subtitle: "Inventory category",
+        href: `/inventory/${encodeURIComponent(category.slug)}`,
+        score,
+      });
+    }
+
+    for (const subcategory of searchIndex.subcategories) {
+      const location = locationForSubcategory(subcategory.id);
+      const name = rowName(subcategory);
+      const score = matchScore(`${name} ${subcategory.slug ?? ""}`, query);
+      if (score === null || !location) continue;
+
+      results.push({
+        key: `subcategory-${subcategory.id}`,
+        kind: "Subcategory",
+        title: name || subcategory.slug || "Subcategory",
+        subtitle: rowName(location.category),
+        href: location.baseHref,
+        score,
+      });
+    }
+
+    for (const item of searchIndex.items) {
+      const score = matchScore(item.name, query);
+      const location = locationForSubcategory(item.subcategory_id);
+      if (score === null || !location) continue;
+
+      results.push({
+        key: `item-${item.id}`,
+        kind: "Equipment",
+        title: item.name,
+        subtitle: `${rowName(location.category)} / ${rowName(
+          location.subcategory
+        )}`,
+        href: `${location.baseHref}/${encodeURIComponent(item.id)}`,
+        score,
+      });
+    }
+
+    for (const unit of searchIndex.units) {
+      const item = itemsById.get(unit.item_id);
+      const location = item ? locationForSubcategory(item.subcategory_id) : null;
+      const unitText = `${unit.serial ?? ""} unit ${unit.unit_no ?? ""} #${
+        unit.unit_no ?? ""
+      }`;
+      const score = matchScore(unitText, query);
+      if (score === null || !item || !location) continue;
+
+      const details = [
+        unit.serial ? `Serial: ${unit.serial}` : "",
+        unit.unit_no !== null ? `Unit #${unit.unit_no}` : "",
+      ].filter(Boolean);
+
+      results.push({
+        key: `unit-${unit.id}`,
+        kind: "Serial / Unit",
+        title: item.name,
+        subtitle: details.join(" • ") || rowName(location.subcategory),
+        href: `${location.baseHref}/${encodeURIComponent(item.id)}`,
+        score,
+      });
+    }
+
+    for (const model of searchIndex.matrixModels) {
+      const score = matchScore(model.name, query);
+      const location = locationForSubcategory(model.subcategory_id);
+      if (score === null || !location) continue;
+
+      results.push({
+        key: `matrix-model-${model.id}`,
+        kind: "LED model",
+        title: model.name,
+        subtitle: `${rowName(location.category)} / ${rowName(
+          location.subcategory
+        )}`,
+        href: location.baseHref,
+        score,
+      });
+    }
+
+    for (const row of searchIndex.matrixRows) {
+      const model = modelsById.get(row.model_id);
+      const location = model ? locationForSubcategory(model.subcategory_id) : null;
+      const ownText = `${row.size ?? ""} ${row.cabinet_model ?? ""}`;
+      const score = matchScore(ownText, query);
+      if (score === null || !model || !location) continue;
+
+      results.push({
+        key: `matrix-row-${row.id}`,
+        kind: "LED cabinet",
+        title: [model.name, row.size].filter(Boolean).join(" — "),
+        subtitle: row.cabinet_model || rowName(location.subcategory),
+        href: `${location.baseHref}/led-report/${encodeURIComponent(row.id)}`,
+        score,
+      });
+    }
+
+    return results
+      .sort((a, b) => a.score - b.score || a.title.localeCompare(b.title))
+      .slice(0, 10);
+  }, [searchIndex, searchQuery]);
+
+  useEffect(() => {
+    if (normalizeSearch(searchQuery).length >= 2 && !searchIndex) {
+      void loadSearchIndex();
+    }
+    // loadSearchIndex intentionally reads the current cached index.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, searchIndex]);
 
   useEffect(() => {
     let mounted = true;
@@ -186,10 +495,32 @@ if (!notifCache) {
       if (notifRef.current && !notifRef.current.contains(target)) {
         setNotifOpen(false);
       }
+
+      if (searchRef.current && !searchRef.current.contains(target)) {
+        setSearchFocused(false);
+      }
     }
 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setSearchFocused(false);
+        searchInputRef.current?.blur();
+      }
+
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        setSearchFocused(true);
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
 
   async function onLogout() {
@@ -250,15 +581,14 @@ if (!notifCache) {
   const navItems = [
     { label: "Home", href: "/" },
     { label: "Inventory", href: "/inventory" },
-    { label: "Report", href: "/equipment-report" },
     { label: "Setting", href: "/settings" },
   ];
 
   return (
     <>
       <header className="bg-white shadow-sm">
-        <div className="flex w-full items-center justify-between px-4 py-2">
-          <div className="flex min-w-0 items-center gap-2">
+        <div className="flex w-full items-center gap-2 px-2 py-2 sm:px-4">
+          <div className="flex shrink-0 items-center gap-2">
             {showPrivateNav ? (
               <button
                 type="button"
@@ -280,12 +610,118 @@ if (!notifCache) {
 
             <span className="h-3 w-px shrink-0 bg-black/30 sm:h-5" />
 
-            <span className="min-w-0 truncate text-[9px] font-semibold tracking-wide text-gray-900 sm:text-xs">
+            <span className="hidden truncate text-xs font-semibold tracking-wide text-gray-900 lg:block">
               Equipment Management System
             </span>
           </div>
 
-          <div className="relative flex items-center gap-2">
+          {showPrivateNav ? (
+            <div
+              ref={searchRef}
+              className="relative min-w-0 flex-1 sm:mx-2 sm:max-w-md lg:max-w-xl"
+            >
+              <Search
+                size={14}
+                className="pointer-events-none absolute left-2.5 top-1/2 z-10 -translate-y-1/2 text-gray-400"
+              />
+
+              <input
+                ref={searchInputRef}
+                type="search"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                onFocus={() => {
+                  setSearchFocused(true);
+                  setOpen(false);
+                  setNotifOpen(false);
+                }}
+                placeholder="Search inventory..."
+                autoComplete="off"
+                className="h-8 w-full rounded-full border border-gray-200 bg-gray-50 pl-8 pr-8 text-[11px] text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-gray-400 focus:bg-white focus:ring-2 focus:ring-gray-100 sm:text-xs"
+                aria-label="Search inventory"
+              />
+
+              {searchLoading ? (
+                <Loader2
+                  size={13}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 animate-spin text-gray-400"
+                />
+              ) : searchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery("");
+                    searchInputRef.current?.focus();
+                  }}
+                  className="absolute right-2 top-1/2 flex h-5 w-5 -translate-y-1/2 items-center justify-center rounded-full text-gray-400 transition hover:bg-gray-200 hover:text-gray-700"
+                  title="Clear search"
+                >
+                  <X size={12} />
+                </button>
+              ) : null}
+
+              {searchFocused && normalizeSearch(searchQuery).length > 0 ? (
+                <div className="fixed left-2 right-2 top-[50px] z-[100] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl sm:absolute sm:left-0 sm:right-0 sm:top-full sm:mt-2">
+                  {normalizeSearch(searchQuery).length < 2 ? (
+                    <div className="px-4 py-4 text-xs text-gray-500">
+                      Type at least 2 characters.
+                    </div>
+                  ) : searchLoading ? (
+                    <div className="flex items-center gap-2 px-4 py-4 text-xs text-gray-500">
+                      <Loader2 size={14} className="animate-spin" />
+                      Searching inventory...
+                    </div>
+                  ) : searchError ? (
+                    <div className="px-4 py-4">
+                      <div className="text-xs text-red-600">{searchError}</div>
+                      <button
+                        type="button"
+                        onClick={() => void loadSearchIndex()}
+                        className="mt-2 text-xs font-semibold text-gray-900 underline"
+                      >
+                        Try again
+                      </button>
+                    </div>
+                  ) : searchResults.length === 0 ? (
+                    <div className="px-4 py-4 text-xs text-gray-500">
+                      No inventory results found.
+                    </div>
+                  ) : (
+                    <div className="max-h-[min(420px,65vh)] overflow-y-auto p-1.5">
+                      {searchResults.map((result) => (
+                        <Link
+                          key={result.key}
+                          href={result.href}
+                          onClick={() => {
+                            setSearchQuery("");
+                            setSearchFocused(false);
+                          }}
+                          className="flex items-start justify-between gap-3 rounded-lg px-3 py-2.5 transition hover:bg-gray-50"
+                        >
+                          <div className="min-w-0">
+                            <div className="truncate text-xs font-semibold text-gray-900">
+                              {result.title}
+                            </div>
+                            <div className="mt-0.5 truncate text-[10px] text-gray-500 sm:text-[11px]">
+                              {result.subtitle}
+                            </div>
+                          </div>
+
+                          <span className="shrink-0 rounded-full bg-gray-100 px-2 py-1 text-[9px] font-semibold text-gray-600">
+                            {result.kind}
+                          </span>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <div className="flex-1" />
+          )}
+
+          <div className="relative ml-auto flex shrink-0 items-center gap-2">
             {loggedIn ? (
               <div className="flex items-center gap-2 px-1 py-0.5">
                 {pathname !== "/login" ? (

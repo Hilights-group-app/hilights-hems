@@ -10,7 +10,6 @@ import SubcategoryClientMatrix from "@/components/SubcategoryClientMatrix";
 import SubcategoryClientLedScreen from "@/components/SubcategoryClientLedScreen";
 import SubcategoryClientChainHoist from "@/components/SubcategoryClientChainHoist";
 import SubcategoryClientProjectors from "@/components/SubcategoryClientProjectors";
-import SubcategoryClientLenses from "@/components/SubcategoryClientLenses";
 import SubcategoryClientLighting from "@/components/SubcategoryClientLighting";
 
 import type { SubcategoryType } from "@/lib/catalogStore";
@@ -21,7 +20,7 @@ type RouteInfo = {
   subcategoryId: string | null;
 };
 
-function isSafeType(value: any): value is SubcategoryType {
+function isSafeType(value: unknown): value is SubcategoryType {
   return (
     value === "matrix" ||
     value === "fixture_units" ||
@@ -40,19 +39,11 @@ export default function SubcategoryRouterClient({
   subcategory: string;
 }) {
   const supabase = useMemo(() => createClient(), []);
-
   const cacheKey = `hems:route:${category}:${subcategory}`;
 
-  const [routeInfo, setRouteInfo] = useState<RouteInfo | null>(() => {
-    if (typeof window === "undefined") return null;
-
-    try {
-      const cached = sessionStorage.getItem(cacheKey);
-      return cached ? JSON.parse(cached) : null;
-    } catch {
-      return null;
-    }
-  });
+  // The server and the browser must render the same initial HTML.
+  // Read sessionStorage only after hydration inside useEffect.
+  const [routeInfo, setRouteInfo] = useState<RouteInfo | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -160,9 +151,15 @@ export default function SubcategoryRouterClient({
 
   let body =
     category === "lighting" && subcategory === "lighting-fixtures" ? (
-      <SubcategoryClientLighting category={category} subcategory={subcategory} />
+      <SubcategoryClientLighting
+        category={category}
+        subcategory={subcategory}
+      />
     ) : (
-      <SubcategoryClientSerialized category={category} subcategory={subcategory} />
+      <SubcategoryClientSerialized
+        category={category}
+        subcategory={subcategory}
+      />
     );
 
   if (type === "matrix") {
@@ -192,13 +189,6 @@ export default function SubcategoryRouterClient({
         category={category}
         subcategory={subcategory}
         subcategoryId={subcategoryId}
-      />
-    );
-  } else if (type === "lens_units") {
-    body = (
-      <SubcategoryClientLenses
-        category={category}
-        subcategory={subcategory}
       />
     );
   }

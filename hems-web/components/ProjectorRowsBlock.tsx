@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { ImagePlus, Trash2 } from "lucide-react";
 import { getUserName } from "@/lib/authStore";
+import { logActivity } from "@/lib/activityStore";
 
 export type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
@@ -83,6 +84,13 @@ function statusLabel(status: string | null) {
   return "Available";
 }
 
+function valuesMatch(a: unknown, b: unknown) {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
+  }
+  return String(a ?? "") === String(b ?? "");
+}
+
 async function fileToDataUrl(file: File): Promise<string> {
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -98,6 +106,8 @@ async function fileToDataUrl(file: File): Promise<string> {
 
 export function ProjectorRowsBlock({
   itemId,
+  itemName,
+  activityLink,
   editable = true,
   showTestingDate = true,
   onStatsChange,
@@ -106,6 +116,8 @@ export function ProjectorRowsBlock({
   reloadOnFocus = false,
 }: {
   itemId: string;
+  itemName?: string;
+  activityLink?: string;
   editable?: boolean;
   showTestingDate?: boolean;
   onStatsChange?: (stats: Stats) => void;
@@ -115,6 +127,7 @@ export function ProjectorRowsBlock({
 }) {
   const supabase = createClient();
   const [units, setUnits] = useState<Unit[]>([]);
+  const unitsRef = useRef<Unit[]>([]);
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
   const saveMsgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -173,7 +186,9 @@ export function ProjectorRowsBlock({
 
 
 
-    setUnits((data ?? []) as unknown as Unit[]);
+    const nextUnits = (data ?? []) as unknown as Unit[];
+    unitsRef.current = nextUnits;
+    setUnits(nextUnits);
   }
 
   useEffect(() => {
@@ -191,7 +206,7 @@ export function ProjectorRowsBlock({
   async function updateUnit(id: string, patch: UnitPatch) {
     if (!editable) return;
 
-    const current = units.find((u) => u.id === id);
+    const current = unitsRef.current.find((u) => u.id === id);
     if (!current) return;
 
     const nextPatch: Partial<Unit> = { ...patch };
@@ -200,15 +215,23 @@ export function ProjectorRowsBlock({
       nextPatch.lamp_hours = clampInt(patch.lamp_hours, 0);
     }
 
+    const changedEntries = Object.entries(nextPatch).filter(
+      ([key, value]) => !valuesMatch(current[key as keyof Unit], value)
+    );
+
+    if (changedEntries.length === 0) return;
+
     const editorName = getUserName?.() || "Unknown User";
     const updatedAt = new Date().toISOString();
 
     nextPatch.updated_by = editorName;
     nextPatch.updated_at = updatedAt;
 
-    setUnits((prev) =>
-      prev.map((u) => (u.id === id ? { ...u, ...nextPatch } : u))
+    const optimisticUnits = unitsRef.current.map((u) =>
+      u.id === id ? { ...u, ...nextPatch } : u
     );
+    unitsRef.current = optimisticUnits;
+    setUnits(optimisticUnits);
 
     const payload: Partial<Unit> = {
       unit_no: nextPatch.unit_no ?? current.unit_no,
@@ -243,12 +266,42 @@ export function ProjectorRowsBlock({
     }
 
     if (data) {
-      setUnits((prev) =>
-        prev.map((u) => (u.id === id ? (data as unknown as Unit) : u))
+      const savedUnit = data as unknown as Unit;
+      const savedUnits = unitsRef.current.map((u) =>
+        u.id === id ? savedUnit : u
       );
+      unitsRef.current = savedUnits;
+      setUnits(savedUnits);
     }
 
     onSaveMessageChange?.("");
+
+    const changedKeys = changedEntries.map(([key]) => key);
+    const unitLabel = `Unit #${nextPatch.unit_no ?? current.unit_no ?? "-"}`;
+    const equipmentName = itemName || "projector";
+    let message = `${unitLabel} was updated`;
+
+    if (changedKeys.includes("status")) {
+      message = `${unitLabel} status changed to ${statusLabel(String(nextPatch.status ?? current.status))}`;
+    } else if (changedKeys.includes("serial")) {
+      message = `${unitLabel} serial changed to ${nextPatch.serial || "empty"}`;
+    } else if (changedKeys.includes("lamp_hours")) {
+      message = `${unitLabel} lamp hours changed to ${nextPatch.lamp_hours ?? 0}`;
+    } else if (changedKeys.includes("notes")) {
+      message = `${unitLabel} notes were updated`;
+    } else if (changedKeys.includes("testing_date")) {
+      message = `${unitLabel} testing date changed to ${nextPatch.testing_date || "empty"}`;
+    } else if (changedKeys.includes("damage_photos")) {
+      message = `${unitLabel} damage photos were updated`;
+    } else if (changedKeys.includes("unit_no")) {
+      message = `${unitLabel} number was updated`;
+    }
+
+    await logActivity({
+      title: `edited ${equipmentName}`,
+      message,
+      link: activityLink,
+    });
   }
 
   async function addRow() {
@@ -288,8 +341,17 @@ export function ProjectorRowsBlock({
       return;
     }
 
-    setUnits((prev) => [...prev, data as unknown as Unit]);
+    const addedUnit = data as unknown as Unit;
+    const nextUnits = [...unitsRef.current, addedUnit];
+    unitsRef.current = nextUnits;
+    setUnits(nextUnits);
     setTransientMessage("Row added");
+
+    await logActivity({
+      title: `added a unit to ${itemName || "projector"}`,
+      message: `Unit #${addedUnit.unit_no ?? nextNumber} was added`,
+      link: activityLink,
+    });
   }
 
   async function deleteRow(id: string) {
@@ -297,6 +359,8 @@ export function ProjectorRowsBlock({
 
     const ok = confirm("Delete this unit?");
     if (!ok) return;
+
+    const deletedUnit = unitsRef.current.find((u) => u.id === id);
 
     const { error } = await supabase.from("units").delete().eq("id", id);
 
@@ -306,7 +370,7 @@ export function ProjectorRowsBlock({
       return;
     }
 
-    let nextUnits = units.filter((u) => u.id !== id);
+    let nextUnits = unitsRef.current.filter((u) => u.id !== id);
 
     if (resequenceOnDelete) {
       const resequence = nextUnits.map((u, idx) => ({
@@ -326,8 +390,15 @@ export function ProjectorRowsBlock({
       }
     }
 
+    unitsRef.current = nextUnits;
     setUnits(nextUnits);
     setTransientMessage("Row deleted");
+
+    await logActivity({
+      title: `deleted a unit from ${itemName || "projector"}`,
+      message: `Unit #${deletedUnit?.unit_no ?? "-"} was deleted`,
+      link: activityLink,
+    });
   }
 
   async function onPickDamagePhotos(unitId: string, files: FileList | null) {

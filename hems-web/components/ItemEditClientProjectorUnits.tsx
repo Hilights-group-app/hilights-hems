@@ -4,6 +4,7 @@ import Link from "next/link";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
+import { logActivity } from "@/lib/activityStore";
 import {
   ProjectorRowsBlock,
   type Stats,
@@ -42,6 +43,12 @@ export default function ItemEditClientProjectorUnits({
       subcategory
     )}`;
   }, [category, subcategory]);
+
+  const activityLink = useMemo(() => {
+    return `/inventory/${encodeURIComponent(category)}/${encodeURIComponent(
+      subcategory
+    )}/${encodeURIComponent(itemId)}`;
+  }, [category, subcategory, itemId]);
 
   const [item, setItem] = useState<DbItem | null>(null);
   const [loading, setLoading] = useState(true);
@@ -90,6 +97,8 @@ export default function ItemEditClientProjectorUnits({
   async function updateItem(patch: Partial<DbItem>) {
     if (!editable || !item) return;
 
+    const previousItem = item;
+
     const { data, error } = await supabase
       .from("items")
       .update(patch)
@@ -103,7 +112,25 @@ export default function ItemEditClientProjectorUnits({
       return;
     }
 
-    setItem(data as DbItem);
+    const nextItem = data as DbItem;
+    setItem(nextItem);
+
+    if (patch.name !== undefined && patch.name !== previousItem.name) {
+      await logActivity({
+        title: `renamed ${previousItem.name}`,
+        message: `New name: ${nextItem.name}`,
+        link: activityLink,
+      });
+    } else if (
+      patch.photo_url !== undefined &&
+      patch.photo_url !== previousItem.photo_url
+    ) {
+      await logActivity({
+        title: `updated the photo for ${previousItem.name}`,
+        message: "Projector photo was updated",
+        link: activityLink,
+      });
+    }
   }
 
   async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
@@ -273,6 +300,8 @@ export default function ItemEditClientProjectorUnits({
 
         <ProjectorRowsBlock
           itemId={itemId}
+          itemName={item.name}
+          activityLink={activityLink}
           editable={editable}
           showTestingDate={true}
           onStatsChange={setStats}

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { ImagePlus, Trash2 } from "lucide-react";
+import { logActivity } from "@/lib/activityStore";
 
 type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
@@ -53,6 +54,20 @@ function formatDisplayDate(value: string | null) {
   return value;
 }
 
+function statusLabel(value: string | null | undefined) {
+  if (value === "in_use") return "In Use";
+  if (value === "in_ksa") return "In KSA";
+  if (value === "maintenance") return "Maintenance";
+  return "Available";
+}
+
+function valuesMatch(a: unknown, b: unknown) {
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
+  }
+  return String(a ?? "") === String(b ?? "");
+}
+
 async function fileToDataUrl(file: File): Promise<string> {
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -64,15 +79,20 @@ async function fileToDataUrl(file: File): Promise<string> {
 
 export function SerializedRowsBlock({
   itemId,
+  itemName,
+  activityLink,
   editable = true,
   onStatsChange,
 }: {
   itemId: string;
+  itemName?: string;
+  activityLink?: string;
   editable?: boolean;
   onStatsChange?: (stats: Stats) => void;
 }) {
   const supabase = createClient();
   const [units, setUnits] = useState<Unit[]>([]);
+  const unitsRef = useRef<Unit[]>([]);
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
 
   useEffect(() => {
@@ -92,7 +112,9 @@ export function SerializedRowsBlock({
       return;
     }
 
-    setUnits((data ?? []) as Unit[]);
+    const nextUnits = (data ?? []) as Unit[];
+    unitsRef.current = nextUnits;
+    setUnits(nextUnits);
   }
 
   useEffect(() => {
@@ -108,22 +130,57 @@ export function SerializedRowsBlock({
   async function updateUnit(id: string, patch: UnitPatch) {
     if (!editable) return;
 
+    const previous = unitsRef.current.find((unit) => unit.id === id);
+    if (!previous) return;
+
     const nextPatch: UnitPatch = { ...patch };
 
     if (patch.unit_no !== undefined) {
       nextPatch.unit_no = Number(patch.unit_no) || 0;
     }
 
-    setUnits((prev) =>
-      prev.map((u) => (u.id === id ? { ...u, ...nextPatch } : u))
+    const changedEntries = Object.entries(nextPatch).filter(
+      ([key, value]) => !valuesMatch(previous[key as keyof Unit], value)
     );
+
+    if (changedEntries.length === 0) return;
+
+    const optimisticUnits = unitsRef.current.map((unit) =>
+      unit.id === id ? { ...unit, ...nextPatch } : unit
+    );
+    unitsRef.current = optimisticUnits;
+    setUnits(optimisticUnits);
 
     const { error } = await supabase.from("units").update(nextPatch).eq("id", id);
 
     if (error) {
       console.error("updateUnit error:", error);
       await loadUnits();
+      return;
     }
+
+    const unitLabel = `Unit #${nextPatch.unit_no ?? previous.unit_no ?? "-"}`;
+    const equipmentName = itemName || "equipment";
+    const changedKeys = changedEntries.map(([key]) => key);
+
+    let title = `edited ${equipmentName}`;
+    let message = `${unitLabel} was updated`;
+
+    if (changedKeys.includes("status")) {
+      message = `${unitLabel} status changed to ${statusLabel(nextPatch.status)}`;
+    } else if (changedKeys.includes("serial")) {
+      message = `${unitLabel} serial changed to ${nextPatch.serial || "empty"}`;
+    } else if (changedKeys.includes("notes")) {
+      message = `${unitLabel} notes were updated`;
+    } else if (changedKeys.includes("testing_date")) {
+      message = `${unitLabel} testing date was updated`;
+    } else if (changedKeys.includes("damage_photos")) {
+      message = `${unitLabel} damage photos were updated`;
+    } else if (changedKeys.includes("unit_no")) {
+      message = `${unitLabel} number was updated`;
+    }
+
+    await logActivity({ title, message, link: activityLink });
   }
 
   async function addRow() {
@@ -158,12 +215,22 @@ export function SerializedRowsBlock({
       return;
     }
     
-    setUnits((prev) => [...prev, data as Unit]);
+    const nextUnits = [...unitsRef.current, data as Unit];
+    unitsRef.current = nextUnits;
+    setUnits(nextUnits);
+
+    await logActivity({
+      title: `added a unit to ${itemName || "equipment"}`,
+      message: `Unit #${(data as Unit).unit_no ?? nextNumber} was added`,
+      link: activityLink,
+    });
   }
 
   async function deleteRow(id: string) {
     if (!editable) return;
     if (!confirm("Delete this unit?")) return;
+
+    const deletedUnit = unitsRef.current.find((unit) => unit.id === id);
 
     const { error } = await supabase.from("units").delete().eq("id", id);
 
@@ -172,7 +239,15 @@ export function SerializedRowsBlock({
       return;
     }
 
-    setUnits((prev) => prev.filter((u) => u.id !== id));
+    const nextUnits = unitsRef.current.filter((unit) => unit.id !== id);
+    unitsRef.current = nextUnits;
+    setUnits(nextUnits);
+
+    await logActivity({
+      title: `deleted a unit from ${itemName || "equipment"}`,
+      message: `Unit #${deletedUnit?.unit_no ?? "-"} was deleted`,
+      link: activityLink,
+    });
   }
 
   async function onPickDamagePhotos(unitId: string, files: FileList | null) {

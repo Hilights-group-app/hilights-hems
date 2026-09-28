@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory, getUserName } from "@/lib/authStore";
+import { logActivity } from "@/lib/activityStore";
 import { Pencil, Trash2 } from "lucide-react";
 
 type QtyViewMode = "cabinet" | "sqm";
@@ -240,6 +241,10 @@ export default function LedScreenReportClient({
       subcategory
     )}`;
   }, [category, subcategory]);
+
+  const activityLink = useMemo(() => {
+    return `${backHref}/led-report/${encodeURIComponent(rowId)}`;
+  }, [backHref, rowId]);
 
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<QtyViewMode>("sqm");
@@ -543,6 +548,11 @@ export default function LedScreenReportClient({
           const nextIssues = [normalizedUpdated, ...remainingIssues];
           setIssues(nextIssues);
           await syncMaintenance(nextIssues);
+          await logActivity({
+            title: `updated LED report for ${model?.name || "LED Screen"}`,
+            message: `${getIssueLabel(issueType)} quantity changed to ${mergedQty}`,
+            link: activityLink,
+          });
           setSaving(false);
           closeAddIssue();
           return;
@@ -590,6 +600,11 @@ export default function LedScreenReportClient({
         const nextIssues = [insertedNormalized, ...issues];
         setIssues(nextIssues);
         await syncMaintenance(nextIssues);
+        await logActivity({
+          title: `updated LED report for ${model?.name || "LED Screen"}`,
+          message: `${getIssueLabel(issueType)} added — Qty ${cleanQty}`,
+          link: activityLink,
+        });
         setSaving(false);
         closeAddIssue();
         return;
@@ -633,6 +648,11 @@ export default function LedScreenReportClient({
       const nextIssues = [inserted, ...issues];
       setIssues(nextIssues);
       await syncMaintenance(nextIssues);
+      await logActivity({
+        title: `updated LED report for ${model?.name || "LED Screen"}`,
+        message: `${getIssueLabel(issueType)} added — Qty ${cleanQty}`,
+        link: activityLink,
+      });
       setSaving(false);
       closeAddIssue();
     } catch (error) {
@@ -663,6 +683,7 @@ export default function LedScreenReportClient({
     }
 
     const editorName = getUserName?.() || null;
+    const editedIssue = issues.find((issue) => issue.id === editIssueId);
 
     const { error } = await supabase
       .from("led_maintenance_logs")
@@ -691,6 +712,12 @@ export default function LedScreenReportClient({
     setIssues(nextIssues);
     await syncMaintenance(nextIssues);
 
+    await logActivity({
+      title: `updated LED report for ${model?.name || "LED Screen"}`,
+      message: `${getIssueLabel(editedIssue?.problem_type || "dead_pixels")} quantity changed to ${cleanQty}`,
+      link: activityLink,
+    });
+
     setShowEditModal(false);
     setEditIssueId(null);
   }
@@ -700,6 +727,8 @@ export default function LedScreenReportClient({
 
     const ok = confirm("Delete this issue?");
     if (!ok) return;
+
+    const deletedIssue = issues.find((issue) => issue.id === issueId);
 
     const { error } = await supabase
       .from("led_maintenance_logs")
@@ -715,6 +744,12 @@ export default function LedScreenReportClient({
     const nextIssues = issues.filter((x) => x.id !== issueId);
     setIssues(nextIssues);
     await syncMaintenance(nextIssues);
+
+    await logActivity({
+      title: `updated LED report for ${model?.name || "LED Screen"}`,
+      message: `${getIssueLabel(deletedIssue?.problem_type || "dead_pixels")} issue was deleted`,
+      link: activityLink,
+    });
   }
 
   const totalDisplay = row ? toDisplayQty(row.qty, row.size, viewMode) : 0;

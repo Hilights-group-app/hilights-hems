@@ -2,23 +2,10 @@
 
 import Link from "next/link";
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
-import { Trash2, ChevronDown } from "lucide-react";
-import {
-  DndContext,
-  PointerSensor,
-  closestCenter,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
-import {
-  SortableContext,
-  arrayMove,
-  useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
+import { Trash2 } from "lucide-react";
 
 type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
@@ -26,9 +13,9 @@ type DbItem = {
   id: string;
   subcategory_id: string;
   name: string;
+  fixture_type?: string | null;
   photo_url?: string | null;
   created_at?: string;
-  sort_order?: number | null;
 };
 
 type ItemStats = {
@@ -46,18 +33,31 @@ type OnlineImage = {
   thumbnail?: string;
 };
 
-function sortItemsForOrder(items: DbItem[]) {
-  return [...items].sort((a, b) => {
-    const ao = typeof a.sort_order === "number" ? a.sort_order : 999999;
-    const bo = typeof b.sort_order === "number" ? b.sort_order : 999999;
+function sortProjectorsByBrand(items: DbItem[]) {
+  return [...items].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, {
+      sensitivity: "base",
+      numeric: true,
+    }),
+  );
+}
 
-    if (ao !== bo) return ao - bo;
+function splitProjectorName(name: string) {
+  const clean = name.trim();
 
-    const ad = a.created_at ? new Date(a.created_at).getTime() : 0;
-    const bd = b.created_at ? new Date(b.created_at).getTime() : 0;
+  if (clean.includes(" - ")) {
+    const parts = clean.split(" - ");
+    return {
+      brand: (parts[0] || "").trim(),
+      model: parts.slice(1).join(" - ").trim(),
+    };
+  }
 
-    return bd - ad;
-  });
+  const parts = clean.split(/\s+/).filter(Boolean);
+  return {
+    brand: parts[0] || "",
+    model: parts.slice(1).join(" "),
+  };
 }
 
 function toStatus(v: any): UnitStatus {
@@ -217,12 +217,19 @@ export default function SubcategoryClientProjectors({
 
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
+  const [blockName, setBlockName] = useState("");
   const [qty, setQty] = useState<number>(1);
   const [photo, setPhoto] = useState<string | null>(null);
   const addPhotoRef = useRef<HTMLInputElement | null>(null);
+  const listPhotoRef = useRef<HTMLInputElement | null>(null);
+  const [editingPhotoItemId, setEditingPhotoItemId] = useState<string | null>(
+    null,
+  );
 
-  const [photoMenuOpen, setPhotoMenuOpen] = useState(false);
   const [searchPanelOpen, setSearchPanelOpen] = useState(false);
+  const [photoSearchItemId, setPhotoSearchItemId] = useState<string | null>(
+    null,
+  );
   const [imageSearch, setImageSearch] = useState("");
   const [imageResults, setImageResults] = useState<OnlineImage[]>([]);
   const [searchingImages, setSearchingImages] = useState(false);
@@ -230,23 +237,145 @@ export default function SubcategoryClientProjectors({
   const [stats, setStats] = useState<Record<string, ItemStats>>({});
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState("");
+  const [sidebarTarget, setSidebarTarget] = useState<HTMLElement | null>(null);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [selectedBrandDraft, setSelectedBrandDraft] = useState("");
+  const [selectedModelDraft, setSelectedModelDraft] = useState("");
+  const [selectedBlockDraft, setSelectedBlockDraft] = useState("");
+  const [blockSuggestionsOpen, setBlockSuggestionsOpen] = useState(false);
+  const [mobileMenuItemId, setMobileMenuItemId] = useState<string | null>(null);
+  const [mobileAddOpen, setMobileAddOpen] = useState(false);
+
+  const projectorGroups = useMemo(() => {
+    const groups = new Map<string, DbItem[]>();
+
+    for (const item of items) {
+      const block = item.fixture_type?.trim() || "Unassigned";
+      const current = groups.get(block);
+
+      if (current) current.push(item);
+      else groups.set(block, [item]);
+    }
+
+    return Array.from(groups.entries())
+      .sort(([a], [b]) =>
+        a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }),
+      )
+      .map(([block, groupItems]) => ({
+        block,
+        items: sortProjectorsByBrand(groupItems),
+      }));
+  }, [items]);
+
+  const displayItems = useMemo(
+    () => projectorGroups.flatMap((group) => group.items),
+    [projectorGroups],
+  );
+
+  const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
+
+  const blockOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          items
+            .map((item) => item.fixture_type?.trim())
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ).sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }),
+      ),
+    [items],
+  );
+
+  const filteredBlockOptions = useMemo(() => {
+    const query = selectedBlockDraft.trim().toLowerCase();
+    if (!query) return blockOptions;
+
+    return blockOptions.filter((option) =>
+      option.toLowerCase().startsWith(query),
+    );
+  }, [blockOptions, selectedBlockDraft]);
+
+  useEffect(() => {
+    const parsed = splitProjectorName(selectedItem?.name ?? "");
+    setSelectedBrandDraft(parsed.brand);
+    setSelectedModelDraft(parsed.model);
+    setSelectedBlockDraft(selectedItem?.fixture_type?.trim() || "");
+    setBlockSuggestionsOpen(false);
+  }, [selectedItemId, selectedItem?.name, selectedItem?.fixture_type]);
+
+  useEffect(() => {
+    function handleArrowNavigation(event: KeyboardEvent) {
+      if (
+        !selectedItemId ||
+        (event.key !== "ArrowUp" && event.key !== "ArrowDown")
+      ) {
+        return;
+      }
+
+      const target = event.target as HTMLElement;
+      const isFormField = target.matches("input, textarea, select");
+      const isSelectedNameField = Boolean(
+        target.closest("[data-selected-projector-name='true']"),
+      );
+
+      if (isFormField && !isSelectedNameField) return;
+
+      event.preventDefault();
+
+      const currentIndex = displayItems.findIndex(
+        (item) => item.id === selectedItemId,
+      );
+      if (currentIndex < 0) return;
+
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      const nextIndex = Math.min(
+        displayItems.length - 1,
+        Math.max(0, currentIndex + direction),
+      );
+
+      if (nextIndex === currentIndex) return;
+
+      void saveSelectedProjectorName();
+      void saveSelectedBlockName();
+
+      const nextItemId = displayItems[nextIndex].id;
+      setSelectedItemId(nextItemId);
+
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-projector-item-id="${nextItemId}"]`)
+          ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      });
+    }
+
+    document.addEventListener("keydown", handleArrowNavigation, true);
+    return () =>
+      document.removeEventListener("keydown", handleArrowNavigation, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedItemId,
+    selectedBrandDraft,
+    selectedModelDraft,
+    selectedBlockDraft,
+    selectedItem?.name,
+    selectedItem?.fixture_type,
+    displayItems,
+  ]);
 
   const projectorName = useMemo(() => {
-    const b = brand.trim();
-    const m = model.trim();
-
-    if (b && m) return `${b} - ${m}`;
-    if (b) return b;
-    return m;
+    return [brand, model]
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .join(" - ");
   }, [brand, model]);
 
   const projectorSearchName = useMemo(() => {
-    const b = brand.trim();
-    const m = model.trim();
-
-    if (b && m) return `${b} ${m}`;
-    if (b) return b;
-    return m;
+    return [brand, model]
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .join(" ");
   }, [brand, model]);
 
   const canAdd = useMemo(() => {
@@ -258,12 +387,6 @@ export default function SubcategoryClientProjectors({
       !submitting
     );
   }, [editable, resolvedSubcategoryId, projectorName, qty, submitting]);
-
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 8 },
-    }),
-  );
 
   async function resolveSubcategoryIdFromDb() {
     const catRes = await supabase
@@ -296,9 +419,8 @@ export default function SubcategoryClientProjectors({
 
     const { data, error } = await supabase
       .from("items")
-      .select("id, subcategory_id, name, photo_url, created_at, sort_order")
-      .eq("subcategory_id", subId)
-      .order("sort_order", { ascending: true });
+      .select("id, subcategory_id, name, fixture_type, photo_url, created_at")
+      .eq("subcategory_id", subId);
 
     if (error) {
       console.error("loadItems error", error);
@@ -309,7 +431,7 @@ export default function SubcategoryClientProjectors({
       return;
     }
 
-    const rows = sortItemsForOrder((data ?? []) as DbItem[]);
+    const rows = sortProjectorsByBrand((data ?? []) as DbItem[]);
     setItems(rows);
 
     if (rows.length === 0) {
@@ -413,17 +535,29 @@ export default function SubcategoryClientProjectors({
   }, [subcategoryId, category, subcategory]);
 
   useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      const target = e.target as HTMLElement;
-      const addMenu = document.getElementById("projector-add-photo-menu");
+    function syncSidebarTarget() {
+      const nextTarget = document.getElementById("right-sidebar-actions");
+      setSidebarTarget((current) =>
+        current === nextTarget ? current : nextTarget,
+      );
+    }
 
-      if (addMenu && !addMenu.contains(target)) {
-        setPhotoMenuOpen(false);
+    syncSidebarTarget();
+    const observer = new MutationObserver(syncSidebarTarget);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    function closeMobileMenu(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-mobile-projector-menu='true']")) {
+        setMobileMenuItemId(null);
       }
     }
 
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("mousedown", closeMobileMenu);
+    return () => document.removeEventListener("mousedown", closeMobileMenu);
   }, []);
 
   async function onPickAddPhoto(e: React.ChangeEvent<HTMLInputElement>) {
@@ -446,7 +580,51 @@ export default function SubcategoryClientProjectors({
     }
   }
 
-  async function searchOnlineImages(customQuery?: string) {
+  async function updateItemPhoto(itemId: string, photoUrl: string) {
+    if (!editable) return;
+
+    const { error } = await supabase
+      .from("items")
+      .update({ photo_url: photoUrl })
+      .eq("id", itemId);
+
+    if (error) throw error;
+
+    setItems((current) =>
+      current.map((item) =>
+        item.id === itemId ? { ...item, photo_url: photoUrl } : item,
+      ),
+    );
+
+    setSaveMsg("Photo updated");
+    setTimeout(() => {
+      setSaveMsg((current) => (current === "Photo updated" ? "" : current));
+    }, 1500);
+  }
+
+  async function onPickListItemPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    const itemId = editingPhotoItemId;
+    e.target.value = "";
+    if (!editable || !file || !itemId) return;
+
+    try {
+      setSaveMsg("Uploading photo...");
+      const photoUrl = await uploadPhoto(file);
+      await updateItemPhoto(itemId, photoUrl);
+    } catch (error: any) {
+      console.error("projector photo update error", error);
+      alert(error?.message || "Failed to update photo");
+      setSaveMsg("");
+    } finally {
+      setEditingPhotoItemId(null);
+    }
+  }
+
+  async function searchOnlineImages(
+    customQuery?: string,
+    targetItemId?: string | null,
+  ) {
     const q = (customQuery || imageSearch || projectorSearchName).trim();
 
     if (!q) {
@@ -454,6 +632,11 @@ export default function SubcategoryClientProjectors({
       return;
     }
 
+    if (targetItemId !== undefined) {
+      setPhotoSearchItemId(targetItemId);
+    }
+
+    setImageSearch(q);
     setSearchPanelOpen(true);
     setSearchingImages(true);
     setImageResults([]);
@@ -518,11 +701,24 @@ export default function SubcategoryClientProjectors({
       finalImageUrl = fallbackUrl;
     }
 
-    setPhoto(finalImageUrl);
+    if (photoSearchItemId) {
+      try {
+        await updateItemPhoto(photoSearchItemId, finalImageUrl);
+      } catch (error: any) {
+        console.error("projector online photo update error", error);
+        alert(error?.message || "Failed to update photo");
+        setSaveMsg("");
+        return;
+      }
+    } else {
+      setPhoto(finalImageUrl);
+      setSaveMsg("Online photo selected");
+      setTimeout(() => setSaveMsg(""), 1500);
+    }
+
     setSearchPanelOpen(false);
+    setPhotoSearchItemId(null);
     setImageResults([]);
-    setSaveMsg("Online photo selected");
-    setTimeout(() => setSaveMsg(""), 1500);
   }
 
   async function addItem() {
@@ -551,10 +747,10 @@ export default function SubcategoryClientProjectors({
         .insert({
           subcategory_id: resolvedSubcategoryId,
           name: clean,
+          fixture_type: blockName.trim() || null,
           photo_url: photo || null,
-          sort_order: items.length,
         })
-        .select("id, subcategory_id, name, photo_url, created_at, sort_order")
+        .select("id, subcategory_id, name, fixture_type, photo_url, created_at")
         .single();
 
       if (error) {
@@ -581,10 +777,7 @@ export default function SubcategoryClientProjectors({
         );
       }
 
-      setItems((prev) => [
-        ...prev,
-        { ...(newItem as DbItem), sort_order: prev.length },
-      ]);
+      setItems((prev) => sortProjectorsByBrand([...prev, newItem as DbItem]));
 
       setStats((prev) => ({
         ...prev,
@@ -599,12 +792,13 @@ export default function SubcategoryClientProjectors({
 
       setBrand("");
       setModel("");
+      setBlockName("");
       setQty(1);
       setPhoto(null);
       setImageSearch("");
       setImageResults([]);
       setSearchPanelOpen(false);
-      setPhotoMenuOpen(false);
+      setPhotoSearchItemId(null);
       setSaveMsg("Item added");
 
       setTimeout(() => {
@@ -615,13 +809,13 @@ export default function SubcategoryClientProjectors({
     }
   }
 
-  async function renameItem(itemId: string) {
+  async function renameItem(itemId: string, nextNameOverride?: string) {
     if (!editable) return;
 
     const it = items.find((x) => x.id === itemId);
     if (!it) return;
 
-    const nextName = prompt("Projector name:", it.name);
+    const nextName = nextNameOverride ?? prompt("Projector name:", it.name);
     if (!nextName) return;
 
     const clean = nextName.trim();
@@ -639,14 +833,75 @@ export default function SubcategoryClientProjectors({
     }
 
     setItems((prev) =>
-      prev.map((item) =>
-        item.id === itemId ? { ...item, name: clean } : item,
+      sortProjectorsByBrand(
+        prev.map((item) =>
+          item.id === itemId ? { ...item, name: clean } : item,
+        ),
       ),
     );
 
     setSaveMsg("Item renamed");
     setTimeout(() => {
       setSaveMsg((prev) => (prev === "Item renamed" ? "" : prev));
+    }, 1500);
+  }
+
+  async function saveSelectedProjectorName() {
+    if (!editable || !selectedItem) return;
+
+    const brandValue = selectedBrandDraft.trim();
+    const modelValue = selectedModelDraft.trim();
+    const cleanName = [brandValue, modelValue].filter(Boolean).join(" - ");
+
+    if (!cleanName) {
+      const parsed = splitProjectorName(selectedItem.name);
+      setSelectedBrandDraft(parsed.brand);
+      setSelectedModelDraft(parsed.model);
+      return;
+    }
+
+    if (cleanName === selectedItem.name) return;
+    await renameItem(selectedItem.id, cleanName);
+  }
+
+  async function saveSelectedBlockName(nextValue = selectedBlockDraft) {
+    if (!editable || !selectedItem) return;
+
+    const clean = nextValue.trim();
+    const current = selectedItem.fixture_type?.trim() || "";
+
+    if (!clean) {
+      setSelectedBlockDraft(current);
+      return;
+    }
+
+    if (clean.toLowerCase() === current.toLowerCase()) return;
+
+    const { error } = await supabase
+      .from("items")
+      .update({ fixture_type: clean })
+      .eq("id", selectedItem.id);
+
+    if (error) {
+      console.error("update projector block error", error);
+      alert("Block name update failed");
+      setSelectedBlockDraft(current);
+      return;
+    }
+
+    setItems((previous) =>
+      previous.map((item) =>
+        item.id === selectedItem.id
+          ? { ...item, fixture_type: clean }
+          : item,
+      ),
+    );
+    setSelectedBlockDraft(clean);
+    setSaveMsg("Block name updated");
+    setTimeout(() => {
+      setSaveMsg((previous) =>
+        previous === "Block name updated" ? "" : previous,
+      );
     }, 1500);
   }
 
@@ -669,6 +924,7 @@ export default function SubcategoryClientProjectors({
     }
 
     setItems((prev) => prev.filter((item) => item.id !== itemId));
+    setSelectedItemId((current) => (current === itemId ? null : current));
     setStats((prev) => {
       const next = { ...prev };
       delete next[itemId];
@@ -681,50 +937,348 @@ export default function SubcategoryClientProjectors({
     }, 1500);
   }
 
-  async function reorderItems(activeId: string, overId: string) {
-    if (!editable || activeId === overId) return;
+  useEffect(() => {
+    function handleSelectionClickOutside(event: MouseEvent) {
+      if (!selectedItemId) return;
 
-    let nextItems: DbItem[] = [];
-
-    setItems((prev) => {
-      const oldIndex = prev.findIndex((item) => item.id === activeId);
-      const newIndex = prev.findIndex((item) => item.id === overId);
-
-      if (oldIndex < 0 || newIndex < 0) return prev;
-
-      nextItems = arrayMove(prev, oldIndex, newIndex).map((item, index) => ({
-        ...item,
-        sort_order: index,
-      }));
-
-      return nextItems;
-    });
-
-    setTimeout(async () => {
-      if (nextItems.length === 0) return;
-
-      const results = await Promise.all(
-        nextItems.map((item, index) =>
-          supabase
-            .from("items")
-            .update({ sort_order: index })
-            .eq("id", item.id),
-        ),
+      const target = event.target as HTMLElement;
+      const insideProjector = target.closest(
+        "[data-projector-item-row='true']",
+      );
+      const insideSidebar = target.closest("#right-sidebar-actions");
+      const insideProjectorTools = target.closest(
+        "[data-projector-tools='true']",
       );
 
-      const failed = results.find((res) => res.error);
-      if (failed?.error) {
-        alert("Failed to save item order");
-        if (resolvedSubcategoryId) void loadItems(resolvedSubcategoryId);
-      }
-    }, 0);
-  }
+      if (insideProjector || insideSidebar || insideProjectorTools) return;
 
-  function handleDragEnd(event: any) {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    void reorderItems(String(active.id), String(over.id));
-  }
+      void saveSelectedProjectorName();
+      void saveSelectedBlockName();
+      setSelectedItemId(null);
+    }
+
+    document.addEventListener("mousedown", handleSelectionClickOutside);
+    return () =>
+      document.removeEventListener("mousedown", handleSelectionClickOutside);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedItemId,
+    selectedBrandDraft,
+    selectedModelDraft,
+    selectedBlockDraft,
+    selectedItem?.name,
+    selectedItem?.fixture_type,
+  ]);
+
+  const editItemPanel = selectedItem ? (
+    <div
+      data-projector-tools="true"
+      className="mb-4 rounded-2xl border-2 border-black bg-white p-3 shadow-sm"
+    >
+      <div className="mb-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
+            Selected Projector
+          </div>
+          <div
+            data-selected-projector-name="true"
+            className="mt-1 grid grid-cols-1 gap-1.5"
+          >
+            <input
+              value={selectedBrandDraft}
+              onChange={(event) => setSelectedBrandDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void saveSelectedProjectorName();
+                }
+              }}
+              placeholder="Brand"
+              disabled={!editable}
+              className="h-8 w-full rounded-lg border border-gray-300 bg-white px-2.5 text-[9px] font-semibold text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+            />
+            <input
+              value={selectedModelDraft}
+              onChange={(event) => setSelectedModelDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void saveSelectedProjectorName();
+                }
+              }}
+              placeholder="Model"
+              disabled={!editable}
+              className="h-8 w-full rounded-lg border border-gray-300 bg-white px-2.5 text-[9px] font-medium text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+            />
+          </div>
+          <div className="relative mt-1">
+            <input
+              value={selectedBlockDraft}
+              onFocus={() => setBlockSuggestionsOpen(true)}
+              onChange={(event) => {
+                setSelectedBlockDraft(event.target.value);
+                setBlockSuggestionsOpen(true);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  setBlockSuggestionsOpen(false);
+                  event.currentTarget.blur();
+                } else if (event.key === "Escape") {
+                  setBlockSuggestionsOpen(false);
+                }
+              }}
+              onBlur={() => {
+                setBlockSuggestionsOpen(false);
+                void saveSelectedBlockName();
+              }}
+              placeholder="Block Name"
+              disabled={!editable}
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={blockSuggestionsOpen}
+              aria-controls="projector-block-suggestions"
+              className="h-8 w-full rounded-lg border border-gray-300 bg-white px-2.5 pr-7 text-[9px] font-medium text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+            />
+
+            <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[8px] text-gray-400">
+              ▼
+            </span>
+
+            {blockSuggestionsOpen && filteredBlockOptions.length > 0 ? (
+              <div
+                id="projector-block-suggestions"
+                role="listbox"
+                className="absolute left-0 right-0 top-[calc(100%+4px)] z-[100] max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 shadow-lg"
+              >
+                {filteredBlockOptions.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    role="option"
+                    aria-selected={
+                      option.toLowerCase() === selectedBlockDraft.toLowerCase()
+                    }
+                    onMouseDown={(event) => {
+                      event.preventDefault();
+                      setSelectedBlockDraft(option);
+                      setBlockSuggestionsOpen(false);
+                      void saveSelectedBlockName(option);
+                    }}
+                    className="block w-full rounded-md px-2.5 py-2 text-left text-[9px] font-medium text-gray-700 hover:bg-gray-100"
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-3 flex items-center gap-3 rounded-xl bg-gray-50 p-2">
+        <ProjectorPhoto
+          photo={selectedItem.photo_url}
+          name={selectedItem.name}
+        />
+        <div className="min-w-0 text-[10px] text-gray-500">
+          Select an action below to edit this projector.
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-2">
+        <Link
+          href={`/inventory/${category}/${subcategory}/${selectedItem.id}`}
+          className="rounded-xl bg-black px-3 py-2.5 text-center text-[11px] font-medium text-white hover:opacity-90"
+        >
+          Open Projector / Report
+        </Link>
+
+        {editable ? (
+          <>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingPhotoItemId(selectedItem.id);
+                  listPhotoRef.current?.click();
+                }}
+                className="rounded-xl border border-gray-300 bg-white px-2 py-2.5 text-center text-[10px] font-medium text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+              >
+                Upload Photo
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  void searchOnlineImages(
+                    selectedItem.name.replaceAll(" - ", " "),
+                    selectedItem.id,
+                  )
+                }
+                className="rounded-xl border border-gray-300 bg-white px-2 py-2.5 text-center text-[10px] font-medium text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+              >
+                Search Photo
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => void deleteItem(selectedItem.id)}
+              className="flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-[11px] font-medium text-red-700 hover:bg-red-100"
+            >
+              <Trash2 size={14} />
+              Delete Projector
+            </button>
+          </>
+        ) : null}
+      </div>
+    </div>
+  ) : null;
+
+  const sidebarAddPanel = editable && !selectedItem ? (
+    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
+      <div className="mb-4">
+        <h2 className="text-[13px] font-semibold leading-tight text-gray-900">
+          Add Projector
+        </h2>
+        <p className="mt-1 text-[10px] text-gray-500">
+          Enter brand, model, block name, quantity and optional photo.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-2">
+        <input
+          value={brand}
+          onChange={(e) => {
+            setBrand(e.target.value);
+            if (!imageSearch)
+              setImageSearch(`${e.target.value} ${model}`.trim());
+          }}
+          placeholder="Brand (e.g. Barco)"
+          className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+        />
+        <input
+          value={model}
+          onChange={(e) => {
+            setModel(e.target.value);
+            if (!imageSearch)
+              setImageSearch(`${brand} ${e.target.value}`.trim());
+          }}
+          placeholder="Model (e.g. F80 4K12)"
+          className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+        />
+        <input
+          value={blockName}
+          onChange={(e) => setBlockName(e.target.value)}
+          placeholder="Block Name (e.g. Main Projector)"
+          className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+        />
+        <input
+          value={String(qty)}
+          onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
+          type="number"
+          min={1}
+          placeholder="Qty"
+          className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+        />
+
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => addPhotoRef.current?.click()}
+            className="flex h-11 w-full items-center justify-center rounded-2xl border border-gray-300 bg-white px-2 text-[10px] font-medium text-gray-700 shadow-sm transition hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+          >
+            {photo ? "Photo ✔" : "Upload Photo"}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => void searchOnlineImages(projectorSearchName, null)}
+            className="flex h-11 w-full items-center justify-center rounded-2xl border border-gray-300 bg-white px-2 text-[10px] font-medium text-gray-700 shadow-sm transition hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+          >
+            Search Photo
+          </button>
+        </div>
+
+        {photo ? (
+          <div className="flex items-center gap-2 rounded-xl bg-gray-50 p-2">
+            <img
+              src={photo}
+              alt="Selected"
+              className="h-12 w-12 rounded-lg object-cover"
+            />
+            <button
+              type="button"
+              onClick={() => setPhoto(null)}
+              className="text-[10px] font-medium text-red-600"
+            >
+              Remove photo
+            </button>
+          </div>
+        ) : null}
+
+        {searchPanelOpen ? (
+          <div className="rounded-xl border border-gray-200 p-2">
+            <div className="flex gap-2">
+              <input
+                value={imageSearch}
+                onChange={(e) => setImageSearch(e.target.value)}
+                placeholder="Search image..."
+                className="h-9 min-w-0 flex-1 rounded-lg border border-gray-300 px-2 text-[10px]"
+              />
+              <button
+                type="button"
+                onClick={() => void searchOnlineImages()}
+                disabled={searchingImages}
+                className="h-9 rounded-lg bg-black px-2 text-[10px] text-white disabled:opacity-40"
+              >
+                {searchingImages ? "..." : "Search"}
+              </button>
+            </div>
+            {imageResults.length > 0 ? (
+              <div className="mt-2 grid grid-cols-3 gap-1.5">
+                {imageResults.map((image, index) => {
+                  const url = image.thumbnail || image.image || image.original;
+                  if (!url) return null;
+                  return (
+                    <button
+                      key={`${url}-${index}`}
+                      type="button"
+                      onClick={() => void selectOnlinePhoto(image)}
+                      className="overflow-hidden rounded-lg border border-gray-200"
+                    >
+                      <img
+                        src={url}
+                        alt={image.title || "Projector"}
+                        className="aspect-square w-full object-cover"
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        <button
+          type="button"
+          onClick={() => void addItem()}
+          disabled={!canAdd}
+          className="h-11 w-full rounded-2xl border border-black bg-black px-4 text-[12px] font-medium text-white shadow-sm transition hover:opacity-90 disabled:opacity-40"
+        >
+          {submitting ? "Adding..." : "+ Add Projector"}
+        </button>
+      </div>
+
+      {errorMsg || saveMsg ? (
+        <div
+          className={`mt-2 text-[10px] ${errorMsg ? "text-red-600" : "text-gray-500"}`}
+        >
+          {errorMsg || saveMsg}
+        </div>
+      ) : null}
+    </div>
+  ) : null;
 
   if (loading) {
     return (
@@ -738,22 +1292,76 @@ export default function SubcategoryClientProjectors({
 
   return (
     <div className="w-full mx-auto space-y-3">
-      {editable && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-6">
-          <div className="flex items-center justify-between gap-4 mb-4">
-            <h1
-              style={{
-                fontSize: "14px",
-                fontWeight: 600,
-                color: "#111827",
-                lineHeight: 1.1,
-              }}
-            >
-              Add Projector Item
+      <input
+        ref={listPhotoRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={onPickListItemPhoto}
+      />
+
+      {editable && !selectedItem ? (
+        <>
+          <button
+            type="button"
+            aria-label="Add projector"
+            onClick={() => setMobileAddOpen(true)}
+            className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl active:scale-95 sm:hidden"
+          >
+            +
+          </button>
+
+          {mobileAddOpen ? (
+            <div className="fixed inset-0 z-[9998] sm:hidden">
+              <button
+                type="button"
+                aria-label="Close add projector form"
+                onClick={() => setMobileAddOpen(false)}
+                className="absolute inset-0 bg-black/45"
+              />
+              <div className="absolute inset-x-0 bottom-0 max-h-[88dvh] overflow-y-auto rounded-t-3xl bg-gray-50 p-3 pb-[calc(env(safe-area-inset-bottom)+16px)] shadow-2xl">
+                <div className="mb-2 flex items-center justify-between px-1">
+                  <div className="h-1 w-10 rounded-full bg-gray-300" />
+                  <button
+                    type="button"
+                    onClick={() => setMobileAddOpen(false)}
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-lg text-gray-700"
+                    aria-label="Close"
+                  >
+                    ×
+                  </button>
+                </div>
+                {sidebarAddPanel}
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
+      {sidebarTarget
+        ? createPortal(
+            <div>
+              {editItemPanel}
+              {sidebarAddPanel}
+            </div>,
+            sidebarTarget,
+          )
+        : null}
+
+      <div className="hidden sm:block xl:hidden">{editItemPanel}</div>
+
+      {editable && !selectedItem && (
+        <div className="hidden rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:block sm:p-5 xl:hidden">
+          <div className="mb-4">
+            <h1 className="text-[13px] font-semibold leading-tight text-gray-900">
+              Add Projector
             </h1>
+            <p className="mt-1 text-[10px] text-gray-500">
+              Enter brand, model, block name, quantity and optional photo.
+            </p>
           </div>
 
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_76px_116px_76px] md:items-center">
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_1fr_76px_116px_76px] md:items-center">
             <input
               value={brand}
               onChange={(e) => {
@@ -777,6 +1385,13 @@ export default function SubcategoryClientProjectors({
             />
 
             <input
+              value={blockName}
+              onChange={(e) => setBlockName(e.target.value)}
+              placeholder="Block Name (e.g. Main Projector)"
+              className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
+            />
+
+            <input
               value={String(qty)}
               onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
               type="number"
@@ -793,46 +1408,24 @@ export default function SubcategoryClientProjectors({
               onChange={onPickAddPhoto}
             />
 
-            <div id="projector-add-photo-menu" className="relative">
+            <div className="grid grid-cols-2 gap-2 md:col-span-2">
               <button
                 type="button"
-                onClick={() => setPhotoMenuOpen((v) => !v)}
-                className="flex h-11 w-full items-center justify-center gap-1 rounded-2xl border border-gray-300 bg-white px-4 text-[12px] font-medium text-gray-700 shadow-sm transition hover:bg-red-50 hover:border-red-200 hover:text-red-700"
+                onClick={() => addPhotoRef.current?.click()}
+                className="flex h-11 w-full items-center justify-center rounded-2xl border border-gray-300 bg-white px-2 text-[10px] font-medium text-gray-700 shadow-sm transition hover:bg-red-50 hover:border-red-200 hover:text-red-700"
               >
-                {photo ? "Photo ✔" : "Add photo"}
-                <ChevronDown size={13} />
+                {photo ? "Photo ✔" : "Upload Photo"}
               </button>
 
-              {photoMenuOpen ? (
-                <div className="absolute right-0 top-full z-[9999] mt-2 w-40 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPhotoMenuOpen(false);
-                      addPhotoRef.current?.click();
-                    }}
-                    className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
-                  >
-                    Upload photo
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPhotoMenuOpen(false);
-                      setSearchPanelOpen(true);
-                      setImageSearch(projectorSearchName);
-                      setTimeout(
-                        () => void searchOnlineImages(projectorSearchName),
-                        50,
-                      );
-                    }}
-                    className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
-                  >
-                    Search photo
-                  </button>
-                </div>
-              ) : null}
+              <button
+                type="button"
+                onClick={() =>
+                  void searchOnlineImages(projectorSearchName, null)
+                }
+                className="flex h-11 w-full items-center justify-center rounded-2xl border border-gray-300 bg-white px-2 text-[10px] font-medium text-gray-700 shadow-sm transition hover:bg-red-50 hover:border-red-200 hover:text-red-700"
+              >
+                Search Photo
+              </button>
             </div>
 
             <button
@@ -877,6 +1470,7 @@ export default function SubcategoryClientProjectors({
                   type="button"
                   onClick={() => {
                     setSearchPanelOpen(false);
+                    setPhotoSearchItemId(null);
                     setImageResults([]);
                   }}
                   className="text-[10px] text-red-500 hover:text-black"
@@ -961,49 +1555,70 @@ export default function SubcategoryClientProjectors({
           No items yet.
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-6">
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext
-              items={items.map((item) => item.id)}
-              strategy={verticalListSortingStrategy}
-            >
-              {items.map((it, index) => {
-                const st = stats[it.id] ?? {
-                  total: 0,
-                  available: 0,
-                  inUse: 0,
-                  maintenance: 0,
-                  inKsa: 0,
-                };
+        <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-6">
+          {displayItems.map((it, index) => {
+            const st = stats[it.id] ?? {
+              total: 0,
+              available: 0,
+              inUse: 0,
+              maintenance: 0,
+              inKsa: 0,
+            };
 
-                return (
-                  <SortableProjectorItem
-                    key={it.id}
-                    id={it.id}
-                    disabled={!editable}
-                  >
-                    {(dragHandleProps) => (
-                      <ProjectorItemRow
-                        item={it}
-                        stats={st}
-                        category={category}
-                        subcategory={subcategory}
-                        editable={editable}
-                        isLast={index === items.length - 1}
-                        dragHandleProps={dragHandleProps}
-                        onRename={() => renameItem(it.id)}
-                        onDelete={() => deleteItem(it.id)}
-                      />
-                    )}
-                  </SortableProjectorItem>
-                );
-              })}
-            </SortableContext>
-          </DndContext>
+            const blockLabel = it.fixture_type?.trim() || "Unassigned";
+            const previousBlock =
+              index > 0
+                ? displayItems[index - 1].fixture_type?.trim() || "Unassigned"
+                : null;
+            const showBlockHeader = blockLabel !== previousBlock;
+
+            return (
+              <React.Fragment key={it.id}>
+                {showBlockHeader ? (
+                  <div className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
+                    <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+                    <h2 className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">
+                      {blockLabel}
+                    </h2>
+                  </div>
+                ) : null}
+
+                <ProjectorItemRow
+                  item={it}
+                  stats={st}
+                  category={category}
+                  subcategory={subcategory}
+                  editable={editable}
+                  isLast={index === displayItems.length - 1}
+                  selected={selectedItemId === it.id}
+                  mobileMenuOpen={mobileMenuItemId === it.id}
+                  onSelect={async () => {
+                    if (selectedItemId === it.id) {
+                      await saveSelectedProjectorName();
+                      await saveSelectedBlockName();
+                      setSelectedItemId(null);
+                      return;
+                    }
+
+                    await saveSelectedProjectorName();
+                    await saveSelectedBlockName();
+                    setSelectedItemId(it.id);
+                  }}
+                  onToggleMobileMenu={() =>
+                    setMobileMenuItemId((current) =>
+                      current === it.id ? null : it.id,
+                    )
+                  }
+                  onRename={() => renameItem(it.id)}
+                  onChangePhoto={() => {
+                    setEditingPhotoItemId(it.id);
+                    listPhotoRef.current?.click();
+                  }}
+                  onDelete={() => deleteItem(it.id)}
+                />
+              </React.Fragment>
+            );
+          })}
         </div>
       )}
 
@@ -1016,42 +1631,6 @@ export default function SubcategoryClientProjectors({
   );
 }
 
-function SortableProjectorItem({
-  id,
-  disabled,
-  children,
-}: {
-  id: string;
-  disabled?: boolean;
-  children: (dragHandleProps: {
-    attributes: ReturnType<typeof useSortable>["attributes"];
-    listeners: ReturnType<typeof useSortable>["listeners"];
-  }) => React.ReactNode;
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id, disabled });
-
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.65 : 1,
-    zIndex: isDragging ? 9999 : "auto",
-    position: "relative",
-  };
-
-  return (
-    <div ref={setNodeRef} style={style}>
-      {children({ attributes, listeners })}
-    </div>
-  );
-}
-
 function ProjectorItemRow({
   item,
   stats,
@@ -1059,8 +1638,12 @@ function ProjectorItemRow({
   subcategory,
   editable,
   isLast,
-  dragHandleProps,
+  selected,
+  mobileMenuOpen,
+  onSelect,
+  onToggleMobileMenu,
   onRename,
+  onChangePhoto,
   onDelete,
 }: {
   item: DbItem;
@@ -1069,35 +1652,36 @@ function ProjectorItemRow({
   subcategory: string;
   editable: boolean;
   isLast: boolean;
-  dragHandleProps: {
-    attributes: ReturnType<typeof useSortable>["attributes"];
-    listeners: ReturnType<typeof useSortable>["listeners"];
-  };
+  selected: boolean;
+  mobileMenuOpen: boolean;
+  onSelect: () => void | Promise<void>;
+  onToggleMobileMenu: () => void;
   onRename: () => void;
+  onChangePhoto: () => void;
   onDelete: () => void;
 }) {
   const detailsHref = `/inventory/${category}/${subcategory}/${item.id}`;
 
   return (
     <div className={!isLast ? "border-b border-gray-100 pb-4 mb-4" : ""}>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div
+        data-projector-item-id={item.id}
+        data-projector-item-row="true"
+        className={`relative flex flex-col gap-3 rounded-xl transition sm:flex-row sm:items-start sm:justify-between ${
+          selected ? "bg-gray-50 ring-2 ring-black" : "hover:bg-gray-50"
+        }`}
+      >
         <div className="flex items-start gap-2 min-w-0 flex-[1.45]">
-          {editable ? (
-            <button
-              type="button"
-              {...dragHandleProps.attributes}
-              {...dragHandleProps.listeners}
-              className="mt-3 flex h-8 w-4 shrink-0 cursor-grab touch-none items-center justify-center rounded-md text-gray-300 transition hover:bg-gray-50 hover:text-red-500 active:cursor-grabbing"
-              title="Drag to reorder"
-              aria-label="Drag to reorder"
-            >
-              ⋮⋮
-            </button>
-          ) : null}
-
-          <Link
-            href={detailsHref}
-            className="flex items-start gap-3 min-w-0 flex-1 group"
+          <button
+            type="button"
+            onClick={() => {
+              if (window.matchMedia("(min-width: 640px)").matches) {
+                onSelect();
+              } else {
+                window.location.href = detailsHref;
+              }
+            }}
+            className="flex items-start gap-3 min-w-0 flex-1 text-left group"
           >
             <ProjectorPhoto photo={item.photo_url} name={item.name} />
 
@@ -1109,36 +1693,6 @@ function ProjectorItemRow({
                 >
                   {item.name}
                 </h2>
-
-                {editable && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onRename();
-                    }}
-                    title="Rename"
-                    className="text-red-500 text-[12px] shrink-0 transition-colors hover:text-black"
-                  >
-                    ✎
-                  </button>
-                )}
-
-                {editable && (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onDelete();
-                    }}
-                    title="Delete"
-                    className="ml-auto text-red-500 shrink-0 transition-colors duration-200 hover:text-black sm:hidden"
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                )}
               </div>
 
               <div className="mt-2 sm:hidden">
@@ -1195,12 +1749,12 @@ function ProjectorItemRow({
                 </div>
               </div>
             </div>
-          </Link>
+          </button>
         </div>
 
         <div className="flex items-center sm:items-start sm:justify-end gap-2 shrink-0 w-full sm:w-auto">
           {editable && (
-            <div className="hidden sm:flex items-center gap-2">
+            <div className="hidden items-center gap-2">
               <button
                 type="button"
                 onClick={onDelete}
@@ -1211,6 +1765,73 @@ function ProjectorItemRow({
             </div>
           )}
         </div>
+
+        <Link
+          href={detailsHref}
+          onClick={(event) => event.stopPropagation()}
+          className="absolute right-2 top-2 hidden rounded-full border border-gray-300 bg-white px-2.5 py-1 text-[9px] font-medium text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700 sm:block"
+        >
+          Report
+        </Link>
+
+        {editable ? (
+          <div
+            data-mobile-projector-menu="true"
+            className="absolute right-2 top-2 z-30 sm:hidden"
+          >
+            <button
+              type="button"
+              aria-label={`Edit ${item.name}`}
+              aria-expanded={mobileMenuOpen}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onToggleMobileMenu();
+              }}
+              className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm"
+            >
+              ⋮
+            </button>
+
+            {mobileMenuOpen ? (
+              <div className="absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-xl">
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onToggleMobileMenu();
+                    onRename();
+                  }}
+                  className="block w-full px-3 py-2 text-left text-[11px] font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Rename
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onToggleMobileMenu();
+                    onChangePhoto();
+                  }}
+                  className="block w-full border-t border-gray-100 px-3 py-2 text-left text-[11px] font-medium text-gray-700 hover:bg-gray-50"
+                >
+                  Change Photo
+                </button>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onToggleMobileMenu();
+                    onDelete();
+                  }}
+                  className="block w-full border-t border-gray-100 px-3 py-2 text-left text-[11px] font-medium text-red-600 hover:bg-red-50"
+                >
+                  Delete Projector
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </div>
   );

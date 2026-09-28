@@ -1,16 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
-import { Trash2, ChevronDown } from "lucide-react";
+import { Trash2 } from "lucide-react";
 
 type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
 type ItemRow = {
   id: string;
   name: string;
+  fixture_type?: string | null;
   photo_url: string | null;
   subcategory_id: string;
 };
@@ -39,7 +41,7 @@ type ItemsCache = {
 async function compressImageFile(
   file: File,
   maxSize = 260,
-  quality = 0.72
+  quality = 0.72,
 ): Promise<Blob> {
   const imageUrl = URL.createObjectURL(file);
 
@@ -79,9 +81,7 @@ async function compressImageFile(
 async function uploadPhotoBlob(blob: Blob): Promise<string> {
   const supabase = createClient();
 
-  const fileName = `${Date.now()}-${Math.random()
-    .toString(36)
-    .slice(2)}.webp`;
+  const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.webp`;
 
   const filePath = `items/thumbs/${fileName}`;
 
@@ -150,27 +150,30 @@ function sortItemsByBrand(items: ItemRow[]) {
     return (aParts.model || a.name).localeCompare(
       bParts.model || b.name,
       undefined,
-      { sensitivity: "base", numeric: true }
+      { sensitivity: "base", numeric: true },
     );
   });
 }
 
-function groupItemsByBrand(items: ItemRow[]) {
-  const sorted = sortItemsByBrand(items);
-  const groups: { brand: string; items: ItemRow[] }[] = [];
+function groupItemsByBlock(items: ItemRow[]) {
+  const groups = new Map<string, ItemRow[]>();
 
-  for (const item of sorted) {
-    const brand = splitBrandModel(item.name).brand || "Other";
-    const last = groups[groups.length - 1];
+  for (const item of items) {
+    const block = item.fixture_type?.trim() || "Unassigned";
+    const current = groups.get(block);
 
-    if (last && last.brand.toLowerCase() === brand.toLowerCase()) {
-      last.items.push(item);
-    } else {
-      groups.push({ brand, items: [item] });
-    }
+    if (current) current.push(item);
+    else groups.set(block, [item]);
   }
 
-  return groups;
+  return Array.from(groups.entries())
+    .sort(([a], [b]) =>
+      a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }),
+    )
+    .map(([block, groupItems]) => ({
+      block,
+      items: sortItemsByBrand(groupItems),
+    }));
 }
 
 function countByStatus(statuses: UnitStatus[]): ItemStats {
@@ -190,10 +193,13 @@ function countByStatus(statuses: UnitStatus[]): ItemStats {
 }
 
 function cacheKeyFor(category: string, subcategory: string) {
-  return `hems:${category}:${subcategory}:serialized-items-v2`;
+  return `hems:${category}:${subcategory}:serialized-items-v4`;
 }
 
-function readItemsCache(category: string, subcategory: string): ItemsCache | null {
+function readItemsCache(
+  category: string,
+  subcategory: string,
+): ItemsCache | null {
   if (typeof window === "undefined") return null;
 
   try {
@@ -204,11 +210,18 @@ function readItemsCache(category: string, subcategory: string): ItemsCache | nul
   }
 }
 
-function writeItemsCache(category: string, subcategory: string, data: ItemsCache) {
+function writeItemsCache(
+  category: string,
+  subcategory: string,
+  data: ItemsCache,
+) {
   if (typeof window === "undefined") return;
 
   try {
-    sessionStorage.setItem(cacheKeyFor(category, subcategory), JSON.stringify(data));
+    sessionStorage.setItem(
+      cacheKeyFor(category, subcategory),
+      JSON.stringify(data),
+    );
   } catch {}
 }
 
@@ -225,12 +238,12 @@ function StatPill({
     tone === "green"
       ? "bg-green-100 text-black"
       : tone === "blue"
-      ? "bg-blue-100 text-black"
-      : tone === "yellow"
-      ? "bg-yellow-100 text-black"
-      : tone === "purple"
-      ? "bg-purple-100 text-black"
-      : "bg-gray-100 text-black";
+        ? "bg-blue-100 text-black"
+        : tone === "yellow"
+          ? "bg-yellow-100 text-black"
+          : tone === "purple"
+            ? "bg-purple-100 text-black"
+            : "bg-gray-100 text-black";
 
   return (
     <span
@@ -244,19 +257,9 @@ function StatPill({
 function ItemPhoto({
   photo,
   name,
-  editable,
-  menuOpen,
-  onToggleMenu,
-  onUploadPhoto,
-  onSearchPhoto,
 }: {
   photo?: string | null;
   name: string;
-  editable?: boolean;
-  menuOpen?: boolean;
-  onToggleMenu?: () => void;
-  onUploadPhoto?: () => void;
-  onSearchPhoto?: () => void;
 }) {
   return (
     <div className="relative flex h-14 w-14 min-w-[56px] items-center justify-center">
@@ -274,50 +277,6 @@ function ItemPhoto({
         </div>
       )}
 
-      {editable ? (
-        <div className="absolute right-0 top-0 z-30" data-list-photo-menu="true">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onToggleMenu?.();
-            }}
-            className="flex h-4 w-4 items-center justify-center rounded-full bg-white/90 text-[10px] text-red-500 shadow hover:text-black"
-            title="Photo options"
-          >
-            ✎
-          </button>
-
-          {menuOpen ? (
-            <div className="absolute left-0 top-full z-[9999] mt-1 w-36 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onUploadPhoto?.();
-                }}
-                className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
-              >
-                Upload photo
-              </button>
-
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onSearchPhoto?.();
-                }}
-                className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
-              >
-                Search photo
-              </button>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -343,18 +302,27 @@ export default function SubcategoryClientSerialized({
 
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
+  const [blockName, setBlockName] = useState("");
   const [qty, setQty] = useState<number>(1);
   const [photo, setPhoto] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState("");
 
-  const [photoMenuOpen, setPhotoMenuOpen] = useState(false);
   const [searchPanelOpen, setSearchPanelOpen] = useState(false);
   const [imageSearch, setImageSearch] = useState("");
   const [imageResults, setImageResults] = useState<OnlineImage[]>([]);
   const [searchingImages, setSearchingImages] = useState(false);
 
-  const [listPhotoMenuItemId, setListPhotoMenuItemId] = useState<string | null>(null);
-  const [editingPhotoItemId, setEditingPhotoItemId] = useState<string | null>(null);
+  const [editingPhotoItemId, setEditingPhotoItemId] = useState<string | null>(
+    null,
+  );
+  const [sidebarTarget, setSidebarTarget] = useState<HTMLElement | null>(null);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [selectedBrandDraft, setSelectedBrandDraft] = useState("");
+  const [selectedModelDraft, setSelectedModelDraft] = useState("");
+  const [selectedBlockDraft, setSelectedBlockDraft] = useState("");
+  const [blockSuggestionsOpen, setBlockSuggestionsOpen] = useState(false);
+  const [mobileMenuItemId, setMobileMenuItemId] = useState<string | null>(null);
+  const [mobileAddOpen, setMobileAddOpen] = useState(false);
 
   const itemName = useMemo(() => {
     const b = brand.trim();
@@ -376,10 +344,105 @@ export default function SubcategoryClientSerialized({
 
   const canAdd = useMemo(
     () => editable && itemName.trim().length > 0 && qty >= 1,
-    [editable, itemName, qty]
+    [editable, itemName, qty],
   );
 
-  const brandGroups = useMemo(() => groupItemsByBrand(items), [items]);
+  const blockGroups = useMemo(() => groupItemsByBlock(items), [items]);
+  const navigableItems = useMemo(
+    () => blockGroups.flatMap((group) => group.items),
+    [blockGroups],
+  );
+  const selectedItem =
+    items.find((item) => item.id === selectedItemId) ?? null;
+
+  const blockOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          items
+            .map((item) => item.fixture_type?.trim())
+            .filter((value): value is string => Boolean(value)),
+        ),
+      ).sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: "base", numeric: true }),
+      ),
+    [items],
+  );
+
+  const filteredBlockOptions = useMemo(() => {
+    const query = selectedBlockDraft.trim().toLowerCase();
+    if (!query) return blockOptions;
+
+    return blockOptions.filter((option) =>
+      option.toLowerCase().startsWith(query),
+    );
+  }, [blockOptions, selectedBlockDraft]);
+
+  useEffect(() => {
+    const parsed = splitBrandModel(selectedItem?.name ?? "");
+    setSelectedBrandDraft(parsed.brand);
+    setSelectedModelDraft(parsed.model);
+    setSelectedBlockDraft(selectedItem?.fixture_type?.trim() || "");
+    setBlockSuggestionsOpen(false);
+  }, [selectedItemId, selectedItem?.name, selectedItem?.fixture_type]);
+
+  useEffect(() => {
+    async function handleArrowNavigation(event: KeyboardEvent) {
+      if (
+        !selectedItemId ||
+        (event.key !== "ArrowUp" && event.key !== "ArrowDown")
+      ) {
+        return;
+      }
+
+      const target = event.target as HTMLElement;
+      const isFormField = target.matches("input, textarea, select");
+      const isSelectedNameField = Boolean(
+        target.closest("[data-selected-serialized-name='true']"),
+      );
+      if (isFormField && !isSelectedNameField) return;
+
+      event.preventDefault();
+
+      const currentIndex = navigableItems.findIndex(
+        (item) => item.id === selectedItemId,
+      );
+      if (currentIndex < 0) return;
+
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      const nextIndex = Math.min(
+        navigableItems.length - 1,
+        Math.max(0, currentIndex + direction),
+      );
+
+      if (nextIndex === currentIndex) return;
+
+      await saveSelectedItemName();
+      await saveSelectedBlockName();
+
+      const nextItemId = navigableItems[nextIndex].id;
+      setSelectedItemId(nextItemId);
+
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-serialized-item-id="${nextItemId}"]`)
+          ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      });
+    }
+
+    document.addEventListener("keydown", handleArrowNavigation, true);
+    return () =>
+      document.removeEventListener("keydown", handleArrowNavigation, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedItemId,
+    selectedBrandDraft,
+    selectedModelDraft,
+    selectedBlockDraft,
+    selectedItem?.name,
+    selectedItem?.fixture_type,
+    navigableItems,
+  ]);
 
   async function resolveSubcategoryId() {
     const catRes = await supabase
@@ -428,14 +491,14 @@ export default function SubcategoryClientSerialized({
     setLoading(items.length === 0);
     await refreshData(cacheKey);
   }
-    async function refreshData(cacheKey: string) {
+  async function refreshData(cacheKey: string) {
     try {
       const sid = await resolveSubcategoryId();
       setSubId(sid);
 
       const itemsRes = await supabase
         .from("items")
-        .select("id,name,photo_url,subcategory_id")
+        .select("id,name,fixture_type,photo_url,subcategory_id")
         .eq("subcategory_id", sid);
 
       if (itemsRes.error) throw itemsRes.error;
@@ -487,7 +550,7 @@ export default function SubcategoryClientSerialized({
 
       sessionStorage.setItem(
         cacheKey,
-        JSON.stringify({ subId: sid, items: list, statsByItem: stats })
+        JSON.stringify({ subId: sid, items: list, statsByItem: stats }),
       );
     } catch (e: any) {
       setErr(e?.message || "Failed to load");
@@ -502,23 +565,60 @@ export default function SubcategoryClientSerialized({
   }, [category, subcategory]);
 
   useEffect(() => {
+    function syncSidebarTarget() {
+      const nextTarget = document.getElementById("right-sidebar-actions");
+      setSidebarTarget((current) =>
+        current === nextTarget ? current : nextTarget,
+      );
+    }
+
+    syncSidebarTarget();
+    const observer = new MutationObserver(syncSidebarTarget);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       const target = e.target as HTMLElement;
-      const addMenu = document.getElementById("add-photo-menu");
-      const listMenu = target.closest("[data-list-photo-menu='true']");
-
-      if (addMenu && !addMenu.contains(target)) {
-        setPhotoMenuOpen(false);
-      }
-
-      if (!listMenu) {
-        setListPhotoMenuItemId(null);
+      if (!target.closest("[data-mobile-serialized-menu='true']")) {
+        setMobileMenuItemId(null);
       }
     }
 
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    async function handleSelectionClickOutside(e: MouseEvent) {
+      if (!selectedItemId) return;
+
+      const target = e.target as HTMLElement;
+      const insideItem = target.closest("[data-serialized-item-row='true']");
+      const insideSidebar = target.closest("#right-sidebar-actions");
+      const insideTools = target.closest("[data-serialized-tools='true']");
+      const insideSearch = target.closest("[data-serialized-search='true']");
+
+      if (insideItem || insideSidebar || insideTools || insideSearch) return;
+
+      await saveSelectedItemName();
+      await saveSelectedBlockName();
+      setSelectedItemId(null);
+    }
+
+    document.addEventListener("mousedown", handleSelectionClickOutside);
+    return () =>
+      document.removeEventListener("mousedown", handleSelectionClickOutside);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    selectedItemId,
+    selectedBrandDraft,
+    selectedModelDraft,
+    selectedBlockDraft,
+    selectedItem?.name,
+    selectedItem?.fixture_type,
+  ]);
 
   async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
     if (!editable) return;
@@ -564,14 +664,13 @@ export default function SubcategoryClientSerialized({
 
       const data = await res.json();
 
-      const results =
-        Array.isArray(data)
-          ? data
-          : Array.isArray(data?.images_results)
+      const results = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.images_results)
           ? data.images_results
           : Array.isArray(data?.items)
-          ? data.items
-          : [];
+            ? data.items
+            : [];
 
       setImageResults(results);
 
@@ -601,7 +700,7 @@ export default function SubcategoryClientSerialized({
     }
 
     const nextItems = items.map((it) =>
-      it.id === itemId ? { ...it, photo_url: imageUrl } : it
+      it.id === itemId ? { ...it, photo_url: imageUrl } : it,
     );
 
     setItems(nextItems);
@@ -680,7 +779,10 @@ export default function SubcategoryClientSerialized({
         finalImageUrl = data.url;
       }
     } catch (error) {
-      console.warn("Could not optimize online image, using thumbnail URL:", error);
+      console.warn(
+        "Could not optimize online image, using thumbnail URL:",
+        error,
+      );
       finalImageUrl = fallbackUrl;
     }
 
@@ -712,9 +814,10 @@ export default function SubcategoryClientSerialized({
         .insert({
           subcategory_id: subId,
           name: nm,
+          fixture_type: blockName.trim() || null,
           photo_url: photo || null,
         })
-        .select("id,name,photo_url,subcategory_id")
+        .select("id,name,fixture_type,photo_url,subcategory_id")
         .single();
 
       if (insItem.error) throw insItem.error;
@@ -754,13 +857,14 @@ export default function SubcategoryClientSerialized({
 
       setBrand("");
       setModel("");
+      setBlockName("");
       setQty(1);
       setPhoto(null);
       setImageSearch("");
       setImageResults([]);
       setSearchPanelOpen(false);
-      setPhotoMenuOpen(false);
       setSaveMsg("Item added");
+      setMobileAddOpen(false);
 
       setTimeout(() => {
         setSaveMsg((prev) => (prev === "Item added" ? "" : prev));
@@ -770,11 +874,8 @@ export default function SubcategoryClientSerialized({
     }
   }
 
-  async function onRename(itemId: string, current: string) {
+  async function renameItem(itemId: string, nextName: string) {
     if (!editable) return;
-
-    const nextName = prompt("Rename item:", current);
-    if (!nextName) return;
 
     const clean = nextName.trim();
     if (!clean) return;
@@ -788,7 +889,7 @@ export default function SubcategoryClientSerialized({
       if (upd.error) throw upd.error;
 
       const nextItems = sortItemsByBrand(
-        items.map((it) => (it.id === itemId ? { ...it, name: clean } : it))
+        items.map((it) => (it.id === itemId ? { ...it, name: clean } : it)),
       );
 
       setItems(nextItems);
@@ -807,6 +908,81 @@ export default function SubcategoryClientSerialized({
     } catch (e: any) {
       alert(e?.message || "Rename failed");
     }
+  }
+
+  async function onRenameMobile(item: ItemRow) {
+    if (!editable) return;
+    const nextName = prompt("Rename item:", item.name);
+    if (!nextName) return;
+    await renameItem(item.id, nextName);
+  }
+
+  async function saveSelectedItemName() {
+    if (!selectedItem) return;
+
+    const cleanBrand = selectedBrandDraft.trim();
+    const cleanModel = selectedModelDraft.trim();
+    const nextName =
+      cleanBrand && cleanModel
+        ? `${cleanBrand} - ${cleanModel}`
+        : cleanBrand || cleanModel;
+
+    if (!nextName || nextName === selectedItem.name) return;
+    await renameItem(selectedItem.id, nextName);
+  }
+
+  async function saveSelectedBlockName(nextValue = selectedBlockDraft) {
+    if (!editable || !selectedItem) return;
+
+    const clean = nextValue.trim();
+    const current = selectedItem.fixture_type?.trim() || "";
+
+    if (!clean) {
+      setSelectedBlockDraft(current);
+      return;
+    }
+
+    if (clean.toLowerCase() === current.toLowerCase()) return;
+
+    const { data, error } = await supabase
+      .from("items")
+      .update({ fixture_type: clean })
+      .eq("id", selectedItem.id)
+      .select("fixture_type")
+      .single();
+
+    if (error) {
+      console.error("update serialized block error", error);
+      alert("Block name update failed");
+      setSelectedBlockDraft(current);
+      return;
+    }
+
+    const savedBlockName = data?.fixture_type?.trim() || clean;
+
+    setItems((previous) => {
+      const nextItems = previous.map((item) =>
+        item.id === selectedItem.id
+          ? { ...item, fixture_type: savedBlockName }
+          : item,
+      );
+
+      writeItemsCache(category, subcategory, {
+        subId,
+        items: nextItems,
+        statsByItem,
+      });
+
+      return nextItems;
+    });
+    setSelectedBlockDraft(savedBlockName);
+
+    setSaveMsg("Block name updated");
+    setTimeout(() => {
+      setSaveMsg((previous) =>
+        previous === "Block name updated" ? "" : previous,
+      );
+    }, 1500);
   }
 
   async function onDelete(itemId: string) {
@@ -830,6 +1006,7 @@ export default function SubcategoryClientSerialized({
 
       setItems(nextItems);
       setStatsByItem(nextStats);
+      setSelectedItemId((current) => (current === itemId ? null : current));
 
       writeItemsCache(category, subcategory, {
         subId,
@@ -863,32 +1040,35 @@ export default function SubcategoryClientSerialized({
         key={it.id}
         className={!isLast ? "border-b border-gray-100 pb-4 mb-4" : ""}
       >
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div
+          data-serialized-item-row="true"
+          data-serialized-item-id={it.id}
+          className={`relative flex flex-col gap-3 rounded-xl transition sm:flex-row sm:items-start sm:justify-between ${
+            selectedItemId === it.id
+              ? "bg-gray-50 ring-2 ring-black"
+              : "hover:bg-gray-50"
+          }`}
+        >
           <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
             <Link
               href={detailsHref}
+              onClick={async (event) => {
+                if (window.matchMedia("(min-width: 640px)").matches) {
+                  event.preventDefault();
+                  if (selectedItemId === it.id) {
+                    await saveSelectedItemName();
+                    await saveSelectedBlockName();
+                    setSelectedItemId(null);
+                  } else {
+                    await saveSelectedItemName();
+                    await saveSelectedBlockName();
+                    setSelectedItemId(it.id);
+                  }
+                }
+              }}
               className="flex items-start gap-3 min-w-0 flex-1 group"
             >
-              <ItemPhoto
-                photo={it.photo_url}
-                name={it.name}
-                editable={editable}
-                menuOpen={listPhotoMenuItemId === it.id}
-                onToggleMenu={() =>
-                  setListPhotoMenuItemId((prev) =>
-                    prev === it.id ? null : it.id
-                  )
-                }
-                onUploadPhoto={() => {
-                  setListPhotoMenuItemId(null);
-                  setEditingPhotoItemId(it.id);
-                  listPhotoFileRef.current?.click();
-                }}
-                onSearchPhoto={() => {
-                  setListPhotoMenuItemId(null);
-                  void searchPhotoForItem(it);
-                }}
-              />
+              <ItemPhoto photo={it.photo_url} name={it.name} />
 
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 min-w-0">
@@ -899,42 +1079,25 @@ export default function SubcategoryClientSerialized({
                     {renderItemName(it.name)}
                   </h2>
 
-                  {editable && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onRename(it.id, it.name);
-                      }}
-                      className="text-red-500 text-[12px] shrink-0 hover:text-black"
-                    >
-                      ✎
-                    </button>
-                  )}
-
-                  {editable && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onDelete(it.id);
-                      }}
-                      className="ml-auto text-red-500 shrink-0 hover:text-black sm:hidden"
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  )}
                 </div>
 
                 <div className="mt-2 sm:hidden">
                   <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
-                    <div className="text-[8px] font-semibold text-gray-500">Total</div>
-                    <div className="text-[8px] font-semibold text-gray-500">Available</div>
-                    <div className="text-[8px] font-semibold text-gray-500">In Use</div>
-                    <div className="text-[8px] font-semibold text-gray-500">Maintenance</div>
-                    <div className="text-[8px] font-semibold text-gray-500">In KSA</div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      Total
+                    </div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      Available
+                    </div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      In Use
+                    </div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      Maintenance
+                    </div>
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      In KSA
+                    </div>
 
                     <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">
                       {stats.total}
@@ -957,30 +1120,444 @@ export default function SubcategoryClientSerialized({
                 <div className="mt-1 hidden sm:block">
                   <div className="flex flex-wrap gap-2">
                     <StatPill label="Total Qty" value={stats.total} />
-                    <StatPill label="Available Qty" value={stats.available} tone="green" />
+                    <StatPill
+                      label="Available Qty"
+                      value={stats.available}
+                      tone="green"
+                    />
                     <StatPill label="In Use" value={stats.inUse} tone="blue" />
-                    <StatPill label="Maintenance" value={stats.maintenance} tone="yellow" />
-                    <StatPill label="In KSA" value={stats.inKsa} tone="purple" />
+                    <StatPill
+                      label="Maintenance"
+                      value={stats.maintenance}
+                      tone="yellow"
+                    />
+                    <StatPill
+                      label="In KSA"
+                      value={stats.inKsa}
+                      tone="purple"
+                    />
                   </div>
                 </div>
               </div>
             </Link>
           </div>
 
-          <div className="hidden sm:flex items-center gap-2 shrink-0">
-            {editable && (
+          <Link
+            href={detailsHref}
+            onClick={(event) => event.stopPropagation()}
+            className="absolute right-2 top-2 hidden rounded-full border border-gray-300 bg-white px-2.5 py-1 text-[9px] font-medium text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700 sm:block"
+          >
+            Report
+          </Link>
+
+          {editable ? (
+            <div
+              data-mobile-serialized-menu="true"
+              className="absolute right-2 top-2 z-30 sm:hidden"
+            >
               <button
-                onClick={() => onDelete(it.id)}
-                className="px-2 py-1 rounded-full border border-gray-300 text-[9px] font-medium text-gray-700 bg-white hover:bg-red-50 hover:border-red-200 hover:text-red-700"
+                type="button"
+                aria-label={`Edit ${it.name}`}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setMobileMenuItemId((current) =>
+                    current === it.id ? null : it.id,
+                  );
+                }}
+                className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm"
               >
-                Delete
+                ⋮
               </button>
-            )}
-          </div>
+
+              {mobileMenuItemId === it.id ? (
+                <div className="absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-xl">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setMobileMenuItemId(null);
+                      void onRenameMobile(it);
+                    }}
+                    className="block w-full px-3 py-2 text-left text-[11px] font-medium text-gray-700 hover:bg-gray-50"
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setMobileMenuItemId(null);
+                      setEditingPhotoItemId(it.id);
+                      listPhotoFileRef.current?.click();
+                    }}
+                    className="block w-full border-t border-gray-100 px-3 py-2 text-left text-[11px] font-medium text-gray-700 hover:bg-gray-50"
+                  >
+                    Upload Photo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setMobileMenuItemId(null);
+                      void searchPhotoForItem(it);
+                    }}
+                    className="block w-full border-t border-gray-100 px-3 py-2 text-left text-[11px] font-medium text-gray-700 hover:bg-gray-50"
+                  >
+                    Search Photo
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setMobileMenuItemId(null);
+                      void onDelete(it.id);
+                    }}
+                    className="block w-full border-t border-gray-100 px-3 py-2 text-left text-[11px] font-medium text-red-600 hover:bg-red-50"
+                  >
+                    Delete Item
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </div>
     );
   }
+
+  const searchPhotoPanel = searchPanelOpen ? (
+    <div
+      data-serialized-search="true"
+      className="mt-4 rounded-2xl border border-gray-200 bg-white p-3"
+    >
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="text-[11px] font-semibold text-gray-900">
+          Search photo online
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setSearchPanelOpen(false);
+            setImageResults([]);
+            setEditingPhotoItemId(null);
+          }}
+          className="text-[10px] text-red-500 hover:text-black"
+        >
+          Close
+        </button>
+      </div>
+
+      <div className="flex gap-2">
+        <input
+          value={imageSearch}
+          onChange={(e) => setImageSearch(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              void searchOnlineImages();
+            }
+          }}
+          placeholder="Search image..."
+          className="h-9 min-w-0 flex-1 rounded-xl border border-gray-300 px-3 text-[11px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
+        />
+        <button
+          type="button"
+          onClick={() => void searchOnlineImages()}
+          disabled={searchingImages}
+          className="h-9 rounded-xl bg-black px-3 text-[10px] font-medium text-white disabled:opacity-40"
+        >
+          {searchingImages ? "..." : "Search"}
+        </button>
+      </div>
+
+      {imageResults.length > 0 ? (
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          {imageResults.map((img, index) => {
+            const imageUrl = img.original || img.image || img.thumbnail;
+            const thumb = img.thumbnail || imageUrl;
+            if (!imageUrl || !thumb) return null;
+
+            return (
+              <button
+                key={`${imageUrl}-${index}`}
+                type="button"
+                onClick={() => void selectOnlinePhoto(img)}
+                className="overflow-hidden rounded-lg border border-gray-200 hover:border-black"
+                title={img.title || "Select photo"}
+              >
+                <img
+                  src={thumb}
+                  alt={img.title || "Online image"}
+                  className="aspect-square w-full object-cover"
+                />
+              </button>
+            );
+          })}
+        </div>
+      ) : searchingImages ? (
+        <div className="mt-3 text-[10px] text-gray-500">
+          Searching images...
+        </div>
+      ) : null}
+    </div>
+  ) : null;
+
+  const editItemPanel = selectedItem ? (
+    <div
+      data-serialized-tools="true"
+      className="mb-4 rounded-2xl border-2 border-black bg-white p-3 shadow-sm"
+    >
+      <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
+        Selected Item
+      </div>
+      <div
+        data-selected-serialized-name="true"
+        className="mt-2 grid grid-cols-1 gap-1.5"
+      >
+        <input
+          value={selectedBrandDraft}
+          onChange={(event) => setSelectedBrandDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void saveSelectedItemName();
+            }
+          }}
+          placeholder="Brand"
+          disabled={!editable}
+          className="h-8 w-full rounded-lg border border-gray-300 bg-white px-2.5 text-[9px] font-semibold text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+        />
+        <input
+          value={selectedModelDraft}
+          onChange={(event) => setSelectedModelDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void saveSelectedItemName();
+            }
+          }}
+          placeholder="Model"
+          disabled={!editable}
+          className="h-8 w-full rounded-lg border border-gray-300 bg-white px-2.5 text-[9px] text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+        />
+      </div>
+
+      <div className="relative mt-1.5">
+        <input
+          value={selectedBlockDraft}
+          onFocus={() => setBlockSuggestionsOpen(true)}
+          onChange={(event) => {
+            setSelectedBlockDraft(event.target.value);
+            setBlockSuggestionsOpen(true);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              setBlockSuggestionsOpen(false);
+              event.currentTarget.blur();
+            } else if (event.key === "Escape") {
+              setBlockSuggestionsOpen(false);
+            }
+          }}
+          onBlur={(event) => {
+            setBlockSuggestionsOpen(false);
+            void saveSelectedBlockName(event.currentTarget.value);
+          }}
+          placeholder="Block Name"
+          disabled={!editable}
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={blockSuggestionsOpen}
+          aria-controls="serialized-block-suggestions"
+          className="h-8 w-full rounded-lg border border-gray-300 bg-white px-2.5 pr-7 text-[9px] font-medium text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+        />
+
+        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[8px] text-gray-400">
+          ▼
+        </span>
+
+        {blockSuggestionsOpen && filteredBlockOptions.length > 0 ? (
+          <div
+            id="serialized-block-suggestions"
+            role="listbox"
+            className="absolute left-0 right-0 top-[calc(100%+4px)] z-[100] max-h-40 overflow-y-auto rounded-lg border border-gray-200 bg-white p-1 shadow-lg"
+          >
+            {filteredBlockOptions.map((option) => (
+              <button
+                key={option}
+                type="button"
+                role="option"
+                aria-selected={
+                  option.toLowerCase() === selectedBlockDraft.toLowerCase()
+                }
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  setSelectedBlockDraft(option);
+                  setBlockSuggestionsOpen(false);
+                  void saveSelectedBlockName(option);
+                }}
+                className="block w-full rounded-md px-2.5 py-2 text-left text-[9px] font-medium text-gray-700 hover:bg-gray-100"
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+
+      <div className="my-3 flex items-center gap-3 rounded-xl bg-gray-50 p-2">
+        <ItemPhoto photo={selectedItem.photo_url} name={selectedItem.name} />
+        <div className="min-w-0 text-[10px] text-gray-500">
+          Use the fields above to rename. Changes save automatically.
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-2">
+        <Link
+          href={`/inventory/${category}/${subcategory}/${selectedItem.id}`}
+          className="rounded-xl bg-black px-3 py-2.5 text-center text-[11px] font-medium text-white hover:opacity-90"
+        >
+          Open Item / Report
+        </Link>
+        {editable ? (
+          <>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingPhotoItemId(selectedItem.id);
+                  listPhotoFileRef.current?.click();
+                }}
+                className="rounded-xl border border-gray-300 bg-white px-2 py-2.5 text-[10px] font-medium text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+              >
+                Upload Photo
+              </button>
+              <button
+                type="button"
+                onClick={() => void searchPhotoForItem(selectedItem)}
+                className="rounded-xl border border-gray-300 bg-white px-2 py-2.5 text-[10px] font-medium text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+              >
+                Search Photo
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => void onDelete(selectedItem.id)}
+              className="flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-[11px] font-medium text-red-700 hover:bg-red-100"
+            >
+              <Trash2 size={14} />
+              Delete Item
+            </button>
+          </>
+        ) : null}
+      </div>
+    </div>
+  ) : null;
+
+  const sidebarAddPanel = editable && !selectedItem ? (
+    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="mb-4">
+        <h2 className="text-[13px] font-semibold text-gray-900">Add Item</h2>
+        <p className="mt-1 text-[10px] text-gray-500">
+          Enter brand, model, block name, quantity and optional photo.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 gap-2">
+        <input
+          value={brand}
+          onChange={(e) => {
+            setBrand(e.target.value);
+            if (!imageSearch) {
+              setImageSearch(`${e.target.value} ${model}`.trim());
+            }
+          }}
+          placeholder="Brand"
+          className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none focus:border-black"
+        />
+        <input
+          value={model}
+          onChange={(e) => {
+            setModel(e.target.value);
+            if (!imageSearch) {
+              setImageSearch(`${brand} ${e.target.value}`.trim());
+            }
+          }}
+          placeholder="Model"
+          className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none focus:border-black"
+        />
+        <input
+          value={blockName}
+          onChange={(event) => setBlockName(event.target.value)}
+          list="serialized-add-block-options"
+          placeholder="Block Name"
+          className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none focus:border-black"
+        />
+        <input
+          value={qty}
+          onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
+          type="number"
+          min={1}
+          placeholder="Qty"
+          className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none focus:border-black"
+        />
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="h-11 rounded-2xl border border-gray-300 bg-white px-2 text-[11px] font-medium text-gray-700 hover:bg-red-50"
+          >
+            {photo ? "Photo ✔" : "Upload Photo"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setEditingPhotoItemId(null);
+              setImageSearch(itemSearchName);
+              void searchOnlineImages(itemSearchName);
+            }}
+            className="h-11 rounded-2xl border border-gray-300 bg-white px-2 text-[11px] font-medium text-gray-700 hover:bg-red-50"
+          >
+            Search Photo
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={onAdd}
+          disabled={!canAdd}
+          className="h-11 w-full rounded-2xl bg-black px-4 text-[12px] font-medium text-white disabled:opacity-40"
+        >
+          + Add
+        </button>
+      </div>
+
+      {photo ? (
+        <div className="mt-3 flex items-center gap-3 rounded-xl bg-gray-50 p-2">
+          <img
+            src={photo}
+            alt="Selected"
+            className="h-12 w-12 rounded-lg object-cover"
+          />
+          <button
+            type="button"
+            onClick={() => setPhoto(null)}
+            className="text-[10px] font-medium text-red-500"
+          >
+            Remove photo
+          </button>
+        </div>
+      ) : null}
+      {searchPhotoPanel}
+      {saveMsg ? (
+        <div className="mt-3 text-[10px] text-gray-500">{saveMsg}</div>
+      ) : null}
+    </div>
+  ) : null;
 
   if (loading) {
     return (
@@ -1011,236 +1588,98 @@ export default function SubcategoryClientSerialized({
   }
 
   return (
-  <div className="w-full space-y-3">
-      {editable && (
-        <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-sm">
-          <div className="mb-4">
-            <h1 className="text-[13px] font-semibold leading-tight text-gray-900">
-              Add Items
-            </h1>
-            <p className="mt-1 text-[10px] text-gray-500">
-              Add brand, model, quantity and optional photo.
-            </p>
-          </div>
+    <div className="w-full space-y-3">
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={onPickPhoto}
+      />
+      <input
+        ref={listPhotoFileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={onPickListItemPhoto}
+      />
 
-          <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_76px_116px_76px] md:items-center">
-            <input
-              value={brand}
-              onChange={(e) => {
-                setBrand(e.target.value);
-                if (!imageSearch) setImageSearch(`${e.target.value} ${model}`.trim());
-              }}
-              placeholder="Brand"
-              className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
-            />
+      <datalist id="serialized-add-block-options">
+        {blockOptions.map((option) => (
+          <option key={option} value={option} />
+        ))}
+      </datalist>
 
-            <input
-              value={model}
-              onChange={(e) => {
-                setModel(e.target.value);
-                if (!imageSearch) setImageSearch(`${brand} ${e.target.value}`.trim());
-              }}
-              placeholder="Model"
-              className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
-            />
+      {editable && !selectedItem ? (
+        <>
+          <button
+            type="button"
+            aria-label="Add item"
+            onClick={() => setMobileAddOpen(true)}
+            className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl active:scale-95 sm:hidden"
+          >
+            +
+          </button>
 
-            <input
-              value={qty}
-              onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
-              type="number"
-              min={1}
-              placeholder="Qty"
-              className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
-            />
-
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={onPickPhoto}
-            />
-
-            <input
-              ref={listPhotoFileRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={onPickListItemPhoto}
-            />
-
-            <div id="add-photo-menu" className="relative">
+          {mobileAddOpen ? (
+            <div className="fixed inset-0 z-[9998] sm:hidden">
               <button
                 type="button"
-                onClick={() => setPhotoMenuOpen((v) => !v)}
-                className="flex h-11 w-full items-center justify-center gap-1 rounded-2xl border border-gray-300 bg-white px-4 text-[12px] font-medium text-gray-700 shadow-sm transition hover:bg-red-50 hover:border-red-200 hover:text-red-700"
-              >
-                {photo ? "Photo ✔" : "Add photo"}
-                <ChevronDown size={13} />
-              </button>
-
-              {photoMenuOpen ? (
-                <div className="absolute right-0 top-full z-[9999] mt-2 w-40 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-lg">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPhotoMenuOpen(false);
-                      fileRef.current?.click();
-                    }}
-                    className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
-                  >
-                    Upload photo
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPhotoMenuOpen(false);
-                      setSearchPanelOpen(true);
-                      setImageSearch(itemSearchName);
-                      setTimeout(() => void searchOnlineImages(itemSearchName), 50);
-                    }}
-                    className="block w-full px-3 py-2 text-left text-[11px] text-gray-700 hover:bg-gray-50"
-                  >
-                    Search photo
-                  </button>
-                </div>
-              ) : null}
-            </div>
-
-            <button
-              onClick={onAdd}
-              disabled={!canAdd}
-              className="h-11 w-full rounded-2xl border border-black bg-black px-4 text-[12px] font-medium text-white shadow-sm transition hover:opacity-90 disabled:opacity-40"
-            >
-              + Add
-            </button>
-          </div>
-
-          {photo ? (
-            <div className="mt-3 flex items-center gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-2">
-              <img
-                src={photo}
-                alt="Selected"
-                loading="lazy"
-                decoding="async"
-                className="h-12 w-12 rounded-xl object-cover border border-gray-200 bg-white"
+                aria-label="Close add item form"
+                onClick={() => setMobileAddOpen(false)}
+                className="absolute inset-0 bg-black/45"
               />
-
-              <button
-                type="button"
-                onClick={() => setPhoto(null)}
-                className="text-[10px] font-medium text-red-500 hover:text-black"
-              >
-                Remove photo
-              </button>
+              <div className="absolute inset-x-0 bottom-0 max-h-[88dvh] overflow-y-auto rounded-t-3xl bg-gray-50 p-3 pb-[calc(env(safe-area-inset-bottom)+16px)] shadow-2xl">
+                <div className="mb-2 flex items-center justify-between px-1">
+                  <div className="h-1 w-10 rounded-full bg-gray-300" />
+                  <button
+                    type="button"
+                    onClick={() => setMobileAddOpen(false)}
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-lg text-gray-700"
+                    aria-label="Close"
+                  >
+                    ×
+                  </button>
+                </div>
+                {sidebarAddPanel}
+              </div>
             </div>
           ) : null}
+        </>
+      ) : null}
 
-          {searchPanelOpen ? (
-            <div className="mt-4 rounded-2xl border border-gray-200 p-3 relative z-50 bg-white">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <div className="text-[12px] font-semibold text-gray-900">
-                  Search photo online
-                </div>
+      {sidebarTarget
+        ? createPortal(
+            <div>
+              {editItemPanel}
+              {sidebarAddPanel}
+            </div>,
+            sidebarTarget,
+          )
+        : null}
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSearchPanelOpen(false);
-                    setImageResults([]);
-                    setEditingPhotoItemId(null);
-                  }}
-                  className="text-[10px] text-red-500 hover:text-black"
-                >
-                  Close
-                </button>
-              </div>
-
-              <div className="flex gap-2">
-                <input
-                  value={imageSearch}
-                  onChange={(e) => setImageSearch(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void searchOnlineImages();
-                    }
-                  }}
-                  placeholder="Search image..."
-                  className="h-10 flex-1 rounded-xl border border-gray-300 px-3 text-[12px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
-                />
-
-                <button
-                  type="button"
-                  onClick={() => void searchOnlineImages()}
-                  disabled={searchingImages}
-                  className="h-10 rounded-xl bg-black px-3 text-[11px] font-medium text-white disabled:opacity-40"
-                >
-                  {searchingImages ? "Searching..." : "Search"}
-                </button>
-              </div>
-
-              {searchingImages ? (
-                <div className="mt-3 text-xs text-gray-500">Searching images...</div>
-              ) : null}
-
-              {imageResults.length > 0 ? (
-                <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-6">
-                  {imageResults.map((img, index) => {
-                    const imageUrl = img.original || img.image || img.thumbnail;
-                    const thumb = img.thumbnail || imageUrl;
-
-                    if (!imageUrl || !thumb) return null;
-
-                    return (
-                      <button
-                        key={`${imageUrl}-${index}`}
-                        type="button"
-                        onClick={() => void selectOnlinePhoto(img)}
-                        className="overflow-hidden rounded-lg border border-gray-200 hover:border-blue-400"
-                        title={img.title || "Select photo"}
-                      >
-                        <img
-                          src={thumb}
-                          alt={img.title || "Online image"}
-                          loading="lazy"
-                          decoding="async"
-                          className="aspect-square w-full object-cover"
-                        />
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          {saveMsg ? (
-            <div className="mt-3 text-xs text-gray-500">{saveMsg}</div>
-          ) : null}
-        </div>
-      )}
+      <div className="hidden sm:block xl:hidden">{editItemPanel}</div>
+      <div className="hidden sm:block xl:hidden">{sidebarAddPanel}</div>
 
       {items.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
           No items yet.
         </div>
       ) : (
-        brandGroups.map((group) => (
+        blockGroups.map((group) => (
           <div
-            key={group.brand}
+            key={group.block}
             className="bg-white border border-gray-200 rounded-2xl p-6"
           >
             <div className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
               <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
               <h2 className="text-[8px] font-semibold uppercase tracking-wide text-gray-500">
-                {group.brand}
+                {group.block}
               </h2>
             </div>
 
             {group.items.map((it, index) =>
-              renderItemRow(it, index === group.items.length - 1)
+              renderItemRow(it, index === group.items.length - 1),
             )}
           </div>
         ))
