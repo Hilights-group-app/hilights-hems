@@ -256,6 +256,90 @@ function metadataText(item: EquipmentListItem, key: string) {
   return typeof value === "string" ? value : "";
 }
 
+type EquipmentDisplayParts = {
+  brand: string;
+  model: string;
+  primaryName: string;
+  cabinetDetail: string;
+};
+
+function equipmentDisplayParts(
+  item: EquipmentListItem,
+  displayName: string,
+): EquipmentDisplayParts {
+  const cleanName = displayName.trim();
+  const isGenericMatrix =
+    item.inventory_record_type === "matrix_model" ||
+    (item.inventory_record_type === "matrix_row" &&
+      item.metadata?.matrix_source === "generic");
+  const isLedCabinet =
+    item.inventory_record_type === "matrix_row" && !isGenericMatrix;
+  const displaySegments = isLedCabinet
+    ? cleanName
+        .split(/\s*·\s*/)
+        .map((part) => part.trim())
+        .filter(Boolean)
+    : [cleanName];
+  const primaryName = displaySegments[0] || cleanName;
+  const cabinetModel = isLedCabinet
+    ? metadataText(item, "cabinet_model").trim() || displaySegments[1] || ""
+    : "";
+  const cabinetSize = isLedCabinet
+    ? metadataText(item, "cabinet_size").trim() || displaySegments[2] || ""
+    : "";
+  const cabinetDetail = [
+    cabinetModel ? `Cabinet: ${cabinetModel}` : "",
+    cabinetSize,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  if (isLedCabinet && !primaryName.includes(" - ")) {
+    const firstSpace = primaryName.indexOf(" ");
+    if (firstSpace > 0) {
+      return {
+        brand: primaryName.slice(0, firstSpace).trim(),
+        model: primaryName.slice(firstSpace + 1).trim(),
+        primaryName,
+        cabinetDetail,
+      };
+    }
+  }
+
+  if (
+    item.inventory_record_type === "item" ||
+    isGenericMatrix ||
+    !primaryName.includes(" - ")
+  ) {
+    return {
+      brand: "",
+      model: primaryName,
+      primaryName,
+      cabinetDetail,
+    };
+  }
+
+  const [brand, ...modelParts] = primaryName
+    .split(" - ")
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return {
+    brand: brand || "",
+    model: modelParts.join(" - "),
+    primaryName,
+    cabinetDetail,
+  };
+}
+
+function formatSquareMetres(value: number) {
+  return `${Number(value.toFixed(3))} SQM`;
+}
+
+function formatUnitQuantity(value: number) {
+  return `${value} ${value === 1 ? "Unit" : "Units"}`;
+}
+
 function unitLabel(item: EquipmentListItem) {
   if (item.inventory_record_type === "item") {
     return "Not in Inventory";
@@ -268,16 +352,16 @@ function unitLabel(item: EquipmentListItem) {
   ) {
     const rowLabel = metadataText(item, "row_label");
     return rowLabel
-      ? `${rowLabel} · Qty: ${item.requested_quantity}`
-      : `Qty: ${item.requested_quantity}`;
+      ? `${rowLabel} · ${formatUnitQuantity(item.requested_quantity)}`
+      : formatUnitQuantity(item.requested_quantity);
   }
 
   if (item.inventory_record_type === "matrix_row") {
     const actualSquareMetres = Number(item.metadata?.actual_sqm);
     if (Number.isFinite(actualSquareMetres) && actualSquareMetres > 0) {
-      return `${Number(actualSquareMetres.toFixed(3))} SQM · ${item.requested_quantity} cabinet${item.requested_quantity === 1 ? "" : "s"}`;
+      return formatSquareMetres(actualSquareMetres);
     }
-    return `${item.requested_quantity} cabinet${item.requested_quantity === 1 ? "" : "s"}`;
+    return formatUnitQuantity(item.requested_quantity);
   }
 
   const unitNo = item.metadata?.unit_no;
@@ -915,25 +999,55 @@ export default function EquipmentListDetailsClient({
   async function updateItemQuantity(
     item: EquipmentListItem,
     nextValue: number,
+    quantityUnit: "units" | "sqm" = "units",
   ) {
     if (!list || !editable || !isDraft || updatingItemId) return;
     if (item.inventory_record_type === "unit") return;
 
-    const nextQuantity = Math.max(1, Math.floor(Number(nextValue) || 1));
-    if (nextQuantity === item.requested_quantity) return;
+    const metadata = { ...(item.metadata || {}) };
+    const cabinetArea = Number(metadata.cabinet_area_sqm);
+    const isSquareMetreQuantity =
+      quantityUnit === "sqm" &&
+      item.inventory_record_type === "matrix_row" &&
+      metadata.matrix_source !== "generic" &&
+      Number.isFinite(cabinetArea) &&
+      cabinetArea > 0;
+    const requestedSquareMetres = isSquareMetreQuantity
+      ? Math.max(cabinetArea, Number(nextValue) || cabinetArea)
+      : 0;
+    const nextQuantity = isSquareMetreQuantity
+      ? Math.max(
+          1,
+          Math.ceil(requestedSquareMetres / cabinetArea - 0.0000001),
+        )
+      : Math.max(1, Math.floor(Number(nextValue) || 1));
+    const nextActualSquareMetres = isSquareMetreQuantity
+      ? nextQuantity * cabinetArea
+      : 0;
+    const currentActualSquareMetres = Number(metadata.actual_sqm);
+
+    if (
+      nextQuantity === item.requested_quantity &&
+      (!isSquareMetreQuantity ||
+        (Number.isFinite(currentActualSquareMetres) &&
+          Math.abs(currentActualSquareMetres - nextActualSquareMetres) <
+            0.000001))
+    ) {
+      return;
+    }
 
     setUpdatingItemId(item.id);
     setError("");
 
-    const metadata = { ...(item.metadata || {}) };
-    const cabinetArea = Number(metadata.cabinet_area_sqm);
     if (
       item.inventory_record_type === "matrix_row" &&
       metadata.matrix_source !== "generic" &&
       Number.isFinite(cabinetArea) &&
       cabinetArea > 0
     ) {
-      metadata.requested_sqm = nextQuantity * cabinetArea;
+      metadata.requested_sqm = isSquareMetreQuantity
+        ? requestedSquareMetres
+        : nextQuantity * cabinetArea;
       metadata.actual_sqm = nextQuantity * cabinetArea;
     }
 
@@ -1193,6 +1307,10 @@ export default function EquipmentListDetailsClient({
         firstItem.inventory_record_type === "matrix_row" &&
         firstItem.metadata?.matrix_source === "generic" &&
         Boolean(firstItem.parent_record_id);
+      const displayParts = equipmentDisplayParts(
+        firstItem,
+        group.displayName,
+      );
 
       if (category !== previousCategory) {
         body.push([
@@ -1239,18 +1357,29 @@ export default function EquipmentListDetailsClient({
       );
       const itemPhotoUrl = metadataText(firstItem, "photo_url").trim();
       const hasItemPhoto = itemPhotos.has(itemPhotoUrl);
+      const itemRowHeight = hasItemPhoto
+        ? 12.5
+        : displayParts.cabinetDetail
+          ? 10.5
+          : 8.5;
 
       body.push([
         {
-          content: group.displayName,
+          content: "",
           colSpan: 5,
           rowKind: "item",
           photoUrl: hasItemPhoto ? itemPhotoUrl : "",
+          brandText: displayParts.brand,
+          modelText: displayParts.model,
+          primaryText: displayParts.primaryName,
+          cabinetText: displayParts.cabinetDetail,
+          primaryBold:
+            isGenericMatrix || firstItem.inventory_record_type === "item",
           styles: {
-            fontStyle: "bold",
+            fontStyle: "normal",
             fontSize: 8.7,
             textColor: [22, 24, 28],
-            minCellHeight: hasItemPhoto ? 12.5 : 8.5,
+            minCellHeight: itemRowHeight,
             cellPadding: {
               top: hasItemPhoto ? 3.3 : 2.8,
               right: 3,
@@ -1264,15 +1393,15 @@ export default function EquipmentListDetailsClient({
           content: isMatrixChildCollection
             ? ""
             : hasAreaDetail
-              ? `${Number(squareMetres.toFixed(3))} SQM`
-              : String(quantity),
+              ? formatSquareMetres(squareMetres)
+              : formatUnitQuantity(quantity),
           styles: {
             halign: "right",
             valign: "middle",
             fontStyle: "bold",
-            fontSize: hasAreaDetail ? 7.2 : 9.2,
+            fontSize: hasAreaDetail ? 7.2 : 7.6,
             textColor: [22, 24, 28],
-            minCellHeight: hasItemPhoto ? 12.5 : 8.5,
+            minCellHeight: itemRowHeight,
             cellPadding: {
               top: hasItemPhoto ? 3.3 : 2.8,
               right: hasAreaDetail ? 1.8 : 3,
@@ -1321,7 +1450,7 @@ export default function EquipmentListDetailsClient({
               },
             },
             {
-              content: String(item.requested_quantity),
+              content: formatUnitQuantity(item.requested_quantity),
               styles: {
                 fillColor: [255, 255, 255],
                 textColor: [35, 35, 35],
@@ -1381,10 +1510,6 @@ export default function EquipmentListDetailsClient({
 
     autoTable(pdf, {
       startY: tableStartY,
-      head: [[
-        { content: "EQUIPMENT / SELECTED UNITS", colSpan: 5 },
-        "QTY",
-      ]],
       body,
       theme: "plain",
       styles: {
@@ -1396,13 +1521,6 @@ export default function EquipmentListDetailsClient({
         lineWidth: { bottom: 0.15 },
         overflow: "linebreak",
       },
-      headStyles: {
-        fillColor: [22, 24, 28],
-        textColor: [255, 255, 255],
-        fontStyle: "bold",
-        fontSize: 7.8,
-        cellPadding: { top: 3, right: 3, bottom: 3, left: 3 },
-      },
       columnStyles: {
         0: { cellWidth: 50 },
         1: { cellWidth: 3 },
@@ -1412,12 +1530,17 @@ export default function EquipmentListDetailsClient({
         5: { cellWidth: 26, halign: "right" },
       },
       rowPageBreak: "avoid",
-      showHead: "everyPage",
+      showHead: "never",
       margin: { left: 14, right: 14, bottom: 12 },
       didDrawCell: (hookData: any) => {
         const raw = hookData.cell.raw as {
           rowKind?: string;
           photoUrl?: string;
+          brandText?: string;
+          modelText?: string;
+          primaryText?: string;
+          cabinetText?: string;
+          primaryBold?: boolean;
         };
 
         if (raw?.rowKind === "category") {
@@ -1431,7 +1554,74 @@ export default function EquipmentListDetailsClient({
           );
         }
 
-        if (raw?.rowKind === "item" && raw.photoUrl) {
+        if (raw?.rowKind === "item") {
+          const textX = hookData.cell.x + (raw.photoUrl ? 15 : 3);
+          const textWidth = Math.max(
+            10,
+            hookData.cell.width - (raw.photoUrl ? 18 : 6),
+          );
+          const hasCabinetText = Boolean(raw.cabinetText);
+          const mainY = hasCabinetText
+            ? hookData.cell.y + 4.15
+            : hookData.cell.y + hookData.cell.height / 2 + 1.05;
+          const fitText = (value: string, maxWidth: number) => {
+            const clean = value.trim();
+            if (!clean || pdf.getTextWidth(clean) <= maxWidth) return clean;
+
+            let shortened = clean;
+            while (
+              shortened.length > 1 &&
+              pdf.getTextWidth(`${shortened}…`) > maxWidth
+            ) {
+              shortened = shortened.slice(0, -1).trimEnd();
+            }
+            return `${shortened}…`;
+          };
+
+          pdf.setFontSize(8.7);
+          pdf.setTextColor(22, 24, 28);
+
+          if (raw.brandText) {
+            pdf.setFont("helvetica", "bold");
+            const brandText = fitText(raw.brandText, textWidth);
+            pdf.text(brandText, textX, mainY);
+
+            if (raw.modelText && brandText === raw.brandText.trim()) {
+              const brandWidth = pdf.getTextWidth(brandText);
+              pdf.setFont("helvetica", "normal");
+              const gapWidth = pdf.getTextWidth(" ");
+              const modelText = fitText(
+                raw.modelText,
+                Math.max(0, textWidth - brandWidth - gapWidth),
+              );
+              if (modelText) {
+                pdf.text(modelText, textX + brandWidth + gapWidth, mainY);
+              }
+            }
+          } else {
+            pdf.setFont(
+              "helvetica",
+              raw.primaryBold ? "bold" : "normal",
+            );
+            pdf.text(
+              fitText(raw.primaryText || raw.modelText || "", textWidth),
+              textX,
+              mainY,
+            );
+          }
+
+          if (raw.cabinetText) {
+            pdf.setFont("helvetica", "normal");
+            pdf.setFontSize(6.3);
+            pdf.setTextColor(76, 88, 105);
+            pdf.text(
+              fitText(raw.cabinetText, textWidth),
+              textX,
+              mainY + 3.35,
+            );
+          }
+
+          if (!raw.photoUrl) return;
           const photo = itemPhotos.get(raw.photoUrl);
           if (!photo) return;
 
@@ -1982,13 +2172,6 @@ export default function EquipmentListDetailsClient({
           </div>
         </div>
 
-        {groups.length > 0 ? (
-          <div className="hidden grid-cols-[minmax(0,1fr)_80px] items-center gap-3 border-y border-gray-200 bg-gray-50 px-4 py-2 text-[9px] font-bold uppercase tracking-wide text-gray-500 sm:grid sm:px-5">
-            <div>Equipment / Selected Units</div>
-            <div className="text-right">Qty</div>
-          </div>
-        ) : null}
-
         {groups.length === 0 ? (
           <div className="m-4 rounded-xl border border-dashed border-gray-300 px-4 py-12 text-center">
             <div className="text-sm font-semibold text-gray-700">List is empty</div>
@@ -1997,7 +2180,7 @@ export default function EquipmentListDetailsClient({
             </div>
           </div>
         ) : (
-          <div className="divide-y divide-gray-100 border-t border-gray-100 sm:border-t-0">
+          <div className="divide-y divide-gray-100 border-t border-gray-100">
             {sortedGroups.map((group, groupIndex) => {
               const quantity = group.items.reduce(
                 (total, item) => total + (item.requested_quantity || 0),
@@ -2032,6 +2215,20 @@ export default function EquipmentListDetailsClient({
                 const value = Number(item.metadata?.actual_sqm);
                 return total + (Number.isFinite(value) ? value : 0);
               }, 0);
+              const hasSquareMetreQuantity =
+                isMatrixRow && !isGenericMatrix && groupSquareMetres > 0;
+              const displayParts = equipmentDisplayParts(
+                firstItem,
+                group.displayName,
+              );
+              const cabinetArea = Number(
+                firstItem.metadata?.cabinet_area_sqm,
+              );
+              const hasCabinetArea =
+                Number.isFinite(cabinetArea) && cabinetArea > 0;
+              const quantityText = hasSquareMetreQuantity
+                ? formatSquareMetres(groupSquareMetres)
+                : formatUnitQuantity(quantity);
               const category = metadataText(firstItem, "category");
               const subcategory = metadataText(firstItem, "subcategory");
               const currentCategoryLabel = categoryLabel(category);
@@ -2081,18 +2278,41 @@ export default function EquipmentListDetailsClient({
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <div className="truncate text-[12px] font-bold text-gray-900 sm:text-[13px]">
-                            {group.displayName}
+                          <div
+                            className="truncate text-[12px] text-gray-900 sm:text-[13px]"
+                            title={displayParts.primaryName}
+                          >
+                            {displayParts.brand ? (
+                              <>
+                                <span className="font-bold">
+                                  {displayParts.brand}
+                                </span>
+                                {displayParts.model ? (
+                                  <span className="font-normal text-gray-800">
+                                    {` ${displayParts.model}`}
+                                  </span>
+                                ) : null}
+                              </>
+                            ) : (
+                              <span
+                                className={
+                                  isGenericMatrix || isCustomItem
+                                    ? "font-semibold"
+                                    : "font-normal"
+                                }
+                              >
+                                {displayParts.primaryName}
+                              </span>
+                            )}
                           </div>
+                          {displayParts.cabinetDetail ? (
+                            <div className="mt-0.5 truncate text-[8px] font-normal text-slate-600 sm:text-[9px]">
+                              {displayParts.cabinetDetail}
+                            </div>
+                          ) : null}
                           {group.blockName && !isGenericMatrix ? (
                             <div className="mt-0.5 text-[9px] text-gray-500">
                               Block: {group.blockName}
-                            </div>
-                          ) : null}
-                          {isMatrixRow && !isGenericMatrix && groupSquareMetres > 0 ? (
-                            <div className="mt-0.5 text-[9px] text-gray-500">
-                              {Number(groupSquareMetres.toFixed(3))} SQM · {quantity}{" "}
-                              cabinet{quantity === 1 ? "" : "s"}
                             </div>
                           ) : null}
                           {isCustomItem && metadataText(firstItem, "notes") ? (
@@ -2104,17 +2324,27 @@ export default function EquipmentListDetailsClient({
 
                         <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
                           {!isMatrixChildCollection ? (
-                          <div className="flex min-w-[54px] flex-col items-end">
-                            <span className="text-[7px] font-bold uppercase tracking-wider text-gray-400">
-                              Qty
-                            </span>
+                          <div className="flex min-w-[72px] items-center justify-end">
                             {canEditQuantity ? (
-                              <div className="mt-0.5 flex items-center gap-1">
+                              <div className="flex items-center justify-end gap-1">
                                 <input
-                                  key={`${firstItem.id}:${firstItem.requested_quantity}`}
+                                  key={`${firstItem.id}:${firstItem.requested_quantity}:${groupSquareMetres}`}
                                   type="number"
-                                  min={1}
-                                  defaultValue={firstItem.requested_quantity}
+                                  min={
+                                    hasSquareMetreQuantity && hasCabinetArea
+                                      ? cabinetArea
+                                      : 1
+                                  }
+                                  step={
+                                    hasSquareMetreQuantity && hasCabinetArea
+                                      ? cabinetArea
+                                      : 1
+                                  }
+                                  defaultValue={
+                                    hasSquareMetreQuantity
+                                      ? Number(groupSquareMetres.toFixed(3))
+                                      : firstItem.requested_quantity
+                                  }
                                   disabled={updatingItemId === firstItem.id}
                                   onKeyDown={(event) => {
                                     if (event.key === "Enter") {
@@ -2126,11 +2356,19 @@ export default function EquipmentListDetailsClient({
                                     void updateItemQuantity(
                                       firstItem,
                                       Number(event.currentTarget.value),
+                                      hasSquareMetreQuantity ? "sqm" : "units",
                                     )
                                   }
                                   aria-label={`Quantity for ${group.displayName}`}
-                                  className="h-7 w-14 rounded-lg border border-gray-300 bg-white px-2 text-right text-[10px] font-bold text-gray-900 outline-none focus:border-black disabled:bg-gray-100"
+                                  className="h-7 w-16 rounded-lg border border-gray-300 bg-white px-2 text-right text-[10px] font-bold text-gray-900 outline-none focus:border-black disabled:bg-gray-100"
                                 />
+                                <span className="whitespace-nowrap text-[8px] font-semibold text-gray-600">
+                                  {hasSquareMetreQuantity
+                                    ? "SQM"
+                                    : firstItem.requested_quantity === 1
+                                      ? "Unit"
+                                      : "Units"}
+                                </span>
                                 {updatingItemId === firstItem.id ? (
                                   <Loader2
                                     size={11}
@@ -2157,13 +2395,13 @@ export default function EquipmentListDetailsClient({
                                 }
                                 title="Choose units and serial numbers"
                                 aria-label={`Choose units for ${group.displayName}`}
-                                className="mt-0.5 h-7 min-w-14 rounded-lg border border-gray-300 bg-white px-2 text-right text-[11px] font-bold tabular-nums text-gray-900 transition hover:border-black hover:bg-gray-50"
+                                className="h-7 min-w-20 rounded-lg border border-gray-300 bg-white px-2 text-right text-[10px] font-bold tabular-nums text-gray-900 transition hover:border-black hover:bg-gray-50"
                               >
-                                {quantity}
+                                {formatUnitQuantity(quantity)}
                               </button>
                             ) : (
-                              <span className="mt-0.5 text-[12px] font-bold tabular-nums text-gray-900">
-                                {quantity}
+                              <span className="whitespace-nowrap text-[11px] font-bold tabular-nums text-gray-900 sm:text-[12px]">
+                                {quantityText}
                               </span>
                             )}
                           </div>
@@ -2180,7 +2418,7 @@ export default function EquipmentListDetailsClient({
                                   ? "Hide this item's IDs and serial numbers from the list and PDF"
                                   : "Show this item's IDs and serial numbers in the list and PDF"
                               }
-                              className="mt-3 inline-flex h-7 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2 text-[8px] font-semibold text-gray-600 transition hover:border-black"
+                              className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2 text-[8px] font-semibold text-gray-600 transition hover:border-black"
                             >
                               <span>ID / Serial</span>
                               <span
@@ -2206,7 +2444,7 @@ export default function EquipmentListDetailsClient({
                               disabled={Boolean(removingItemId)}
                               title={`Remove ${group.displayName}`}
                               aria-label={`Remove ${group.displayName} from list`}
-                              className="mt-3 grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-gray-200 text-gray-400 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                              className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-gray-200 text-gray-400 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
                             >
                               {removingItemId === firstItem.id ? (
                                 <Loader2 size={10} className="animate-spin" />
@@ -2255,30 +2493,40 @@ export default function EquipmentListDetailsClient({
 
                                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
                                   {childCanEdit ? (
-                                    <input
-                                      key={`${item.id}:${item.requested_quantity}`}
-                                      type="number"
-                                      min={1}
-                                      defaultValue={item.requested_quantity}
-                                      disabled={updatingItemId === item.id}
-                                      onKeyDown={(event) => {
-                                        if (event.key === "Enter") {
-                                          event.preventDefault();
-                                          event.currentTarget.blur();
+                                    <div className="flex items-center gap-1">
+                                      <input
+                                        key={`${item.id}:${item.requested_quantity}`}
+                                        type="number"
+                                        min={1}
+                                        step={1}
+                                        defaultValue={item.requested_quantity}
+                                        disabled={updatingItemId === item.id}
+                                        onKeyDown={(event) => {
+                                          if (event.key === "Enter") {
+                                            event.preventDefault();
+                                            event.currentTarget.blur();
+                                          }
+                                        }}
+                                        onBlur={(event) =>
+                                          void updateItemQuantity(
+                                            item,
+                                            Number(event.currentTarget.value),
+                                          )
                                         }
-                                      }}
-                                      onBlur={(event) =>
-                                        void updateItemQuantity(
-                                          item,
-                                          Number(event.currentTarget.value),
-                                        )
-                                      }
-                                      aria-label={`Quantity for ${rowLabel}`}
-                                      className="h-7 w-14 rounded-lg border border-gray-300 bg-white px-2 text-right text-[10px] font-bold text-gray-900 outline-none focus:border-black disabled:bg-gray-100"
-                                    />
+                                        aria-label={`Quantity for ${rowLabel}`}
+                                        className="h-7 w-14 rounded-lg border border-gray-300 bg-white px-2 text-right text-[10px] font-bold text-gray-900 outline-none focus:border-black disabled:bg-gray-100"
+                                      />
+                                      <span className="text-[8px] font-semibold text-gray-600">
+                                        {item.requested_quantity === 1
+                                          ? "Unit"
+                                          : "Units"}
+                                      </span>
+                                    </div>
                                   ) : (
                                     <span className="whitespace-nowrap text-[9px] font-bold text-gray-900">
-                                      Qty: {item.requested_quantity}
+                                      {formatUnitQuantity(
+                                        item.requested_quantity,
+                                      )}
                                     </span>
                                   )}
 
