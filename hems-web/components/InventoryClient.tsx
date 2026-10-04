@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { readCatalog } from "@/lib/catalogStore";
+import InventoryImportClient from "@/components/InventoryImportClient";
 
 type Category = {
   id: string;
@@ -98,6 +99,8 @@ export default function InventoryClient() {
   return (
     <div className="min-h-screen bg-gray-50 p-3">
       <div className="mx-auto w-full space-y-3">
+        <InventoryImportClient categories={categories} />
+
         {categories.map((cat) => (
           <div
             key={cat.id}

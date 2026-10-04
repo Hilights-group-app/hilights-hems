@@ -6,6 +6,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
 import { Trash2 } from "lucide-react";
+import EquipmentListAddUnitsAction from "@/components/EquipmentListAddUnitsAction";
 
 type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
@@ -581,7 +582,14 @@ export default function SubcategoryClientSerialized({
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       const target = e.target as HTMLElement;
-      if (!target.closest("[data-mobile-serialized-menu='true']")) {
+      const insideMenu = target.closest(
+        "[data-mobile-serialized-menu='true']",
+      );
+      const insideMobileTools = target.closest(
+        "[data-mobile-serialized-tools='true']",
+      );
+
+      if (!insideMenu && !insideMobileTools) {
         setMobileMenuItemId(null);
       }
     }
@@ -599,8 +607,18 @@ export default function SubcategoryClientSerialized({
       const insideSidebar = target.closest("#right-sidebar-actions");
       const insideTools = target.closest("[data-serialized-tools='true']");
       const insideSearch = target.closest("[data-serialized-search='true']");
+      const insideMobileTools = target.closest(
+        "[data-mobile-serialized-tools='true']",
+      );
 
-      if (insideItem || insideSidebar || insideTools || insideSearch) return;
+      if (
+        insideItem ||
+        insideSidebar ||
+        insideTools ||
+        insideSearch ||
+        insideMobileTools
+      )
+        return;
 
       await saveSelectedItemName();
       await saveSelectedBlockName();
@@ -910,13 +928,6 @@ export default function SubcategoryClientSerialized({
     }
   }
 
-  async function onRenameMobile(item: ItemRow) {
-    if (!editable) return;
-    const nextName = prompt("Rename item:", item.name);
-    if (!nextName) return;
-    await renameItem(item.id, nextName);
-  }
-
   async function saveSelectedItemName() {
     if (!selectedItem) return;
 
@@ -1082,22 +1093,20 @@ export default function SubcategoryClientSerialized({
                 </div>
 
                 <div className="mt-2 sm:hidden">
-                  <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
+                  <div className={`grid gap-x-2 gap-y-1 text-center ${
+                    stats.maintenance > 0 ? "grid-cols-3" : "grid-cols-2"
+                  }`}>
                     <div className="text-[8px] font-semibold text-gray-500">
                       Total
                     </div>
                     <div className="text-[8px] font-semibold text-gray-500">
                       Available
                     </div>
-                    <div className="text-[8px] font-semibold text-gray-500">
-                      In Use
-                    </div>
-                    <div className="text-[8px] font-semibold text-gray-500">
-                      Maintenance
-                    </div>
-                    <div className="text-[8px] font-semibold text-gray-500">
-                      In KSA
-                    </div>
+                    {stats.maintenance > 0 ? (
+                      <div className="text-[8px] font-semibold text-gray-500">
+                        Maintenance
+                      </div>
+                    ) : null}
 
                     <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">
                       {stats.total}
@@ -1105,15 +1114,11 @@ export default function SubcategoryClientSerialized({
                     <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
                       {stats.available}
                     </div>
-                    <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold">
-                      {stats.inUse}
-                    </div>
-                    <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
-                      {stats.maintenance}
-                    </div>
-                    <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold">
-                      {stats.inKsa}
-                    </div>
+                    {stats.maintenance > 0 ? (
+                      <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
+                        {stats.maintenance}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 
@@ -1125,30 +1130,34 @@ export default function SubcategoryClientSerialized({
                       value={stats.available}
                       tone="green"
                     />
-                    <StatPill label="In Use" value={stats.inUse} tone="blue" />
-                    <StatPill
-                      label="Maintenance"
-                      value={stats.maintenance}
-                      tone="yellow"
-                    />
-                    <StatPill
-                      label="In KSA"
-                      value={stats.inKsa}
-                      tone="purple"
-                    />
+                    {stats.maintenance > 0 ? (
+                      <StatPill
+                        label="Maintenance"
+                        value={stats.maintenance}
+                        tone="yellow"
+                      />
+                    ) : null}
                   </div>
                 </div>
               </div>
             </Link>
           </div>
 
-          <Link
-            href={detailsHref}
-            onClick={(event) => event.stopPropagation()}
-            className="absolute right-2 top-2 hidden rounded-full border border-gray-300 bg-white px-2.5 py-1 text-[9px] font-medium text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700 sm:block"
-          >
-            Report
-          </Link>
+          <div className="absolute right-2 top-2 hidden items-center gap-1.5 sm:flex">
+            <EquipmentListAddUnitsAction
+              item={it}
+              category={category}
+              subcategory={subcategory}
+              compact
+            />
+            <Link
+              href={detailsHref}
+              onClick={(event) => event.stopPropagation()}
+              className="rounded-full border border-gray-300 bg-white px-2.5 py-1 text-[9px] font-medium text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+            >
+              Report
+            </Link>
+          </div>
 
           {editable ? (
             <div
@@ -1161,68 +1170,25 @@ export default function SubcategoryClientSerialized({
                 onClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
-                  setMobileMenuItemId((current) =>
-                    current === it.id ? null : it.id,
-                  );
+
+                  if (mobileMenuItemId === it.id) {
+                    void closeMobileSerializedTools();
+                    return;
+                  }
+
+                  void saveSelectedItemName();
+                  void saveSelectedBlockName();
+                  setSearchPanelOpen(false);
+                  setEditingPhotoItemId(null);
+                  setImageResults([]);
+                  setSelectedItemId(it.id);
+                  setMobileMenuItemId(it.id);
                 }}
                 className="flex h-[26px] w-[26px] items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm"
               >
                 ⋮
               </button>
 
-              {mobileMenuItemId === it.id ? (
-                <div className="absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-xl">
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setMobileMenuItemId(null);
-                      void onRenameMobile(it);
-                    }}
-                    className="block w-full px-3 py-2 text-left text-[11px] font-medium text-gray-700 hover:bg-gray-50"
-                  >
-                    Rename
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setMobileMenuItemId(null);
-                      setEditingPhotoItemId(it.id);
-                      listPhotoFileRef.current?.click();
-                    }}
-                    className="block w-full border-t border-gray-100 px-3 py-2 text-left text-[11px] font-medium text-gray-700 hover:bg-gray-50"
-                  >
-                    Upload Photo
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setMobileMenuItemId(null);
-                      void searchPhotoForItem(it);
-                    }}
-                    className="block w-full border-t border-gray-100 px-3 py-2 text-left text-[11px] font-medium text-gray-700 hover:bg-gray-50"
-                  >
-                    Search Photo
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      setMobileMenuItemId(null);
-                      void onDelete(it.id);
-                    }}
-                    className="block w-full border-t border-gray-100 px-3 py-2 text-left text-[11px] font-medium text-red-600 hover:bg-red-50"
-                  >
-                    Delete Item
-                  </button>
-                </div>
-              ) : null}
             </div>
           ) : null}
         </div>
@@ -1559,6 +1525,16 @@ export default function SubcategoryClientSerialized({
     </div>
   ) : null;
 
+  async function closeMobileSerializedTools() {
+    await saveSelectedItemName();
+    await saveSelectedBlockName();
+    setMobileMenuItemId(null);
+    setSelectedItemId(null);
+    setSearchPanelOpen(false);
+    setEditingPhotoItemId(null);
+    setImageResults([]);
+  }
+
   if (loading) {
     return (
       <div className="w-full">
@@ -1609,6 +1585,45 @@ export default function SubcategoryClientSerialized({
           <option key={option} value={option} />
         ))}
       </datalist>
+
+      {editable && mobileMenuItemId && selectedItem ? (
+        <div
+          data-mobile-serialized-tools="true"
+          className="fixed inset-0 z-[9998] sm:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${selectedItem.name} tools`}
+        >
+          <button
+            type="button"
+            aria-label="Close item tools"
+            onClick={() => void closeMobileSerializedTools()}
+            className="absolute inset-0 bg-black/45"
+          />
+
+          <div className="absolute inset-x-0 bottom-0 flex h-[75dvh] flex-col rounded-t-3xl bg-gray-50 shadow-2xl">
+            <div className="flex shrink-0 items-center justify-between px-4 pb-2 pt-3">
+              <div className="h-1 w-10 rounded-full bg-gray-300" />
+              <div className="text-[11px] font-semibold text-gray-700">
+                Item Tools
+              </div>
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => void closeMobileSerializedTools()}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-lg leading-none text-gray-700"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-[calc(env(safe-area-inset-bottom)+16px)]">
+              {editItemPanel}
+              {searchPhotoPanel}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {editable && !selectedItem ? (
         <>

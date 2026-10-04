@@ -1,10 +1,18 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { ImagePlus, Trash2 } from "lucide-react";
 import { getUserName } from "@/lib/authStore";
 import { logActivity } from "@/lib/activityStore";
+import {
+  EQUIPMENT_LIST_ITEMS_EVENT,
+  EQUIPMENT_LISTS_EVENT,
+  equipmentListSummary,
+  equipmentListTypeLabel,
+  type EquipmentList,
+} from "@/lib/equipmentLists";
 
 export type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
@@ -30,6 +38,12 @@ export type Stats = {
   inKsa: number;
 };
 
+type UnitMovement = {
+  listId: string;
+  reference: string;
+  label: string;
+};
+
 export type UnitPatch = Partial<
   Pick<
     Unit,
@@ -48,6 +62,30 @@ const PROJECTOR_SELECT_WITH_TESTING =
 
 const PROJECTOR_SELECT_WITHOUT_TESTING =
   "id, item_id, unit_no, serial, status, notes, lamp_hours, damage_photos, updated_by, updated_at";
+
+const ACTIVE_LIST_SELECT = `
+  id,
+  reference,
+  list_type,
+  status,
+  client_company,
+  event_name,
+  venue,
+  purpose,
+  assigned_to,
+  from_location_name,
+  destination_name,
+  pickup_date,
+  return_date,
+  setup_date,
+  dismantling_date,
+  loading_date,
+  receiving_date,
+  notes,
+  created_by_name,
+  created_at,
+  updated_at
+`;
 
 function clampInt(v: any, fallback = 0) {
   const n = Number(v);
@@ -84,6 +122,16 @@ function statusLabel(status: string | null) {
   return "Available";
 }
 
+function isMovementStatus(status: string | null | undefined) {
+  return status === "in_use" || status === "in_ksa";
+}
+
+function movementLabel(list: EquipmentList) {
+  const type = equipmentListTypeLabel(list.list_type);
+  const summary = equipmentListSummary(list);
+  return summary ? `${type} · ${summary}` : type;
+}
+
 function valuesMatch(a: unknown, b: unknown) {
   if (Array.isArray(a) || Array.isArray(b)) {
     return JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
@@ -114,6 +162,7 @@ export function ProjectorRowsBlock({
   onSaveMessageChange,
   resequenceOnDelete = false,
   reloadOnFocus = false,
+  workflowControlledStatus = false,
 }: {
   itemId: string;
   itemName?: string;
@@ -124,10 +173,14 @@ export function ProjectorRowsBlock({
   onSaveMessageChange?: (msg: string) => void;
   resequenceOnDelete?: boolean;
   reloadOnFocus?: boolean;
+  workflowControlledStatus?: boolean;
 }) {
   const supabase = createClient();
   const [units, setUnits] = useState<Unit[]>([]);
   const unitsRef = useRef<Unit[]>([]);
+  const [movementByUnit, setMovementByUnit] = useState<
+    Record<string, UnitMovement>
+  >({});
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
   const saveMsgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -155,6 +208,21 @@ export function ProjectorRowsBlock({
   }, [reloadOnFocus, itemId, showTestingDate]);
 
   useEffect(() => {
+    if (!workflowControlledStatus) return;
+
+    const refreshMovements = () => void loadUnits();
+
+    window.addEventListener(EQUIPMENT_LISTS_EVENT, refreshMovements);
+    window.addEventListener(EQUIPMENT_LIST_ITEMS_EVENT, refreshMovements);
+
+    return () => {
+      window.removeEventListener(EQUIPMENT_LISTS_EVENT, refreshMovements);
+      window.removeEventListener(EQUIPMENT_LIST_ITEMS_EVENT, refreshMovements);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemId, showTestingDate, workflowControlledStatus]);
+
+  useEffect(() => {
     return () => {
       if (saveMsgTimerRef.current) clearTimeout(saveMsgTimerRef.current);
     };
@@ -170,6 +238,80 @@ export function ProjectorRowsBlock({
         onSaveMessageChange?.("");
       }, clearAfterMs);
     }
+  }
+
+  async function loadUnitMovements(unitIds: string[]) {
+    if (!workflowControlledStatus || unitIds.length === 0) {
+      setMovementByUnit({});
+      return;
+    }
+
+    const activeListsResult = await supabase
+      .from("equipment_lists")
+      .select(ACTIVE_LIST_SELECT)
+      .in("status", ["active", "partially_returned"])
+      .order("created_at", { ascending: false })
+      .limit(200);
+
+    if (activeListsResult.error) {
+      console.error("load projector active lists error", activeListsResult.error);
+      setMovementByUnit({});
+      return;
+    }
+
+    const activeLists = (activeListsResult.data ?? []) as EquipmentList[];
+    const activeListIds = activeLists.map((list) => list.id);
+
+    if (activeListIds.length === 0) {
+      setMovementByUnit({});
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("equipment_list_items")
+      .select(
+        "list_id,inventory_record_id,requested_quantity,approved_quantity,returned_ok_quantity,returned_maintenance_quantity",
+      )
+      .eq("inventory_record_type", "unit")
+      .in("list_id", activeListIds)
+      .in("inventory_record_id", unitIds);
+
+    if (error) {
+      console.error("load projector unit movements error", error);
+      setMovementByUnit({});
+      return;
+    }
+
+    const activeListsById = new Map(
+      activeLists.map((activeList) => [activeList.id, activeList]),
+    );
+    const nextMovements: Record<string, UnitMovement> = {};
+
+    for (const row of data ?? []) {
+      const activeList = activeListsById.get(String(row.list_id));
+      if (!activeList) continue;
+
+      const dispatchedQuantity =
+        Number(row.approved_quantity) > 0
+          ? Number(row.approved_quantity)
+          : Number(row.requested_quantity) || 0;
+      const remaining = Math.max(
+        0,
+        dispatchedQuantity -
+          (Number(row.returned_ok_quantity) || 0) -
+          (Number(row.returned_maintenance_quantity) || 0),
+      );
+
+      if (remaining === 0) continue;
+
+      nextMovements[String(row.inventory_record_id)] = {
+        listId: activeList.id,
+        reference: activeList.reference,
+        label: movementLabel(activeList),
+      };
+    }
+
+    setMovementByUnit(nextMovements);
   }
 
   async function loadUnits() {
@@ -189,6 +331,7 @@ export function ProjectorRowsBlock({
     const nextUnits = (data ?? []) as unknown as Unit[];
     unitsRef.current = nextUnits;
     setUnits(nextUnits);
+    await loadUnitMovements(nextUnits.map((unit) => unit.id));
   }
 
   useEffect(() => {
@@ -357,10 +500,21 @@ export function ProjectorRowsBlock({
   async function deleteRow(id: string) {
     if (!editable) return;
 
+    const selectedUnit = unitsRef.current.find((unit) => unit.id === id);
+    if (
+      workflowControlledStatus &&
+      (Boolean(movementByUnit[id]) || isMovementStatus(selectedUnit?.status))
+    ) {
+      alert(
+        "This projector is on an active equipment list. Return or close it from the list before deleting it.",
+      );
+      return;
+    }
+
     const ok = confirm("Delete this unit?");
     if (!ok) return;
 
-    const deletedUnit = unitsRef.current.find((u) => u.id === id);
+    const deletedUnit = selectedUnit;
 
     const { error } = await supabase.from("units").delete().eq("id", id);
 
@@ -481,6 +635,8 @@ export function ProjectorRowsBlock({
               unit={unit}
               index={idx}
               editable={editable}
+              workflowControlledStatus={workflowControlledStatus}
+              movement={movementByUnit[unit.id]}
               showTestingDate={showTestingDate}
               onChange={updateUnit}
               onPickDamagePhotos={onPickDamagePhotos}
@@ -589,10 +745,81 @@ function DamagePhotoThumb({
   );
 }
 
+function ProjectorStatusField({
+  status,
+  editable,
+  workflowControlledStatus,
+  movement,
+  wide = false,
+  onChange,
+}: {
+  status: string;
+  editable: boolean;
+  workflowControlledStatus: boolean;
+  movement?: UnitMovement;
+  wide?: boolean;
+  onChange: (status: UnitStatus) => void;
+}) {
+  const lockedByMovement =
+    workflowControlledStatus &&
+    (isMovementStatus(status) || Boolean(movement));
+  const widthClass = wide ? "w-[95px] min-w-[95px]" : "w-full";
+
+  if (lockedByMovement) {
+    if (movement) {
+      return (
+        <Link
+          href={`/inventory/lists/${movement.listId}`}
+          title={`${movement.reference} · ${movement.label}`}
+          className={`${widthClass} block truncate rounded-lg bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 transition hover:bg-blue-100`}
+        >
+          {movement.label}
+        </Link>
+      );
+    }
+
+    return (
+      <div
+        title="This legacy movement is not linked to an active list"
+        className={`${widthClass} truncate rounded-lg bg-gray-100 px-2 py-1 text-[11px] font-semibold text-gray-600`}
+      >
+        Existing movement
+      </div>
+    );
+  }
+
+  if (editable) {
+    return (
+      <select
+        value={status}
+        onChange={(event) => onChange(event.target.value as UnitStatus)}
+        style={{ color: getStatusTextColor(status) }}
+        className={`${widthClass} rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none`}
+      >
+        <option value="available">Available</option>
+        {!workflowControlledStatus ? <option value="in_use">In Use</option> : null}
+        <option value="maintenance">Maintenance</option>
+        {!workflowControlledStatus ? <option value="in_ksa">In KSA</option> : null}
+      </select>
+    );
+  }
+
+  return (
+    <div
+      style={{ color: getStatusTextColor(status) }}
+      className={`${widthClass} rounded-lg bg-white px-1 py-1 text-[12px] font-semibold`}
+    >
+      {statusLabel(status)}
+    </div>
+  );
+}
+
 function ProjectorUnitRow({
   unit,
   index,
   editable,
+  workflowControlledStatus,
+  movement,
   showTestingDate,
   onChange,
   onPickDamagePhotos,
@@ -603,6 +830,8 @@ function ProjectorUnitRow({
   unit: Unit;
   index: number;
   editable: boolean;
+  workflowControlledStatus: boolean;
+  movement?: UnitMovement;
   showTestingDate: boolean;
   onChange: (unitId: string, patch: UnitPatch) => Promise<void>;
   onPickDamagePhotos: (unitId: string, files: FileList | null) => Promise<void>;
@@ -645,6 +874,9 @@ function ProjectorUnitRow({
   }
 
   const photos = unit.damage_photos ?? [];
+  const lockedByMovement =
+    workflowControlledStatus &&
+    (isMovementStatus(status) || Boolean(movement));
 
   return (
     <div className="border-t border-gray-200 pt-3">
@@ -692,12 +924,19 @@ function ProjectorUnitRow({
           <div className="flex items-center gap-2">
             <span
               style={{ color: getStatusTextColor(status) }}
-              className="rounded-full bg-gray-100 px-2 py-1 text-[10px] font-semibold"
+              className="max-w-[190px] truncate rounded-full bg-gray-100 px-2 py-1 text-[10px] font-semibold"
+              title={
+                movement
+                  ? `${movement.reference} · ${movement.label}`
+                  : undefined
+              }
             >
-              {statusLabel(status)}
+              {lockedByMovement
+                ? movement?.label || "Existing movement"
+                : statusLabel(status)}
             </span>
 
-            {editable ? (
+            {editable && !lockedByMovement ? (
               <Trash2
                 size={16}
                 className="cursor-pointer text-red-500"
@@ -734,23 +973,18 @@ function ProjectorUnitRow({
 
           <label className="rounded-xl bg-gray-50 p-2">
             <div className="text-[10px] font-semibold text-gray-400">Status</div>
-            <select
-              value={status}
-              disabled={!editable}
-              onChange={(e) => {
-                if (!editable) return;
-                const v = e.target.value as UnitStatus;
-                setStatus(v);
-                void onChange(unit.id, { status: v });
-              }}
-              style={{ color: getStatusTextColor(status) }}
-              className="mt-1 w-full border-none bg-transparent p-0 text-[12px] font-semibold outline-none disabled:bg-transparent"
-            >
-              <option value="available">Available</option>
-              <option value="in_use">In Use</option>
-              <option value="maintenance">Maintenance</option>
-              <option value="in_ksa">In KSA</option>
-            </select>
+            <div className="mt-1">
+              <ProjectorStatusField
+                status={status}
+                editable={editable}
+                workflowControlledStatus={workflowControlledStatus}
+                movement={movement}
+                onChange={(nextStatus) => {
+                  setStatus(nextStatus);
+                  void onChange(unit.id, { status: nextStatus });
+                }}
+              />
+            </div>
           </label>
 
           <label className="rounded-xl bg-gray-50 p-2">
@@ -906,23 +1140,17 @@ function ProjectorUnitRow({
           className="w-[120px] min-w-[120px] truncate rounded-lg border-none bg-white px-2 py-1 text-[12px] outline-none read-only:text-gray-700"
         />
 
-        <select
-          value={status}
-          disabled={!editable}
-          onChange={(e) => {
-            if (!editable) return;
-            const v = e.target.value as UnitStatus;
-            setStatus(v);
-            void onChange(unit.id, { status: v });
+        <ProjectorStatusField
+          status={status}
+          editable={editable}
+          workflowControlledStatus={workflowControlledStatus}
+          movement={movement}
+          wide
+          onChange={(nextStatus) => {
+            setStatus(nextStatus);
+            void onChange(unit.id, { status: nextStatus });
           }}
-          style={{ color: getStatusTextColor(status) }}
-          className="w-[95px] min-w-[95px] rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none disabled:bg-white"
-        >
-          <option value="available">Available</option>
-          <option value="in_use">In Use</option>
-          <option value="maintenance">Maintenance</option>
-          <option value="in_ksa">In KSA</option>
-        </select>
+        />
 
         <input
           value={lampHours}
@@ -1039,7 +1267,7 @@ function ProjectorUnitRow({
         </div>
 
         <div className="w-[28px] min-w-[28px] flex justify-center">
-          {editable ? (
+          {editable && !lockedByMovement ? (
             <Trash2
               size={16}
               className="cursor-pointer transition-colors duration-200"

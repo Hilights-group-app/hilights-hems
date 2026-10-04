@@ -1,9 +1,17 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { ImagePlus, Trash2 } from "lucide-react";
 import { logActivity } from "@/lib/activityStore";
+import {
+  EQUIPMENT_LIST_ITEMS_EVENT,
+  EQUIPMENT_LISTS_EVENT,
+  equipmentListSummary,
+  equipmentListTypeLabel,
+  type EquipmentList,
+} from "@/lib/equipmentLists";
 
 type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
@@ -26,6 +34,36 @@ type Stats = {
 };
 
 type UnitPatch = Partial<Unit>;
+
+type UnitMovement = {
+  listId: string;
+  reference: string;
+  label: string;
+};
+
+const ACTIVE_LIST_SELECT = `
+  id,
+  reference,
+  list_type,
+  status,
+  client_company,
+  event_name,
+  venue,
+  purpose,
+  assigned_to,
+  from_location_name,
+  destination_name,
+  pickup_date,
+  return_date,
+  setup_date,
+  dismantling_date,
+  loading_date,
+  receiving_date,
+  notes,
+  created_by_name,
+  created_at,
+  updated_at
+`;
 
 function toStatus(v: any): UnitStatus {
   if (v === "available" || v === "in_use" || v === "maintenance" || v === "in_ksa") {
@@ -61,6 +99,16 @@ function statusLabel(value: string | null | undefined) {
   return "Available";
 }
 
+function isMovementStatus(value: string | null | undefined) {
+  return value === "in_use" || value === "in_ksa";
+}
+
+function movementLabel(list: EquipmentList) {
+  const type = equipmentListTypeLabel(list.list_type);
+  const summary = equipmentListSummary(list);
+  return summary ? `${type} · ${summary}` : type;
+}
+
 function valuesMatch(a: unknown, b: unknown) {
   if (Array.isArray(a) || Array.isArray(b)) {
     return JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
@@ -82,23 +130,119 @@ export function SerializedRowsBlock({
   itemName,
   activityLink,
   editable = true,
+  workflowControlledStatus = false,
   onStatsChange,
 }: {
   itemId: string;
   itemName?: string;
   activityLink?: string;
   editable?: boolean;
+  workflowControlledStatus?: boolean;
   onStatsChange?: (stats: Stats) => void;
 }) {
   const supabase = createClient();
   const [units, setUnits] = useState<Unit[]>([]);
   const unitsRef = useRef<Unit[]>([]);
+  const [movementByUnit, setMovementByUnit] = useState<
+    Record<string, UnitMovement>
+  >({});
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
 
   useEffect(() => {
     void loadUnits();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemId]);
+
+  useEffect(() => {
+    if (!workflowControlledStatus) return;
+
+    function refreshMovements() {
+      void loadUnits();
+    }
+
+    window.addEventListener(EQUIPMENT_LISTS_EVENT, refreshMovements);
+    window.addEventListener(EQUIPMENT_LIST_ITEMS_EVENT, refreshMovements);
+
+    return () => {
+      window.removeEventListener(EQUIPMENT_LISTS_EVENT, refreshMovements);
+      window.removeEventListener(EQUIPMENT_LIST_ITEMS_EVENT, refreshMovements);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemId, workflowControlledStatus]);
+
+  async function loadUnitMovements(unitIds: string[]) {
+    if (!workflowControlledStatus || unitIds.length === 0) {
+      setMovementByUnit({});
+      return;
+    }
+
+    const activeListsResult = await supabase
+      .from("equipment_lists")
+      .select(ACTIVE_LIST_SELECT)
+      .in("status", ["active", "partially_returned"])
+      .order("created_at", { ascending: false })
+      .limit(200);
+
+    if (activeListsResult.error) {
+      console.error("load serialized active lists error", activeListsResult.error);
+      setMovementByUnit({});
+      return;
+    }
+
+    const activeLists = (activeListsResult.data ?? []) as EquipmentList[];
+    const activeListIds = activeLists.map((list) => list.id);
+
+    if (activeListIds.length === 0) {
+      setMovementByUnit({});
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("equipment_list_items")
+      .select(
+        "list_id,inventory_record_id,requested_quantity,approved_quantity,returned_ok_quantity,returned_maintenance_quantity",
+      )
+      .eq("inventory_record_type", "unit")
+      .in("list_id", activeListIds)
+      .in("inventory_record_id", unitIds);
+
+    if (error) {
+      console.error("load serialized unit movements error", error);
+      setMovementByUnit({});
+      return;
+    }
+
+    const activeListsById = new Map(
+      activeLists.map((activeList) => [activeList.id, activeList]),
+    );
+    const nextMovements: Record<string, UnitMovement> = {};
+
+    for (const row of data ?? []) {
+      const activeList = activeListsById.get(String(row.list_id));
+      if (!activeList) continue;
+
+      const dispatchedQuantity =
+        Number(row.approved_quantity) > 0
+          ? Number(row.approved_quantity)
+          : Number(row.requested_quantity) || 0;
+      const remaining = Math.max(
+        0,
+        dispatchedQuantity -
+          (Number(row.returned_ok_quantity) || 0) -
+          (Number(row.returned_maintenance_quantity) || 0),
+      );
+
+      if (remaining === 0) continue;
+
+      nextMovements[String(row.inventory_record_id)] = {
+        listId: activeList.id,
+        reference: activeList.reference,
+        label: movementLabel(activeList),
+      };
+    }
+
+    setMovementByUnit(nextMovements);
+  }
 
   async function loadUnits() {
     const { data, error } = await supabase
@@ -115,6 +259,7 @@ export function SerializedRowsBlock({
     const nextUnits = (data ?? []) as Unit[];
     unitsRef.current = nextUnits;
     setUnits(nextUnits);
+    await loadUnitMovements(nextUnits.map((unit) => unit.id));
   }
 
   useEffect(() => {
@@ -228,9 +373,21 @@ export function SerializedRowsBlock({
 
   async function deleteRow(id: string) {
     if (!editable) return;
+
+    const selectedUnit = unitsRef.current.find((unit) => unit.id === id);
+    if (
+      workflowControlledStatus &&
+      (Boolean(movementByUnit[id]) || isMovementStatus(selectedUnit?.status))
+    ) {
+      alert(
+        "This unit is on an active equipment list. Return or close it from the list before deleting it.",
+      );
+      return;
+    }
+
     if (!confirm("Delete this unit?")) return;
 
-    const deletedUnit = unitsRef.current.find((unit) => unit.id === id);
+    const deletedUnit = selectedUnit;
 
     const { error } = await supabase.from("units").delete().eq("id", id);
 
@@ -307,7 +464,15 @@ export function SerializedRowsBlock({
         <div className="hidden lg:flex items-center gap-2 text-[11px] font-semibold text-gray-600 pt-2 pb-4">
           <div className="w-[32px] min-w-[32px] text-center">ID</div>
           <div className="w-[120px] min-w-[120px]">Serial</div>
-          <div className="w-[95px] min-w-[95px]">Status</div>
+          <div
+            className={
+              workflowControlledStatus
+                ? "w-[190px] min-w-[190px]"
+                : "w-[95px] min-w-[95px]"
+            }
+          >
+            Status
+          </div>
           <div className="w-[230px] min-w-[230px]">Note</div>
           <div className="w-[130px] min-w-[130px]">Test Date</div>
           <div className="flex-1 min-w-[200px]">Damage</div>
@@ -322,6 +487,8 @@ export function SerializedRowsBlock({
               unit={unit}
               index={idx}
               editable={editable}
+              workflowControlledStatus={workflowControlledStatus}
+              movement={movementByUnit[unit.id]}
               onChange={updateUnit}
               onPickDamagePhotos={onPickDamagePhotos}
               onDeleteDamagePhoto={deleteDamagePhoto}
@@ -425,10 +592,88 @@ function DamagePhotoThumb({
   );
 }
 
+function UnitStatusField({
+  status,
+  editable,
+  workflowControlledStatus,
+  movement,
+  wide = false,
+  onChange,
+}: {
+  status: string;
+  editable: boolean;
+  workflowControlledStatus: boolean;
+  movement?: UnitMovement;
+  wide?: boolean;
+  onChange: (status: UnitStatus) => void;
+}) {
+  const lockedByMovement =
+    workflowControlledStatus && isMovementStatus(status);
+  const widthClass = wide
+    ? workflowControlledStatus
+      ? "w-[190px] min-w-[190px]"
+      : "w-[95px] min-w-[95px]"
+    : "w-full";
+
+  if (lockedByMovement) {
+    if (movement) {
+      return (
+        <Link
+          href={`/inventory/lists/${movement.listId}`}
+          title={`${movement.reference} · ${movement.label}`}
+          className={`${widthClass} block truncate rounded-lg bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 transition hover:bg-blue-100`}
+        >
+          {movement.label}
+        </Link>
+      );
+    }
+
+    return (
+      <div
+        className={`${widthClass} truncate rounded-lg bg-gray-100 px-2 py-1 text-[11px] font-semibold text-gray-600`}
+        title="This legacy movement is not linked to an active list"
+      >
+        Existing movement
+      </div>
+    );
+  }
+
+  if (editable) {
+    return (
+      <select
+        value={status}
+        onChange={(event) => onChange(event.target.value as UnitStatus)}
+        style={{ color: getStatusTextColor(status) }}
+        className={`${widthClass} rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none`}
+      >
+        <option value="available">Available</option>
+        {!workflowControlledStatus ? (
+          <option value="in_use">In Use</option>
+        ) : null}
+        <option value="maintenance">Maintenance</option>
+        {!workflowControlledStatus ? (
+          <option value="in_ksa">In KSA</option>
+        ) : null}
+      </select>
+    );
+  }
+
+  return (
+    <div
+      style={{ color: getStatusTextColor(status) }}
+      className={`${widthClass} rounded-lg bg-white px-1 py-1 text-[12px] font-semibold`}
+    >
+      {statusLabel(status)}
+    </div>
+  );
+}
+
 function SerializedUnitRow({
   unit,
   index,
   editable,
+  workflowControlledStatus,
+  movement,
   onChange,
   onPickDamagePhotos,
   onDeleteDamagePhoto,
@@ -438,6 +683,8 @@ function SerializedUnitRow({
   unit: Unit;
   index: number;
   editable: boolean;
+  workflowControlledStatus: boolean;
+  movement?: UnitMovement;
   onChange: (unitId: string, patch: Partial<Unit>) => Promise<void>;
   onPickDamagePhotos: (unitId: string, files: FileList | null) => Promise<void>;
   onDeleteDamagePhoto: (unitId: string, photoIndex: number) => Promise<void>;
@@ -465,6 +712,9 @@ function SerializedUnitRow({
   }, [unit]);
 
   const photos = unit.damage_photos ?? [];
+  const lockedByMovement =
+    workflowControlledStatus &&
+    (isMovementStatus(status) || Boolean(movement));
 
   function debounceSave(key: string, fn: () => void) {
     if (timerRef.current[key]) clearTimeout(timerRef.current[key]);
@@ -516,18 +766,19 @@ function SerializedUnitRow({
           <div className="flex items-center gap-2">
             <span
               style={{ color: getStatusTextColor(status) }}
-              className="rounded-full bg-gray-100 px-2 py-1 text-[10px] font-semibold"
+              className="max-w-[190px] truncate rounded-full bg-gray-100 px-2 py-1 text-[10px] font-semibold"
+              title={
+                movement
+                  ? `${movement.reference} · ${movement.label}`
+                  : undefined
+              }
             >
-              {status === "in_use"
-                ? "In Use"
-                : status === "in_ksa"
-                ? "In KSA"
-                : status
-                ? status.charAt(0).toUpperCase() + status.slice(1)
-                : "Available"}
+              {workflowControlledStatus && isMovementStatus(status)
+                ? movement?.label || "Existing movement"
+                : statusLabel(status)}
             </span>
 
-            {editable ? (
+            {editable && !lockedByMovement ? (
               <Trash2
                 size={16}
                 className="cursor-pointer text-red-500"
@@ -562,36 +813,16 @@ function SerializedUnitRow({
 
           <label className="rounded-xl bg-gray-50 p-2">
             <div className="text-[10px] font-semibold text-gray-400">Status</div>
-            {editable ? (
-  <select
-    value={status}
-    onChange={(e) => {
-      const v = e.target.value as UnitStatus;
-      setStatus(v);
-      void onChange(unit.id, { status: v });
-    }}
-    style={{ color: getStatusTextColor(status) }}
-    className="w-[95px] min-w-[95px] rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none"
-  >
-    <option value="available">Available</option>
-    <option value="in_use">In Use</option>
-    <option value="maintenance">Maintenance</option>
-    <option value="in_ksa">In KSA</option>
-  </select>
-) : (
-  <div
-    style={{ color: getStatusTextColor(status) }}
-    className="w-[95px] min-w-[95px] rounded-lg bg-white px-1 py-1 text-[12px] font-semibold"
-  >
-    {status === "in_use"
-      ? "In Use"
-      : status === "in_ksa"
-      ? "In KSA"
-      : status
-      ? status.charAt(0).toUpperCase() + status.slice(1)
-      : "Available"}
-  </div>
-)}
+            <UnitStatusField
+              status={status}
+              editable={editable}
+              workflowControlledStatus={workflowControlledStatus}
+              movement={movement}
+              onChange={(nextStatus) => {
+                setStatus(nextStatus);
+                void onChange(unit.id, { status: nextStatus });
+              }}
+            />
           </label>
 
           <label className="rounded-xl bg-gray-50 p-2 col-span-2">
@@ -726,36 +957,17 @@ function SerializedUnitRow({
           className="w-[120px] min-w-[120px] truncate rounded-lg border-none bg-white px-2 py-1 text-[12px] outline-none read-only:text-gray-700"
         />
 
-        {editable ? (
-  <select
-    value={status}
-    onChange={(e) => {
-      const v = e.target.value as UnitStatus;
-      setStatus(v);
-      void onChange(unit.id, { status: v });
-    }}
-    style={{ color: getStatusTextColor(status) }}
-    className="w-[95px] min-w-[95px] rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none"
-  >
-    <option value="available">Available</option>
-    <option value="in_use">In Use</option>
-    <option value="maintenance">Maintenance</option>
-    <option value="in_ksa">In KSA</option>
-  </select>
-) : (
-  <div
-    style={{ color: getStatusTextColor(status) }}
-    className="w-[95px] min-w-[95px] rounded-lg bg-white px-1 py-1 text-[12px] font-semibold"
-  >
-    {status === "in_use"
-      ? "In Use"
-      : status === "in_ksa"
-      ? "In KSA"
-      : status
-      ? status.charAt(0).toUpperCase() + status.slice(1)
-      : "Available"}
-  </div>
-)}
+        <UnitStatusField
+          status={status}
+          editable={editable}
+          workflowControlledStatus={workflowControlledStatus}
+          movement={movement}
+          wide
+          onChange={(nextStatus) => {
+            setStatus(nextStatus);
+            void onChange(unit.id, { status: nextStatus });
+          }}
+        />
 
         <textarea
           value={notes}
@@ -841,7 +1053,7 @@ function SerializedUnitRow({
         </div>
 
         <div className="w-[28px] min-w-[28px] flex justify-center">
-          {editable ? (
+          {editable && !lockedByMovement ? (
             <Trash2
               size={16}
               className="cursor-pointer transition-colors duration-200"

@@ -385,15 +385,11 @@ export default function ItemEditClientSerializedUnits({
                     <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-green-100 text-black">
                       Available Qty: {stats.available}
                     </span>
-                    <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-blue-100 text-black">
-                      In Use: {stats.inUse}
-                    </span>
-                    <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-yellow-100 text-black">
-                      Maintenance: {stats.maintenance}
-                    </span>
-                    <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-purple-100 text-black">
-                      In KSA: {stats.inKsa}
-                    </span>
+                    {stats.maintenance > 0 ? (
+                      <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-yellow-100 text-black">
+                        Maintenance: {stats.maintenance}
+                      </span>
+                    ) : null}
                   </div>
                 </div>
 
@@ -481,6 +477,7 @@ export default function ItemEditClientSerializedUnits({
           itemName={item.name}
           activityLink={activityLink}
           editable={editable}
+          workflowControlledStatus
           onStatsChange={setStats}
         />
       </div>

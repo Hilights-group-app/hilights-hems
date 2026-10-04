@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
 import { Trash2, ChevronDown } from "lucide-react";
+import EquipmentListMatrixQuantityAction from "@/components/EquipmentListMatrixQuantityAction";
 
 type MatrixItemRow = {
   id: string;
@@ -598,6 +599,7 @@ export default function SubcategoryClientMatrix({
   const [selectedModel, setSelectedModel] = useState("");
   const [selectedName, setSelectedName] = useState("");
   const [selectedBlockDraft, setSelectedBlockDraft] = useState("");
+  const [mobileAddOpen, setMobileAddOpen] = useState(false);
 
   const selectedItem = useMemo(
     () => items.find((item) => item.id === selectedItemId) ?? null,
@@ -1050,7 +1052,7 @@ export default function SubcategoryClientMatrix({
       const addMenu = document.getElementById("add-photo-menu");
       const listMenu = target.closest("[data-list-photo-menu='true']");
       const keepsSelection = target.closest(
-        "[data-matrix-select='true'], [data-matrix-tools='true']",
+        "[data-matrix-select='true'], [data-matrix-tools='true'], [data-mobile-matrix-tools='true']",
       );
 
       if (addMenu && !addMenu.contains(target)) {
@@ -1286,6 +1288,7 @@ export default function SubcategoryClientMatrix({
       setImageResults([]);
       setSearchPanelOpen(false);
       setPhotoMenuOpen(false);
+      setMobileAddOpen(false);
       setSaveMsg("Item added");
 
       setTimeout(() => {
@@ -1821,21 +1824,52 @@ export default function SubcategoryClientMatrix({
       </div>
 
       {editable ? (
-        <button
-          type="button"
-          onClick={() =>
-            void deleteCableRow(
-              selectedCableRowInfo.item.id,
-              selectedCableRowInfo.row.id,
-            )
-          }
-          className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-[10px] font-medium text-red-700 hover:bg-red-100"
-        >
-          <Trash2 size={13} /> Delete Row
-        </button>
+        <div className="mt-3 grid grid-cols-1 gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              void deleteCableRow(
+                selectedCableRowInfo.item.id,
+                selectedCableRowInfo.row.id,
+              )
+            }
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-[10px] font-medium text-red-700 hover:bg-red-100"
+          >
+            <Trash2 size={13} /> Delete Row
+          </button>
+        </div>
       ) : null}
     </div>
   ) : null;
+
+  async function closeMobileMatrixTools() {
+    await saveSelectedItemName();
+
+    if (
+      selectedItem &&
+      selectedBlockDraft.trim() &&
+      selectedBlockDraft.trim() !== itemBlockName(selectedItem)
+    ) {
+      await updateItemDirect(selectedItem.id, {
+        block_name: selectedBlockDraft.trim(),
+      });
+    }
+
+    setSelectedBlockName(null);
+    setSelectedItemId(null);
+    setSelectedCableRow(null);
+    setSearchPanelOpen(false);
+    setEditingPhotoItemId(null);
+    setImageResults([]);
+  }
+
+  function closeMobileAddItems() {
+    setMobileAddOpen(false);
+    setPhotoMenuOpen(false);
+    setSearchPanelOpen(false);
+    setEditingPhotoItemId(null);
+    setImageResults([]);
+  }
 
   function renderItemRow(it: MatrixItemRow, isLast: boolean) {
     const stats = statsByItem[it.id] || statsFromItem(it);
@@ -1857,12 +1891,29 @@ export default function SubcategoryClientMatrix({
             e.preventDefault();
             void dropItemOnItem(it.id, itemBlockName(it));
           }}
-          className={`rounded-xl p-2 transition ${
+          className={`relative rounded-xl p-2 transition ${
             selectedItemId === it.id ? "ring-2 ring-black" : ""
           } ${!isLast ? "border-b border-gray-100 pb-6 mb-6" : ""} ${
             editable ? "cursor-grab active:cursor-grabbing" : ""
           }`}
         >
+          {editable ? (
+            <button
+              type="button"
+              aria-label={`Open ${it.name} tools`}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setSelectedItemId(it.id);
+                setSelectedBlockName(null);
+                setSelectedCableRow(null);
+              }}
+              className="absolute right-2 top-2 z-30 flex h-[26px] w-[26px] items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm sm:hidden"
+            >
+              ⋮
+            </button>
+          ) : null}
+
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
               <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -1885,22 +1936,20 @@ export default function SubcategoryClientMatrix({
                   </div>
 
                   <div className="mt-2 sm:hidden">
-                    <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
+                  <div className={`grid gap-x-2 gap-y-1 text-center ${
+                    stats.maintenance > 0 ? "grid-cols-3" : "grid-cols-2"
+                  }`}>
                       <div className="text-[8px] font-semibold text-gray-500">
                         Total
                       </div>
                       <div className="text-[8px] font-semibold text-gray-500">
                         Available
                       </div>
-                      <div className="text-[8px] font-semibold text-gray-500">
-                        In Use
-                      </div>
-                      <div className="text-[8px] font-semibold text-gray-500">
-                        Maintenance
-                      </div>
-                      <div className="text-[8px] font-semibold text-gray-500">
-                        In KSA
-                      </div>
+                      {stats.maintenance > 0 ? (
+                        <div className="text-[8px] font-semibold text-gray-500">
+                          Maintenance
+                        </div>
+                      ) : null}
 
                       <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">
                         {stats.total}
@@ -1908,15 +1957,11 @@ export default function SubcategoryClientMatrix({
                       <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
                         {stats.available}
                       </div>
-                      <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold">
-                        {stats.inUse}
-                      </div>
-                      <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
-                        {stats.maintenance}
-                      </div>
-                      <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold">
-                        {stats.inKsa}
-                      </div>
+                      {stats.maintenance > 0 ? (
+                        <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
+                          {stats.maintenance}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
 
@@ -1931,21 +1976,13 @@ export default function SubcategoryClientMatrix({
                         value={stats.available}
                         tone="green"
                       />
-                      <StatPill
-                        label="In Use"
-                        value={stats.inUse}
-                        tone="blue"
-                      />
-                      <StatPill
-                        label="Maintenance"
-                        value={stats.maintenance}
-                        tone="yellow"
-                      />
-                      <StatPill
-                        label="In KSA"
-                        value={stats.inKsa}
-                        tone="purple"
-                      />
+                      {stats.maintenance > 0 ? (
+                        <StatPill
+                          label="Maintenance"
+                          value={stats.maintenance}
+                          tone="yellow"
+                        />
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -1970,7 +2007,7 @@ export default function SubcategoryClientMatrix({
                     setSelectedItemId(null);
                     setSelectedBlockName(null);
                   }}
-                  className={`grid cursor-pointer grid-cols-[1fr_64px] items-center gap-2 border-t border-gray-100 px-4 py-2 text-[6px] first:border-t-0 sm:text-[8px] ${
+                  className={`grid cursor-pointer grid-cols-[1fr_64px_76px] items-center gap-2 border-t border-gray-100 px-4 py-2 text-[6px] first:border-t-0 sm:text-[8px] ${
                     selectedCableRow?.rowId === row.id
                       ? "ring-2 ring-inset ring-black"
                       : "hover:bg-gray-50"
@@ -1988,6 +2025,28 @@ export default function SubcategoryClientMatrix({
                   >
                     Qty: {row.total_qty ?? 0}
                   </div>
+
+                  <div className="text-right">
+                    <EquipmentListMatrixQuantityAction
+                      target={{
+                        id: row.id,
+                        parentId: it.id,
+                        recordType: "matrix_row",
+                        displayName: it.name,
+                        blockName: itemBlockName(it),
+                        photoUrl: it.photo_data,
+                        itemType: it.item_type,
+                        rowLabel: row.cable_length,
+                        total: row.total_qty ?? 0,
+                        inUse: row.in_use_qty ?? 0,
+                        maintenance: row.maintenance_qty ?? 0,
+                        inKsa: row.in_ksa_qty ?? 0,
+                      }}
+                      category={category}
+                      subcategory={subcategory}
+                      compact
+                    />
+                  </div>
                 </div>
               ))
             )}
@@ -1998,6 +2057,11 @@ export default function SubcategoryClientMatrix({
     }
 
     if (it.item_type === "cable") {
+      const cableRows = sortCableRows(cableRowsByItem[it.id] || []);
+      const showCableMaintenance = cableRows.some(
+        (row) => cableStats(row).maintenance > 0,
+      );
+
       return (
         <div
           key={it.id}
@@ -2014,12 +2078,29 @@ export default function SubcategoryClientMatrix({
             e.preventDefault();
             void dropItemOnItem(it.id, itemBlockName(it));
           }}
-          className={`rounded-xl p-2 transition ${
+          className={`relative rounded-xl p-2 transition ${
             selectedItemId === it.id ? "ring-2 ring-black" : ""
           } ${!isLast ? "border-b border-gray-100 pb-8 mb-8" : ""} ${
             editable ? "cursor-grab active:cursor-grabbing" : ""
           }`}
         >
+          {editable ? (
+            <button
+              type="button"
+              aria-label={`Open ${it.name} tools`}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setSelectedItemId(it.id);
+                setSelectedBlockName(null);
+                setSelectedCableRow(null);
+              }}
+              className="absolute right-2 top-2 z-30 flex h-[26px] w-[26px] items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm sm:hidden"
+            >
+              ⋮
+            </button>
+          ) : null}
+
           <div className="flex items-start justify-between gap-4">
             <div className="flex items-center gap-7 min-w-0">
               <ItemPhoto
@@ -2044,21 +2125,26 @@ export default function SubcategoryClientMatrix({
 
           <div className="mt-5 overflow-x-auto pr-0">
             <div className="rounded-2xl border border-gray-200 overflow-hidden min-w-0">
-              <div className="grid grid-cols-[74px_repeat(5,45px)] md:grid-cols-[160px_repeat(5,130px)] bg-gray-100 items-center gap-[1px] px-2 lg:px-6 py-1 lg:py-2 text-[7px] lg:text-[9px] font-bold text-gray-600">
+              <div className={`grid items-center gap-[1px] bg-gray-100 px-2 py-1 text-[7px] font-bold text-gray-600 lg:px-6 lg:py-2 lg:text-[9px] ${
+                showCableMaintenance
+                  ? "grid-cols-[74px_45px_45px_45px_76px] md:grid-cols-[160px_130px_130px_130px_76px]"
+                  : "grid-cols-[74px_45px_45px_76px] md:grid-cols-[160px_130px_130px_76px]"
+              }`}>
                 <div className="text-left">Length</div>
                 <div className="text-center">Total</div>
                 <div className="text-center">Available</div>
-                <div className="text-center">In Use</div>
-                <div className="text-center">Maintenance</div>
-                <div className="text-center">In KSA</div>
+                {showCableMaintenance ? (
+                  <div className="text-center">Maintenance</div>
+                ) : null}
+                <div />
               </div>
 
-              {(cableRowsByItem[it.id] || []).length === 0 ? (
+              {cableRows.length === 0 ? (
                 <div className="px-2 lg:px-6 py-3 text-[10px] lg:text-[12px] text-gray-400">
                   No cable lengths yet.
                 </div>
               ) : (
-                sortCableRows(cableRowsByItem[it.id] || []).map((row) => {
+                cableRows.map((row) => {
                   const s = cableStats(row);
 
                   return (
@@ -2071,7 +2157,11 @@ export default function SubcategoryClientMatrix({
                         setSelectedItemId(null);
                         setSelectedBlockName(null);
                       }}
-                      className={`grid cursor-pointer grid-cols-[74px_repeat(5,45px)] items-center gap-[1px] border-t border-gray-100 px-2 py-[1px] text-[7px] text-gray-900 md:grid-cols-[160px_repeat(5,130px)] lg:px-6 lg:py-[2px] lg:text-[9px] ${
+                      className={`grid cursor-pointer items-center gap-[1px] border-t border-gray-100 px-2 py-[1px] text-[7px] text-gray-900 lg:px-6 lg:py-[2px] lg:text-[9px] ${
+                        showCableMaintenance
+                          ? "grid-cols-[74px_45px_45px_45px_76px] md:grid-cols-[160px_130px_130px_130px_76px]"
+                          : "grid-cols-[74px_45px_45px_76px] md:grid-cols-[160px_130px_130px_76px]"
+                      } ${
                         selectedCableRow?.rowId === row.id
                           ? "ring-2 ring-inset ring-black"
                           : "hover:bg-gray-50"
@@ -2091,22 +2181,38 @@ export default function SubcategoryClientMatrix({
                         </span>
                       </div>
 
-                      <div className="text-center">
-                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-blue-100 px-1 lg:px-1.5 py-0 lg:py-[2px] font-bold">
-                          {s.inUse}
-                        </span>
-                      </div>
+                      {showCableMaintenance ? (
+                        <div className="text-center">
+                          {s.maintenance > 0 ? (
+                            <span className="inline-flex min-w-5 justify-center rounded-md bg-yellow-100 px-1 py-0 font-bold lg:min-w-7 lg:rounded-lg lg:px-1.5 lg:py-[2px]">
+                              {s.maintenance}
+                            </span>
+                          ) : (
+                            <span className="text-gray-300">—</span>
+                          )}
+                        </div>
+                      ) : null}
 
                       <div className="text-center">
-                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-yellow-100 px-1 lg:px-1.5 py-0 lg:py-[2px] font-bold">
-                          {s.maintenance}
-                        </span>
-                      </div>
-
-                      <div className="text-center">
-                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-purple-100 px-1 lg:px-1.5 py-0 lg:py-[2px] font-bold">
-                          {s.inKsa}
-                        </span>
+                        <EquipmentListMatrixQuantityAction
+                          target={{
+                            id: row.id,
+                            parentId: it.id,
+                            recordType: "matrix_row",
+                            displayName: it.name,
+                            blockName: itemBlockName(it),
+                            photoUrl: it.photo_data,
+                            itemType: it.item_type,
+                            rowLabel: row.cable_length,
+                            total: row.total_qty ?? 0,
+                            inUse: row.in_use_qty ?? 0,
+                            maintenance: row.maintenance_qty ?? 0,
+                            inKsa: row.in_ksa_qty ?? 0,
+                          }}
+                          category={category}
+                          subcategory={subcategory}
+                          compact
+                        />
                       </div>
                     </div>
                   );
@@ -2135,12 +2241,50 @@ export default function SubcategoryClientMatrix({
           e.preventDefault();
           void dropItemOnItem(it.id, itemBlockName(it));
         }}
-        className={`rounded-xl p-2 transition ${
+        className={`relative rounded-xl p-2 transition ${
           selectedItemId === it.id ? "ring-2 ring-black" : ""
         } ${!isLast ? "border-b border-gray-100 pb-4 mb-4" : ""} ${
           editable ? "cursor-grab active:cursor-grabbing" : ""
         }`}
       >
+        {editable ? (
+          <button
+            type="button"
+            aria-label={`Open ${it.name} tools`}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setSelectedItemId(it.id);
+              setSelectedBlockName(null);
+              setSelectedCableRow(null);
+            }}
+            className="absolute right-2 top-2 z-30 flex h-[26px] w-[26px] items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm sm:hidden"
+          >
+            ⋮
+          </button>
+        ) : null}
+
+        <div className="absolute right-2 top-2 hidden sm:block">
+          <EquipmentListMatrixQuantityAction
+            target={{
+              id: it.id,
+              parentId: null,
+              recordType: "matrix_model",
+              displayName: it.name,
+              blockName: itemBlockName(it),
+              photoUrl: it.photo_data,
+              itemType: it.item_type,
+              total: it.total_qty ?? 0,
+              inUse: it.in_use_qty ?? 0,
+              maintenance: it.maintenance_qty ?? 0,
+              inKsa: it.in_ksa_qty ?? 0,
+            }}
+            category={category}
+            subcategory={subcategory}
+            compact
+          />
+        </div>
+
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
             <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -2162,22 +2306,20 @@ export default function SubcategoryClientMatrix({
                 </div>
 
                 <div className="mt-2 sm:hidden">
-                  <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
+                  <div className={`grid gap-x-2 gap-y-1 text-center ${
+                    stats.maintenance > 0 ? "grid-cols-3" : "grid-cols-2"
+                  }`}>
                     <div className="text-[8px] font-semibold text-gray-500">
                       Total
                     </div>
                     <div className="text-[8px] font-semibold text-gray-500">
                       Available
                     </div>
-                    <div className="text-[8px] font-semibold text-gray-500">
-                      In Use
-                    </div>
-                    <div className="text-[8px] font-semibold text-gray-500">
-                      Maintenance
-                    </div>
-                    <div className="text-[8px] font-semibold text-gray-500">
-                      In KSA
-                    </div>
+                    {stats.maintenance > 0 ? (
+                      <div className="text-[8px] font-semibold text-gray-500">
+                        Maintenance
+                      </div>
+                    ) : null}
 
                     <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">
                       {stats.total}
@@ -2185,15 +2327,11 @@ export default function SubcategoryClientMatrix({
                     <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
                       {stats.available}
                     </div>
-                    <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold">
-                      {stats.inUse}
-                    </div>
-                    <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
-                      {stats.maintenance}
-                    </div>
-                    <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold">
-                      {stats.inKsa}
-                    </div>
+                    {stats.maintenance > 0 ? (
+                      <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
+                        {stats.maintenance}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
 
@@ -2208,21 +2346,13 @@ export default function SubcategoryClientMatrix({
                       value={stats.available}
                       tone="green"
                     />
-                    <StatPill
-                      label="In Use"
-                      value={stats.inUse}
-                      tone="blue"
-                    />
-                    <StatPill
-                      label="Maintenance"
-                      value={stats.maintenance}
-                      tone="yellow"
-                    />
-                    <StatPill
-                      label="In KSA"
-                      value={stats.inKsa}
-                      tone="purple"
-                    />
+                    {stats.maintenance > 0 ? (
+                      <StatPill
+                        label="Maintenance"
+                        value={stats.maintenance}
+                        tone="yellow"
+                      />
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -2262,6 +2392,120 @@ export default function SubcategoryClientMatrix({
 
   return (
     <div className="w-full mx-auto space-y-3">
+      {(selectedBlockName || selectedItem || selectedCableRowInfo) ? (
+        <div
+          data-mobile-matrix-tools="true"
+          className="fixed inset-0 z-[9998] sm:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Matrix tools"
+        >
+          <button
+            type="button"
+            aria-label="Close matrix tools"
+            onClick={() => void closeMobileMatrixTools()}
+            className="absolute inset-0 bg-black/45"
+          />
+
+          <div className="absolute inset-x-0 bottom-0 flex h-[75dvh] flex-col rounded-t-3xl bg-gray-50 shadow-2xl">
+            <div className="flex shrink-0 items-center justify-between px-4 pb-2 pt-3">
+              <div className="h-1 w-10 rounded-full bg-gray-300" />
+              <div className="text-[11px] font-semibold text-gray-700">
+                Matrix Tools
+              </div>
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => void closeMobileMatrixTools()}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-lg leading-none text-gray-700"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-[calc(env(safe-area-inset-bottom)+16px)]">
+              {selectedBlockPanel}
+              {selectedItemPanel}
+              {selectedCableRowPanel}
+
+              {searchPanelOpen &&
+              editingPhotoItemId === selectedItem?.id ? (
+                <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className="text-[12px] font-semibold text-gray-900">
+                      Search Photo Online
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchPanelOpen(false);
+                        setImageResults([]);
+                        setEditingPhotoItemId(null);
+                      }}
+                      className="text-[10px] text-red-500 hover:text-black"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input
+                      value={imageSearch}
+                      onChange={(event) => setImageSearch(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void searchOnlineImages();
+                        }
+                      }}
+                      placeholder="Search image..."
+                      className="h-10 min-w-0 flex-1 rounded-xl border border-gray-300 px-3 text-[12px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void searchOnlineImages()}
+                      disabled={searchingImages}
+                      className="h-10 rounded-xl bg-black px-3 text-[11px] font-medium text-white disabled:opacity-40"
+                    >
+                      {searchingImages ? "..." : "Search"}
+                    </button>
+                  </div>
+
+                  {imageResults.length > 0 ? (
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      {imageResults.map((img, index) => {
+                        const imageUrl =
+                          img.original || img.image || img.thumbnail;
+                        const thumb = img.thumbnail || imageUrl;
+                        if (!imageUrl || !thumb) return null;
+
+                        return (
+                          <button
+                            key={`${imageUrl}-${index}`}
+                            type="button"
+                            onClick={() => void selectOnlinePhoto(img)}
+                            className="overflow-hidden rounded-xl border border-gray-200"
+                            title={img.title || "Select photo"}
+                          >
+                            <img
+                              src={thumb}
+                              alt={img.title || "Online image"}
+                              loading="lazy"
+                              decoding="async"
+                              className="aspect-square w-full object-cover"
+                            />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {sidebarTarget
         ? createPortal(
             <div>
@@ -2273,9 +2517,9 @@ export default function SubcategoryClientMatrix({
           )
         : null}
 
-      <div className="block xl:hidden">{selectedBlockPanel}</div>
-      <div className="block xl:hidden">{selectedItemPanel}</div>
-      <div className="block xl:hidden">{selectedCableRowPanel}</div>
+      <div className="hidden sm:block xl:hidden">{selectedBlockPanel}</div>
+      <div className="hidden sm:block xl:hidden">{selectedItemPanel}</div>
+      <div className="hidden sm:block xl:hidden">{selectedCableRowPanel}</div>
 
       {editable &&
         !selectedBlockName &&
@@ -2593,9 +2837,61 @@ export default function SubcategoryClientMatrix({
         </div>
           );
 
-          return sidebarTarget && desktopSidebarActive
-            ? createPortal(addItemsPanel, sidebarTarget)
-            : addItemsPanel;
+          if (sidebarTarget && desktopSidebarActive) {
+            return createPortal(addItemsPanel, sidebarTarget);
+          }
+
+          return (
+            <>
+              <button
+                type="button"
+                aria-label="Add matrix item"
+                aria-expanded={mobileAddOpen}
+                onClick={() => setMobileAddOpen(true)}
+                className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl transition active:scale-95 xl:hidden"
+              >
+                +
+              </button>
+
+              {mobileAddOpen ? (
+                <div
+                  data-mobile-matrix-add="true"
+                  className="fixed inset-0 z-[9998] xl:hidden"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Add matrix item"
+                >
+                  <button
+                    type="button"
+                    aria-label="Close add item form"
+                    onClick={closeMobileAddItems}
+                    className="absolute inset-0 bg-black/45"
+                  />
+
+                  <div className="absolute inset-x-0 bottom-0 flex max-h-[88dvh] flex-col rounded-t-3xl bg-gray-50 shadow-2xl">
+                    <div className="flex shrink-0 items-center justify-between px-4 pb-2 pt-3">
+                      <div className="h-1 w-10 rounded-full bg-gray-300" />
+                      <div className="text-[11px] font-semibold text-gray-700">
+                        Add Items
+                      </div>
+                      <button
+                        type="button"
+                        aria-label="Close"
+                        onClick={closeMobileAddItems}
+                        className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-lg leading-none text-gray-700"
+                      >
+                        ×
+                      </button>
+                    </div>
+
+                    <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-[calc(env(safe-area-inset-bottom)+16px)]">
+                      {addItemsPanel}
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+            </>
+          );
         })()}
 
       {items.length === 0 ? (

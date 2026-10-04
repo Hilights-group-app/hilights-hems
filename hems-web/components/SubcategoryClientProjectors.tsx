@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
 import { Trash2 } from "lucide-react";
+import EquipmentListAddUnitsAction from "@/components/EquipmentListAddUnitsAction";
 
 type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
@@ -551,7 +552,14 @@ export default function SubcategoryClientProjectors({
   useEffect(() => {
     function closeMobileMenu(e: MouseEvent) {
       const target = e.target as HTMLElement;
-      if (!target.closest("[data-mobile-projector-menu='true']")) {
+      const insideMenu = target.closest(
+        "[data-mobile-projector-menu='true']",
+      );
+      const insideTools = target.closest(
+        "[data-mobile-projector-tools='true']",
+      );
+
+      if (!insideMenu && !insideTools) {
         setMobileMenuItemId(null);
       }
     }
@@ -949,8 +957,17 @@ export default function SubcategoryClientProjectors({
       const insideProjectorTools = target.closest(
         "[data-projector-tools='true']",
       );
+      const insideMobileTools = target.closest(
+        "[data-mobile-projector-tools='true']",
+      );
 
-      if (insideProjector || insideSidebar || insideProjectorTools) return;
+      if (
+        insideProjector ||
+        insideSidebar ||
+        insideProjectorTools ||
+        insideMobileTools
+      )
+        return;
 
       void saveSelectedProjectorName();
       void saveSelectedBlockName();
@@ -1280,6 +1297,16 @@ export default function SubcategoryClientProjectors({
     </div>
   ) : null;
 
+  async function closeMobileProjectorTools() {
+    await saveSelectedProjectorName();
+    await saveSelectedBlockName();
+    setMobileMenuItemId(null);
+    setSelectedItemId(null);
+    setSearchPanelOpen(false);
+    setPhotoSearchItemId(null);
+    setImageResults([]);
+  }
+
   if (loading) {
     return (
       <div className="w-full mx-auto">
@@ -1299,6 +1326,117 @@ export default function SubcategoryClientProjectors({
         className="hidden"
         onChange={onPickListItemPhoto}
       />
+
+      {editable && mobileMenuItemId && selectedItem ? (
+        <div
+          data-mobile-projector-tools="true"
+          className="fixed inset-0 z-[9998] sm:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${selectedItem.name} tools`}
+        >
+          <button
+            type="button"
+            aria-label="Close projector tools"
+            onClick={() => void closeMobileProjectorTools()}
+            className="absolute inset-0 bg-black/45"
+          />
+
+          <div className="absolute inset-x-0 bottom-0 flex h-[75dvh] flex-col rounded-t-3xl bg-gray-50 shadow-2xl">
+            <div className="flex shrink-0 items-center justify-between px-4 pb-2 pt-3">
+              <div className="h-1 w-10 rounded-full bg-gray-300" />
+              <div className="text-[11px] font-semibold text-gray-700">
+                Projector Tools
+              </div>
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => void closeMobileProjectorTools()}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-lg leading-none text-gray-700"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-[calc(env(safe-area-inset-bottom)+16px)]">
+              {editItemPanel}
+
+              {searchPanelOpen && photoSearchItemId === selectedItem.id ? (
+                <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className="text-[12px] font-semibold text-gray-900">
+                      Search Photo Online
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchPanelOpen(false);
+                        setPhotoSearchItemId(null);
+                        setImageResults([]);
+                      }}
+                      className="text-[10px] text-red-500 hover:text-black"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input
+                      value={imageSearch}
+                      onChange={(event) => setImageSearch(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void searchOnlineImages();
+                        }
+                      }}
+                      placeholder="Search image..."
+                      className="h-10 min-w-0 flex-1 rounded-xl border border-gray-300 px-3 text-[12px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void searchOnlineImages()}
+                      disabled={searchingImages}
+                      className="h-10 rounded-xl bg-black px-3 text-[11px] font-medium text-white disabled:opacity-40"
+                    >
+                      {searchingImages ? "..." : "Search"}
+                    </button>
+                  </div>
+
+                  {imageResults.length > 0 ? (
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      {imageResults.map((image, index) => {
+                        const imageUrl =
+                          image.original || image.image || image.thumbnail;
+                        const thumbnail = image.thumbnail || imageUrl;
+                        if (!imageUrl || !thumbnail) return null;
+
+                        return (
+                          <button
+                            key={`${imageUrl}-${index}`}
+                            type="button"
+                            onClick={() => void selectOnlinePhoto(image)}
+                            className="overflow-hidden rounded-xl border border-gray-200"
+                            title={image.title || "Select photo"}
+                          >
+                            <img
+                              src={thumbnail}
+                              alt={image.title || "Online image"}
+                              loading="lazy"
+                              decoding="async"
+                              className="aspect-square w-full object-cover"
+                            />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {editable && !selectedItem ? (
         <>
@@ -1604,15 +1742,19 @@ export default function SubcategoryClientProjectors({
                     await saveSelectedBlockName();
                     setSelectedItemId(it.id);
                   }}
-                  onToggleMobileMenu={() =>
-                    setMobileMenuItemId((current) =>
-                      current === it.id ? null : it.id,
-                    )
-                  }
-                  onRename={() => renameItem(it.id)}
-                  onChangePhoto={() => {
-                    setEditingPhotoItemId(it.id);
-                    listPhotoRef.current?.click();
+                  onToggleMobileMenu={() => {
+                    if (mobileMenuItemId === it.id) {
+                      void closeMobileProjectorTools();
+                      return;
+                    }
+
+                    void saveSelectedProjectorName();
+                    void saveSelectedBlockName();
+                    setSearchPanelOpen(false);
+                    setPhotoSearchItemId(null);
+                    setImageResults([]);
+                    setSelectedItemId(it.id);
+                    setMobileMenuItemId(it.id);
                   }}
                   onDelete={() => deleteItem(it.id)}
                 />
@@ -1642,8 +1784,6 @@ function ProjectorItemRow({
   mobileMenuOpen,
   onSelect,
   onToggleMobileMenu,
-  onRename,
-  onChangePhoto,
   onDelete,
 }: {
   item: DbItem;
@@ -1656,8 +1796,6 @@ function ProjectorItemRow({
   mobileMenuOpen: boolean;
   onSelect: () => void | Promise<void>;
   onToggleMobileMenu: () => void;
-  onRename: () => void;
-  onChangePhoto: () => void;
   onDelete: () => void;
 }) {
   const detailsHref = `/inventory/${category}/${subcategory}/${item.id}`;
@@ -1696,22 +1834,20 @@ function ProjectorItemRow({
               </div>
 
               <div className="mt-2 sm:hidden">
-                <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
+                <div className={`grid gap-x-2 gap-y-1 text-center ${
+                  stats.maintenance > 0 ? "grid-cols-3" : "grid-cols-2"
+                }`}>
                   <div className="text-[8px] font-semibold text-gray-500">
                     Total
                   </div>
                   <div className="text-[8px] font-semibold text-gray-500">
                     Available
                   </div>
-                  <div className="text-[8px] font-semibold text-gray-500">
-                    In Use
-                  </div>
-                  <div className="text-[8px] font-semibold text-gray-500">
-                    Maintenance
-                  </div>
-                  <div className="text-[8px] font-semibold text-gray-500">
-                    In KSA
-                  </div>
+                  {stats.maintenance > 0 ? (
+                    <div className="text-[8px] font-semibold text-gray-500">
+                      Maintenance
+                    </div>
+                  ) : null}
 
                   <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
                     {stats.total}
@@ -1719,15 +1855,11 @@ function ProjectorItemRow({
                   <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
                     {stats.available}
                   </div>
-                  <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
-                    {stats.inUse}
-                  </div>
-                  <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
-                    {stats.maintenance}
-                  </div>
-                  <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
-                    {stats.inKsa}
-                  </div>
+                  {stats.maintenance > 0 ? (
+                    <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
+                      {stats.maintenance}
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
@@ -1739,13 +1871,13 @@ function ProjectorItemRow({
                     value={stats.available}
                     tone="green"
                   />
-                  <StatPill label="In Use" value={stats.inUse} tone="blue" />
-                  <StatPill
-                    label="Maintenance"
-                    value={stats.maintenance}
-                    tone="yellow"
-                  />
-                  <StatPill label="In KSA" value={stats.inKsa} tone="purple" />
+                  {stats.maintenance > 0 ? (
+                    <StatPill
+                      label="Maintenance"
+                      value={stats.maintenance}
+                      tone="yellow"
+                    />
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -1766,13 +1898,21 @@ function ProjectorItemRow({
           )}
         </div>
 
-        <Link
-          href={detailsHref}
-          onClick={(event) => event.stopPropagation()}
-          className="absolute right-2 top-2 hidden rounded-full border border-gray-300 bg-white px-2.5 py-1 text-[9px] font-medium text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700 sm:block"
-        >
-          Report
-        </Link>
+        <div className="absolute right-2 top-2 hidden items-center gap-1.5 sm:flex">
+          <EquipmentListAddUnitsAction
+            item={item}
+            category={category}
+            subcategory={subcategory}
+            compact
+          />
+          <Link
+            href={detailsHref}
+            onClick={(event) => event.stopPropagation()}
+            className="rounded-full border border-gray-300 bg-white px-2.5 py-1 text-[9px] font-medium text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+          >
+            Report
+          </Link>
+        </div>
 
         {editable ? (
           <div
@@ -1793,43 +1933,6 @@ function ProjectorItemRow({
               ⋮
             </button>
 
-            {mobileMenuOpen ? (
-              <div className="absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-xl border border-gray-200 bg-white py-1 shadow-xl">
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onToggleMobileMenu();
-                    onRename();
-                  }}
-                  className="block w-full px-3 py-2 text-left text-[11px] font-medium text-gray-700 hover:bg-gray-50"
-                >
-                  Rename
-                </button>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onToggleMobileMenu();
-                    onChangePhoto();
-                  }}
-                  className="block w-full border-t border-gray-100 px-3 py-2 text-left text-[11px] font-medium text-gray-700 hover:bg-gray-50"
-                >
-                  Change Photo
-                </button>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onToggleMobileMenu();
-                    onDelete();
-                  }}
-                  className="block w-full border-t border-gray-100 px-3 py-2 text-left text-[11px] font-medium text-red-600 hover:bg-red-50"
-                >
-                  Delete Projector
-                </button>
-              </div>
-            ) : null}
           </div>
         ) : null}
       </div>

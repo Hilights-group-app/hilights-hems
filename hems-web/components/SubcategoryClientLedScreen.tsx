@@ -8,6 +8,16 @@ import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
 import { logActivity } from "@/lib/activityStore";
 import { ChevronDown, Trash2 } from "lucide-react";
+import EquipmentListQuantityPicker from "@/components/EquipmentListQuantityPicker";
+import {
+  ACTIVE_EQUIPMENT_LIST_EVENT,
+  ACTIVE_EQUIPMENT_LIST_KEY,
+  EQUIPMENT_LIST_ITEMS_EVENT,
+  EQUIPMENT_LISTS_EVENT,
+  equipmentListSummary,
+  equipmentListTypeLabel,
+  type EquipmentList,
+} from "@/lib/equipmentLists";
 import {
   DndContext,
   PointerSensor,
@@ -44,6 +54,7 @@ type MatrixModel = {
   name: string;
   matrix_rows?: MatrixRow[];
   created_at?: string;
+  sort_order?: number | null;
 };
 
 type ParsedLedName = {
@@ -62,6 +73,43 @@ type PhotoTarget =
   | { type: "new" }
   | { type: "addCabinet" }
   | { type: "row"; rowId: string };
+
+type ActiveAllocation = {
+  listId: string;
+  reference: string;
+  label: string;
+  quantity: number;
+  status: "active" | "partially_returned";
+};
+
+type ListPickerTarget = {
+  model: MatrixModel;
+  row: MatrixRow;
+};
+
+const ACTIVE_LIST_SELECT = `
+  id,
+  reference,
+  list_type,
+  status,
+  client_company,
+  event_name,
+  venue,
+  purpose,
+  assigned_to,
+  from_location_name,
+  destination_name,
+  pickup_date,
+  return_date,
+  setup_date,
+  dismantling_date,
+  loading_date,
+  receiving_date,
+  notes,
+  created_by_name,
+  created_at,
+  updated_at
+`;
 
 function clampQty(v: any) {
   const n = Number(v);
@@ -113,7 +161,7 @@ async function compressImageFile(
 }
 
 async function uploadPhotoBlob(blob: Blob): Promise<string> {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
 
   const fileName = `${Date.now()}-${Math.random()
     .toString(36)
@@ -176,11 +224,23 @@ function buildLedName(brand: string, model: string) {
 
 function rowAvailableFromTotal(
   total: number,
-  inUse: number,
+  allocated: number,
   maintenance: number,
-  inKsa: number
 ) {
-  return Math.max(0, total - inUse - maintenance - inKsa);
+  return Math.max(0, total - allocated - maintenance);
+}
+
+function existingMovementQuantity(row: MatrixRow, activeAllocated: number) {
+  return Math.max(
+    0,
+    clampQty(row.in_use_qty) + clampQty(row.in_ksa_qty) - activeAllocated,
+  );
+}
+
+function allocationLabel(list: EquipmentList) {
+  const type = equipmentListTypeLabel(list.list_type);
+  const summary = equipmentListSummary(list);
+  return summary ? `${type} · ${summary}` : type;
 }
 
 function parseCabinetArea(size: string): number {
@@ -216,6 +276,15 @@ function sortRows(rows?: MatrixRow[]) {
     const ao = typeof a.sort_order === "number" ? a.sort_order : 999999;
     const bo = typeof b.sort_order === "number" ? b.sort_order : 999999;
     return ao - bo;
+  });
+}
+
+function sortModels(models?: MatrixModel[]) {
+  return [...(models ?? [])].sort((a, b) => {
+    const ao = typeof a.sort_order === "number" ? a.sort_order : 999999;
+    const bo = typeof b.sort_order === "number" ? b.sort_order : 999999;
+    if (ao !== bo) return ao - bo;
+    return String(b.created_at ?? "").localeCompare(String(a.created_at ?? ""));
   });
 }
 
@@ -410,6 +479,14 @@ export default function SubcategoryClientLedScreen({
     return `${basePath}/led-report/${encodeURIComponent(rowId)}`;
   };
 
+  const routeSlugs = useMemo(() => {
+    const parts = pathname.split("/").filter(Boolean);
+    return {
+      category: decodeURIComponent(parts[1] || ""),
+      subcategory: decodeURIComponent(parts[2] || ""),
+    };
+  }, [pathname]);
+
   const newPhotoFileRef = useRef<HTMLInputElement | null>(null);
   const addCabinetPhotoFileRef = useRef<HTMLInputElement | null>(null);
   const rowPhotoFileRef = useRef<HTMLInputElement | null>(null);
@@ -431,12 +508,6 @@ export default function SubcategoryClientLedScreen({
   const [newPhoto, setNewPhoto] = useState<string | null>(null);
 
   const [openModelId, setOpenModelId] = useState<string | null>(null);
-
-  const [editingRow, setEditingRow] = useState<MatrixRow | null>(null);
-  const [editTotal, setEditTotal] = useState(0);
-  const [editInUse, setEditInUse] = useState(0);
-  const [editInKsa, setEditInKsa] = useState(0);
-  const [savingEdit, setSavingEdit] = useState(false);
 
   const [addingModelId, setAddingModelId] = useState<string | null>(null);
   const [addCabinetSize, setAddCabinetSize] = useState("");
@@ -460,6 +531,18 @@ export default function SubcategoryClientLedScreen({
   const [selectedModelBrand, setSelectedModelBrand] = useState("");
   const [selectedModelName, setSelectedModelName] = useState("");
   const [mobileAddOpen, setMobileAddOpen] = useState(false);
+  const [activeEquipmentList, setActiveEquipmentList] =
+    useState<EquipmentList | null>(null);
+  const [listPickerTarget, setListPickerTarget] =
+    useState<ListPickerTarget | null>(null);
+  const [allocationsByRow, setAllocationsByRow] = useState<
+    Record<string, ActiveAllocation[]>
+  >({});
+  const modelSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    })
+  );
 
   const selectedCabinetInfo = useMemo(() => {
     for (const currentModel of models) {
@@ -473,6 +556,16 @@ export default function SubcategoryClientLedScreen({
 
   const selectedModel =
     models.find((currentModel) => currentModel.id === selectedModelId) ?? null;
+
+  const activeDraftList =
+    activeEquipmentList?.status === "draft" ? activeEquipmentList : null;
+
+  function rowAllocatedQuantity(rowId: string) {
+    return (allocationsByRow[rowId] ?? []).reduce(
+      (total, allocation) => total + clampQty(allocation.quantity),
+      0,
+    );
+  }
 
   useEffect(() => {
     const parsed = parseLedName(selectedModel?.name ?? "");
@@ -500,6 +593,125 @@ export default function SubcategoryClientLedScreen({
     return data.category_id as string;
   }
 
+  async function loadActiveAllocations(nextModels: MatrixModel[]) {
+    const rowIds = nextModels.flatMap((currentModel) =>
+      (currentModel.matrix_rows ?? []).map((row) => row.id),
+    );
+    const emptyAllocations: Record<string, ActiveAllocation[]> = {};
+    for (const rowId of rowIds) emptyAllocations[rowId] = [];
+
+    if (rowIds.length === 0) {
+      setAllocationsByRow(emptyAllocations);
+      return;
+    }
+
+    const activeListsResult = await supabase
+      .from("equipment_lists")
+      .select(ACTIVE_LIST_SELECT)
+      .in("status", ["active", "partially_returned"])
+      .order("created_at", { ascending: false })
+      .limit(200);
+
+    if (activeListsResult.error) {
+      console.error(
+        "load LED active equipment lists error",
+        activeListsResult.error,
+      );
+      setAllocationsByRow(emptyAllocations);
+      return;
+    }
+
+    const activeLists = (activeListsResult.data ?? []) as EquipmentList[];
+    const activeListIds = activeLists.map((activeList) => activeList.id);
+    if (activeListIds.length === 0) {
+      setAllocationsByRow(emptyAllocations);
+      return;
+    }
+
+    const activeListsById = new Map(
+      activeLists.map((activeList) => [activeList.id, activeList]),
+    );
+    let allocationRows: Array<{
+      list_id: string;
+      inventory_record_id: string;
+      requested_quantity: number;
+      approved_quantity: number;
+      returned_ok_quantity: number;
+      returned_maintenance_quantity: number;
+    }> = [];
+    let from = 0;
+    const pageSize = 1000;
+
+    while (true) {
+      const allocationResult = await supabase
+        .from("equipment_list_items")
+        .select(
+          "list_id,inventory_record_id,requested_quantity,approved_quantity,returned_ok_quantity,returned_maintenance_quantity",
+        )
+        .eq("inventory_record_type", "matrix_row")
+        .in("list_id", activeListIds)
+        .in("inventory_record_id", rowIds)
+        .range(from, from + pageSize - 1);
+
+      if (allocationResult.error) {
+        console.error(
+          "load LED active allocations error",
+          allocationResult.error,
+        );
+        setAllocationsByRow(emptyAllocations);
+        return;
+      }
+
+      const page = (allocationResult.data ?? []) as typeof allocationRows;
+      allocationRows = [...allocationRows, ...page];
+      if (page.length < pageSize) break;
+      from += pageSize;
+    }
+
+    const allocationMap = new Map<string, ActiveAllocation>();
+
+    for (const allocationRow of allocationRows) {
+      const activeList = activeListsById.get(allocationRow.list_id);
+      const rowId = allocationRow.inventory_record_id;
+      if (!activeList || !emptyAllocations[rowId]) continue;
+
+      const approved = clampQty(allocationRow.approved_quantity);
+      const requested = clampQty(allocationRow.requested_quantity);
+      const returned =
+        clampQty(allocationRow.returned_ok_quantity) +
+        clampQty(allocationRow.returned_maintenance_quantity);
+      const quantity = Math.max(
+        0,
+        (approved > 0 ? approved : requested) - returned,
+      );
+      if (quantity === 0) continue;
+
+      const key = `${rowId}:${activeList.id}`;
+      const current = allocationMap.get(key);
+      if (current) {
+        current.quantity += quantity;
+      } else {
+        allocationMap.set(key, {
+          listId: activeList.id,
+          reference: activeList.reference,
+          label: allocationLabel(activeList),
+          quantity,
+          status:
+            activeList.status === "partially_returned"
+              ? "partially_returned"
+              : "active",
+        });
+      }
+    }
+
+    for (const [key, allocation] of allocationMap) {
+      const rowId = key.slice(0, key.lastIndexOf(":"));
+      emptyAllocations[rowId]?.push(allocation);
+    }
+
+    setAllocationsByRow(emptyAllocations);
+  }
+
   async function loadModels(subId: string) {
     setLoading(models.length === 0);
     setErrorMsg(null);
@@ -508,9 +720,10 @@ export default function SubcategoryClientLedScreen({
       const { data, error } = await supabase
         .from("matrix_models")
         .select(
-          "id, category_id, subcategory_id, name, created_at, matrix_rows(id, model_id, size, cabinet_model, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data, sort_order)"
+          "id, category_id, subcategory_id, name, created_at, sort_order, matrix_rows(id, model_id, size, cabinet_model, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data, sort_order)"
         )
         .eq("subcategory_id", subId)
+        .order("sort_order", { ascending: true, nullsFirst: false })
         .order("created_at", { ascending: false });
 
       if (error) {
@@ -542,17 +755,19 @@ export default function SubcategoryClientLedScreen({
           })
         );
 
-        setModels(withRows);
+        const nextModels = sortModels(withRows);
+        setModels(nextModels);
+        await loadActiveAllocations(nextModels);
         setLoading(false);
         return;
       }
 
-      setModels(
-        ((data ?? []) as MatrixModel[]).map((m) => ({
+      const nextModels = sortModels(((data ?? []) as MatrixModel[]).map((m) => ({
           ...m,
           matrix_rows: sortRows(m.matrix_rows),
-        }))
-      );
+        })));
+      setModels(nextModels);
+      await loadActiveAllocations(nextModels);
     } catch (e: any) {
       setErrorMsg(e?.message || "Failed to load LED screen models.");
       setModels([]);
@@ -593,6 +808,99 @@ export default function SubcategoryClientLedScreen({
   }, [subcategoryId, categoryId]);
 
   useEffect(() => {
+    function refreshEquipmentMovements() {
+      if (subcategoryId) void loadModels(subcategoryId);
+    }
+
+    window.addEventListener(EQUIPMENT_LISTS_EVENT, refreshEquipmentMovements);
+    window.addEventListener(
+      EQUIPMENT_LIST_ITEMS_EVENT,
+      refreshEquipmentMovements,
+    );
+
+    return () => {
+      window.removeEventListener(
+        EQUIPMENT_LISTS_EVENT,
+        refreshEquipmentMovements,
+      );
+      window.removeEventListener(
+        EQUIPMENT_LIST_ITEMS_EVENT,
+        refreshEquipmentMovements,
+      );
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subcategoryId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let loadVersion = 0;
+
+    async function syncActiveList(listId?: string | null) {
+      const version = ++loadVersion;
+      let nextListId = listId;
+
+      if (nextListId === undefined) {
+        try {
+          nextListId = localStorage.getItem(ACTIVE_EQUIPMENT_LIST_KEY);
+        } catch {
+          nextListId = null;
+        }
+      }
+
+      setListPickerTarget(null);
+
+      if (!nextListId) {
+        setActiveEquipmentList(null);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("equipment_lists")
+        .select(ACTIVE_LIST_SELECT)
+        .eq("id", nextListId)
+        .maybeSingle();
+
+      if (cancelled || version !== loadVersion) return;
+
+      if (error || !data || data.status === "cancelled") {
+        if (error) console.error("load active equipment list error", error);
+        setActiveEquipmentList(null);
+        return;
+      }
+
+      setActiveEquipmentList(data as EquipmentList);
+    }
+
+    function handleActiveListChange(event: Event) {
+      const listId = (event as CustomEvent<{ listId?: string | null }>).detail
+        ?.listId;
+      void syncActiveList(listId ?? null);
+    }
+
+    function handleStorage(event: StorageEvent) {
+      if (event.key === ACTIVE_EQUIPMENT_LIST_KEY) {
+        void syncActiveList(event.newValue);
+      }
+    }
+
+    void syncActiveList();
+    window.addEventListener(
+      ACTIVE_EQUIPMENT_LIST_EVENT,
+      handleActiveListChange,
+    );
+    window.addEventListener("storage", handleStorage);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener(
+        ACTIVE_EQUIPMENT_LIST_EVENT,
+        handleActiveListChange,
+      );
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, [supabase]);
+
+  useEffect(() => {
     function syncSidebarTarget() {
       const nextTarget = document.getElementById("right-sidebar-actions");
       setSidebarTarget((current) =>
@@ -613,7 +921,7 @@ export default function SubcategoryClientLedScreen({
       const addCabinetMenu = document.getElementById("led-add-cabinet-photo-menu");
       const rowMenu = target.closest("[data-led-photo-menu='true']");
       const keepsSelection = target.closest(
-        "[data-led-model-select='true'], [data-led-cabinet-row='true'], [data-led-sidebar-tools='true']"
+        "[data-led-model-select='true'], [data-led-cabinet-row='true'], [data-led-sidebar-tools='true'], [data-mobile-led-tools='true']"
       );
 
       if (addMenu && !addMenu.contains(target)) setAddPhotoMenuOpen(false);
@@ -943,21 +1251,6 @@ export default function SubcategoryClientLedScreen({
     }
   }
 
-  function openEditPopup(row: MatrixRow) {
-    setEditingRow(row);
-    setEditTotal(clampQty(row.qty));
-    setEditInUse(clampQty(row.in_use_qty));
-    setEditInKsa(clampQty(row.in_ksa_qty));
-  }
-
-  function closeEditPopup() {
-    setEditingRow(null);
-    setEditTotal(0);
-    setEditInUse(0);
-    setEditInKsa(0);
-    setSavingEdit(false);
-  }
-
   function openAddCabinetPopup(modelId: string) {
     setAddingModelId(modelId);
     setAddCabinetSize("");
@@ -975,74 +1268,6 @@ export default function SubcategoryClientLedScreen({
     setAddCabinetPhoto(null);
     setSavingAddCabinet(false);
     setAddCabinetPhotoMenuOpen(false);
-  }
-
-  async function saveEditPopup() {
-    if (!editingRow) return;
-
-    const total = clampQty(editTotal);
-    const nextInUse = clampQty(editInUse);
-    const nextInKsa = clampQty(editInKsa);
-    const nextMaintenance = clampQty(editingRow.maintenance_qty);
-
-    if (nextInUse + nextMaintenance + nextInKsa > total) {
-      alert("In Use + Maintenance + In KSA cannot be more than Total Qty");
-      return;
-    }
-
-    const nextAvailable = rowAvailableFromTotal(
-      total,
-      nextInUse,
-      nextMaintenance,
-      nextInKsa
-    );
-
-    setSavingEdit(true);
-
-    const { error } = await supabase
-      .from("matrix_rows")
-      .update({
-        qty: total,
-        available_qty: nextAvailable,
-        in_use_qty: nextInUse,
-        in_ksa_qty: nextInKsa,
-      })
-      .eq("id", editingRow.id);
-
-    if (error) {
-      alert("Failed to save row");
-      setSavingEdit(false);
-      return;
-    }
-
-    setModels((prev) =>
-      prev.map((m) => ({
-        ...m,
-        matrix_rows: (m.matrix_rows ?? []).map((r) =>
-          r.id === editingRow.id
-            ? {
-                ...r,
-                qty: total,
-                available_qty: nextAvailable,
-                in_use_qty: nextInUse,
-                in_ksa_qty: nextInKsa,
-              }
-            : r
-        ),
-      }))
-    );
-
-    const editedModel = models.find((model) =>
-      (model.matrix_rows ?? []).some((row) => row.id === editingRow.id)
-    );
-
-    await logActivity({
-      title: `edited ${editedModel?.name || "LED Screen"}`,
-      message: `${editingRow.size} cabinet quantities were updated`,
-      link: getReportHref(editingRow.id),
-    });
-
-    closeEditPopup();
   }
 
   async function saveAddCabinetPopup() {
@@ -1158,16 +1383,15 @@ export default function SubcategoryClientLedScreen({
     const nextSize = normalizeText(String(patch.size ?? row.size));
     const nextCabinetModel = normalizeText(String(patch.cabinet_model ?? row.cabinet_model ?? ""));
     const nextTotal = clampQty(patch.qty ?? row.qty);
-    const nextInUse = clampQty(patch.in_use_qty ?? row.in_use_qty);
     const nextMaintenance = clampQty(row.maintenance_qty);
-    const nextInKsa = clampQty(patch.in_ksa_qty ?? row.in_ksa_qty);
+    const activeAllocated = rowAllocatedQuantity(row.id);
+    const legacyMovement = existingMovementQuantity(row, activeAllocated);
+    const nextAllocated = activeAllocated + legacyMovement;
 
     const changed =
       nextSize !== normalizeText(row.size) ||
       nextCabinetModel !== normalizeText(row.cabinet_model ?? "") ||
-      nextTotal !== clampQty(row.qty) ||
-      nextInUse !== clampQty(row.in_use_qty) ||
-      nextInKsa !== clampQty(row.in_ksa_qty);
+      nextTotal !== clampQty(row.qty);
 
     if (!changed) return;
 
@@ -1176,16 +1400,17 @@ export default function SubcategoryClientLedScreen({
       return;
     }
 
-    if (nextInUse + nextMaintenance + nextInKsa > nextTotal) {
-      alert("In Use + Maintenance + In KSA cannot be more than Total Qty");
+    if (nextAllocated + nextMaintenance > nextTotal) {
+      alert(
+        `Total Qty cannot be lower than ${nextAllocated + nextMaintenance} (${nextAllocated} movement + ${nextMaintenance} maintenance)`,
+      );
       return;
     }
 
     const nextAvailable = rowAvailableFromTotal(
       nextTotal,
-      nextInUse,
+      nextAllocated,
       nextMaintenance,
-      nextInKsa
     );
 
     setModels((prev) =>
@@ -1199,8 +1424,8 @@ export default function SubcategoryClientLedScreen({
                 cabinet_model: nextCabinetModel,
                 qty: nextTotal,
                 available_qty: nextAvailable,
-                in_use_qty: nextInUse,
-                in_ksa_qty: nextInKsa,
+                in_use_qty: nextAllocated,
+                in_ksa_qty: 0,
               }
             : r
         ),
@@ -1214,8 +1439,8 @@ export default function SubcategoryClientLedScreen({
         cabinet_model: nextCabinetModel,
         qty: nextTotal,
         available_qty: nextAvailable,
-        in_use_qty: nextInUse,
-        in_ksa_qty: nextInKsa,
+        in_use_qty: nextAllocated,
+        in_ksa_qty: 0,
       })
       .eq("id", row.id);
 
@@ -1280,8 +1505,62 @@ export default function SubcategoryClientLedScreen({
     });
   }
 
+  async function reorderModels(activeId: string, overId: string) {
+    if (!editable || activeId === overId) return;
+
+    const oldIndex = models.findIndex((model) => model.id === activeId);
+    const newIndex = models.findIndex((model) => model.id === overId);
+    if (oldIndex < 0 || newIndex < 0) return;
+
+    const previousModels = models;
+    const nextModels = arrayMove(models, oldIndex, newIndex).map(
+      (currentModel, index) => ({
+        ...currentModel,
+        sort_order: index,
+      })
+    );
+
+    setModels(nextModels);
+
+    const results = await Promise.all(
+      nextModels.map((currentModel, index) =>
+        supabase
+          .from("matrix_models")
+          .update({ sort_order: index })
+          .eq("id", currentModel.id)
+      )
+    );
+
+    const failed = results.find((result) => result.error);
+    if (failed?.error) {
+      console.error("Failed to save LED model order", failed.error);
+      setModels(previousModels);
+      alert(
+        "Failed to save model order. Add the sort_order column to matrix_models first."
+      );
+      return;
+    }
+
+    await logActivity({
+      title: "reordered LED screen models",
+      message: "LED screen model order was updated",
+      link: pathname,
+    });
+  }
+
   async function deleteModel(modelId: string) {
     if (!editable) return;
+    const modelHasActiveMovement = models
+      .find((model) => model.id === modelId)
+      ?.matrix_rows?.some(
+        (row) =>
+          (allocationsByRow[row.id] ?? []).length > 0 ||
+          clampQty(row.in_use_qty) + clampQty(row.in_ksa_qty) > 0,
+      );
+    if (modelHasActiveMovement) {
+      alert("This LED model has cabinets in an active list and cannot be deleted.");
+      return;
+    }
     if (!confirm("Delete this LED model?")) return;
 
     const deletedModel = models.find((model) => model.id === modelId);
@@ -1315,6 +1594,19 @@ export default function SubcategoryClientLedScreen({
 
   async function deleteRow(rowId: string) {
     if (!editable) return;
+    const rowToDelete = models
+      .flatMap((model) => model.matrix_rows ?? [])
+      .find((row) => row.id === rowId);
+    if (
+      (allocationsByRow[rowId] ?? []).length > 0 ||
+      (rowToDelete
+        ? clampQty(rowToDelete.in_use_qty) + clampQty(rowToDelete.in_ksa_qty) >
+          0
+        : false)
+    ) {
+      alert("This cabinet is in an active list and cannot be deleted.");
+      return;
+    }
     if (!confirm("Delete this cabinet row?")) return;
 
     const parentModel = models.find((model) =>
@@ -1415,6 +1707,29 @@ export default function SubcategoryClientLedScreen({
     </div>
   ) : null;
 
+  const selectedCabinetAllocations = selectedCabinetInfo
+    ? allocationsByRow[selectedCabinetInfo.row.id] ?? []
+    : [];
+  const selectedCabinetAllocatedQty = selectedCabinetAllocations.reduce(
+    (total, allocation) => total + clampQty(allocation.quantity),
+    0,
+  );
+  const selectedCabinetExistingMovementQty = selectedCabinetInfo
+    ? existingMovementQuantity(
+        selectedCabinetInfo.row,
+        selectedCabinetAllocatedQty,
+      )
+    : 0;
+  const selectedCabinetTrackedQty =
+    selectedCabinetAllocatedQty + selectedCabinetExistingMovementQty;
+  const selectedCabinetAvailableQty = selectedCabinetInfo
+    ? rowAvailableFromTotal(
+        clampQty(selectedCabinetInfo.row.qty),
+        selectedCabinetTrackedQty,
+        clampQty(selectedCabinetInfo.row.maintenance_qty),
+      )
+    : 0;
+
   const selectedCabinetPanel = selectedCabinetInfo ? (
     <div
       key={selectedCabinetInfo.row.id}
@@ -1470,7 +1785,10 @@ export default function SubcategoryClientLedScreen({
             Total
             <input
               type="number"
-              min={0}
+              min={
+                selectedCabinetTrackedQty +
+                clampQty(selectedCabinetInfo.row.maintenance_qty)
+              }
               defaultValue={selectedCabinetInfo.row.qty}
               disabled={!editable}
               onBlur={(event) =>
@@ -1481,37 +1799,49 @@ export default function SubcategoryClientLedScreen({
               className="mt-1 h-8 w-full rounded-lg border border-gray-300 px-2 text-[9px] text-gray-900 outline-none focus:border-black"
             />
           </label>
-          <label className="text-[8px] font-semibold text-gray-500">
-            In Use
-            <input
-              type="number"
-              min={0}
-              defaultValue={selectedCabinetInfo.row.in_use_qty}
-              disabled={!editable}
-              onBlur={(event) =>
-                void saveRowDirect(selectedCabinetInfo.row, {
-                  in_use_qty: clampQty(event.currentTarget.value),
-                })
-              }
-              className="mt-1 h-8 w-full rounded-lg border border-gray-300 px-2 text-[9px] text-gray-900 outline-none focus:border-black"
-            />
-          </label>
-          <label className="text-[8px] font-semibold text-gray-500">
-            In KSA
-            <input
-              type="number"
-              min={0}
-              defaultValue={selectedCabinetInfo.row.in_ksa_qty}
-              disabled={!editable}
-              onBlur={(event) =>
-                void saveRowDirect(selectedCabinetInfo.row, {
-                  in_ksa_qty: clampQty(event.currentTarget.value),
-                })
-              }
-              className="mt-1 h-8 w-full rounded-lg border border-gray-300 px-2 text-[9px] text-gray-900 outline-none focus:border-black"
-            />
-          </label>
+          <div className="text-[8px] font-semibold text-gray-500">
+            Available
+            <div className="mt-1 flex h-8 w-full items-center rounded-lg bg-green-100 px-2 text-[9px] font-bold text-green-800">
+              {selectedCabinetAvailableQty}
+            </div>
+          </div>
+          <div className="text-[8px] font-semibold text-gray-500">
+            Maintenance
+            <div className="mt-1 flex h-8 w-full items-center rounded-lg bg-yellow-100 px-2 text-[9px] font-bold text-yellow-800">
+              {clampQty(selectedCabinetInfo.row.maintenance_qty)}
+            </div>
+          </div>
         </div>
+
+        {selectedCabinetAllocations.length > 0 ? (
+          <div className="rounded-xl border border-blue-100 bg-blue-50 p-2.5">
+            <div className="text-[8px] font-bold uppercase tracking-wider text-blue-500">
+              Active Movements
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {selectedCabinetAllocations.map((allocation) => (
+                <Link
+                  key={allocation.listId}
+                  href={`/inventory/lists/${allocation.listId}`}
+                  title={`${allocation.reference} · ${allocation.label}`}
+                  className={`max-w-full truncate rounded-lg px-2 py-1 text-[9px] font-semibold transition hover:opacity-80 ${
+                    allocation.status === "partially_returned"
+                      ? "bg-purple-100 text-purple-800"
+                      : "bg-blue-100 text-blue-800"
+                  }`}
+                >
+                  {allocation.quantity} pcs · {allocation.label}
+                </Link>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        {selectedCabinetExistingMovementQty > 0 ? (
+          <div className="rounded-xl bg-gray-100 px-2.5 py-2 text-[9px] font-semibold text-gray-600">
+            {selectedCabinetExistingMovementQty} pcs · Existing movement
+          </div>
+        ) : null}
       </div>
 
       <div className="mt-3 flex items-center gap-3 rounded-xl bg-gray-50 p-2">
@@ -1532,6 +1862,15 @@ export default function SubcategoryClientLedScreen({
       </div>
 
       <div className="mt-3 grid grid-cols-1 gap-2">
+        {editable && activeDraftList ? (
+          <button
+            type="button"
+            onClick={() => setListPickerTarget(selectedCabinetInfo)}
+            className="rounded-xl bg-red-600 px-3 py-2.5 text-center text-[11px] font-semibold text-white transition hover:bg-red-700"
+          >
+            Add Cabinets to {activeDraftList.reference}
+          </button>
+        ) : null}
         <Link
           href={getReportHref(selectedCabinetInfo.row.id)}
           className="rounded-xl bg-black px-3 py-2.5 text-center text-[11px] font-medium text-white hover:opacity-90"
@@ -1581,6 +1920,15 @@ export default function SubcategoryClientLedScreen({
       </div>
     </div>
   ) : null;
+
+  async function closeMobileLedTools() {
+    await saveSelectedModelName();
+    setSelectedModelId(null);
+    setSelectedRowId(null);
+    setSearchPanelOpen(false);
+    setPhotoTarget(null);
+    setImageResults([]);
+  }
 
   const addLedScreenPanel = editable ? (
     <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
@@ -1640,6 +1988,89 @@ export default function SubcategoryClientLedScreen({
     </div>
   ) : null;
 
+  const sidebarPhotoSearchPanel =
+    searchPanelOpen && photoTarget?.type !== "addCabinet" ? (
+      <div
+        data-led-sidebar-tools="true"
+        className="mb-4 hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm xl:block"
+      >
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <div className="text-[12px] font-semibold text-gray-900">
+            Search Photo Online
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setSearchPanelOpen(false);
+              setImageResults([]);
+              setPhotoTarget(null);
+            }}
+            className="text-[10px] text-red-500 hover:text-black"
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="flex gap-2">
+          <input
+            value={imageSearch}
+            onChange={(event) => setImageSearch(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void searchOnlineImages();
+              }
+            }}
+            placeholder="Search image..."
+            className="h-10 min-w-0 flex-1 rounded-xl border border-gray-300 px-3 text-[11px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
+          />
+          <button
+            type="button"
+            onClick={() => void searchOnlineImages()}
+            disabled={searchingImages}
+            className="h-10 rounded-xl bg-black px-3 text-[10px] font-medium text-white disabled:opacity-40"
+          >
+            {searchingImages ? "..." : "Search"}
+          </button>
+        </div>
+
+        {searchingImages ? (
+          <div className="mt-3 text-[10px] text-gray-500">
+            Searching images...
+          </div>
+        ) : null}
+
+        {imageResults.length > 0 ? (
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            {imageResults.map((image, index) => {
+              const imageUrl =
+                image.original || image.image || image.thumbnail;
+              const thumb = image.thumbnail || imageUrl;
+              if (!imageUrl || !thumb) return null;
+
+              return (
+                <button
+                  key={`${imageUrl}-${index}`}
+                  type="button"
+                  onClick={() => void selectOnlinePhoto(image)}
+                  className="overflow-hidden rounded-xl border border-gray-200 hover:border-red-300"
+                  title={image.title || "Select photo"}
+                >
+                  <img
+                    src={thumb}
+                    alt={image.title || "Online image"}
+                    loading="lazy"
+                    decoding="async"
+                    className="aspect-square w-full object-cover"
+                  />
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    ) : null;
+
   if (loading) {
     return (
       <div className="mx-auto w-full">
@@ -1676,7 +2107,144 @@ export default function SubcategoryClientLedScreen({
         onChange={onPickPhotoFile}
       />
 
-      {editable ? (
+      {activeDraftList && listPickerTarget ? (
+        <EquipmentListQuantityPicker
+          list={activeDraftList}
+          row={listPickerTarget.row}
+          modelName={listPickerTarget.model.name}
+          category={routeSlugs.category}
+          subcategory={routeSlugs.subcategory}
+          activeAllocatedQuantity={rowAllocatedQuantity(
+            listPickerTarget.row.id,
+          ) + existingMovementQuantity(
+            listPickerTarget.row,
+            rowAllocatedQuantity(listPickerTarget.row.id),
+          )}
+          onClose={() => setListPickerTarget(null)}
+          onAdded={(quantity) => {
+            const message = `${quantity} cabinet${quantity === 1 ? "" : "s"} added to ${activeDraftList.reference}`;
+            setSaveMsg(message);
+            setTimeout(() => {
+              setSaveMsg((current) => (current === message ? "" : current));
+            }, 1800);
+            if (subcategoryId) void loadModels(subcategoryId);
+          }}
+        />
+      ) : null}
+
+      {(selectedModel || selectedCabinetInfo) ? (
+        <div
+          data-mobile-led-tools="true"
+          className="fixed inset-0 z-[9998] sm:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-label="LED screen tools"
+        >
+          <button
+            type="button"
+            aria-label="Close LED screen tools"
+            onClick={() => void closeMobileLedTools()}
+            className="absolute inset-0 bg-black/45"
+          />
+
+          <div className="absolute inset-x-0 bottom-0 flex h-[75dvh] flex-col rounded-t-3xl bg-gray-50 shadow-2xl">
+            <div className="flex shrink-0 items-center justify-between px-4 pb-2 pt-3">
+              <div className="h-1 w-10 rounded-full bg-gray-300" />
+              <div className="text-[11px] font-semibold text-gray-700">
+                LED Screen Tools
+              </div>
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => void closeMobileLedTools()}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-lg leading-none text-gray-700"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-[calc(env(safe-area-inset-bottom)+16px)]">
+              {selectedModelPanel}
+              {selectedCabinetPanel}
+
+              {searchPanelOpen && photoTarget?.type === "row" ? (
+                <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className="text-[12px] font-semibold text-gray-900">
+                      Search Photo Online
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSearchPanelOpen(false);
+                        setImageResults([]);
+                        setPhotoTarget(null);
+                      }}
+                      className="text-[10px] text-red-500 hover:text-black"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input
+                      value={imageSearch}
+                      onChange={(event) => setImageSearch(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          void searchOnlineImages();
+                        }
+                      }}
+                      placeholder="Search image..."
+                      className="h-10 min-w-0 flex-1 rounded-xl border border-gray-300 px-3 text-[12px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void searchOnlineImages()}
+                      disabled={searchingImages}
+                      className="h-10 rounded-xl bg-black px-3 text-[11px] font-medium text-white disabled:opacity-40"
+                    >
+                      {searchingImages ? "..." : "Search"}
+                    </button>
+                  </div>
+
+                  {imageResults.length > 0 ? (
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      {imageResults.map((img, index) => {
+                        const imageUrl =
+                          img.original || img.image || img.thumbnail;
+                        const thumb = img.thumbnail || imageUrl;
+                        if (!imageUrl || !thumb) return null;
+
+                        return (
+                          <button
+                            key={`${imageUrl}-${index}`}
+                            type="button"
+                            onClick={() => void selectOnlinePhoto(img)}
+                            className="overflow-hidden rounded-xl border border-gray-200"
+                            title={img.title || "Select photo"}
+                          >
+                            <img
+                              src={thumb}
+                              alt={img.title || "Online image"}
+                              loading="lazy"
+                              decoding="async"
+                              className="aspect-square w-full object-cover"
+                            />
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {editable && !selectedModelId && !selectedRowId ? (
         <>
           <button
             type="button"
@@ -1719,6 +2287,7 @@ export default function SubcategoryClientLedScreen({
             <div>
               {selectedModelPanel}
               {selectedCabinetPanel}
+              {sidebarPhotoSearchPanel}
               {!selectedModelId && !selectedRowId
                 ? addLedScreenPanel
                 : null}
@@ -1734,7 +2303,7 @@ export default function SubcategoryClientLedScreen({
       ) : null}
 
       {searchPanelOpen && photoTarget?.type !== "addCabinet" ? (
-        <div className="rounded-2xl border border-gray-200 p-3 relative z-50 bg-white">
+        <div className="relative z-50 hidden rounded-2xl border border-gray-200 bg-white p-3 sm:block xl:hidden">
           <div className="mb-3 flex items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-gray-900">
               Search photo online
@@ -1817,101 +2386,54 @@ export default function SubcategoryClientLedScreen({
           No LED screen models yet.
         </div>
       ) : (
-        <div className="space-y-3">
-  {parsedModels.map((m) => (
-              <LedModelCard
-                key={m.id}
-                model={m}
-                brand={m.parsed.brand}
-                modelName={m.parsed.model}
-                editable={editable}
-                selectedModel={selectedModelId === m.id}
-                onSelectModel={() => {
-                  setSelectedModelId(m.id);
-                  setSelectedRowId(null);
-                }}
-                selectedRowId={selectedRowId}
-                onSelectRow={(rowId) => {
-                  setSelectedRowId(rowId);
-                  setSelectedModelId(null);
-                }}
-                onRowsReorder={reorderRows}
-                getReportHref={getReportHref}
-              />
+        <DndContext
+          sensors={modelSensors}
+          collisionDetection={closestCenter}
+          onDragEnd={(event) => {
+            const { active, over } = event;
+            if (!over || active.id === over.id) return;
+            void reorderModels(String(active.id), String(over.id));
+          }}
+        >
+          <SortableContext
+            items={parsedModels.map((currentModel) => currentModel.id)}
+            strategy={verticalListSortingStrategy}
+          >
+            <div className="space-y-3">
+              {parsedModels.map((currentModel) => (
+                <SortableLedModel
+                  key={currentModel.id}
+                  id={currentModel.id}
+                  disabled={!editable}
+                >
+                  <LedModelCard
+                    model={currentModel}
+                    brand={currentModel.parsed.brand}
+                    modelName={currentModel.parsed.model}
+                    editable={editable}
+                    selectedModel={selectedModelId === currentModel.id}
+                    onSelectModel={() => {
+                      setSelectedModelId(currentModel.id);
+                      setSelectedRowId(null);
+                    }}
+                    selectedRowId={selectedRowId}
+                    onSelectRow={(rowId) => {
+                      setSelectedRowId(rowId);
+                      setSelectedModelId(null);
+                    }}
+                    onRowsReorder={reorderRows}
+                    getReportHref={getReportHref}
+                    allocationsByRow={allocationsByRow}
+                    activeDraftList={activeDraftList}
+                    onAddToList={(row) =>
+                      setListPickerTarget({ model: currentModel, row })
+                    }
+                  />
+                </SortableLedModel>
               ))}
-        </div>
-      )}
-
-      {editingRow && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
-            <h3 className="text-[18px] font-semibold text-gray-900">Edit Qty</h3>
-            <div className="mt-2 text-[11px] text-gray-600">
-              Cabinet Size: <span className="font-semibold text-black">{editingRow.size}</span>
             </div>
-
-            <div className="mt-4 grid grid-cols-1 gap-3">
-              <input
-                type="number"
-                min={0}
-                value={String(editTotal)}
-                onChange={(e) => setEditTotal(clampQty(e.target.value))}
-                placeholder="Total Qty"
-                className="w-full rounded-xl border border-gray-200 px-4 py-3 outline-none"
-              />
-
-              <input
-                type="number"
-                min={0}
-                value={String(editInUse)}
-                onChange={(e) => setEditInUse(clampQty(e.target.value))}
-                placeholder="In Use"
-                className="w-full rounded-xl border border-gray-200 px-4 py-3 outline-none"
-              />
-
-              <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
-                Maintenance: {editingRow.maintenance_qty} (auto from report)
-              </div>
-
-              <input
-                type="number"
-                min={0}
-                value={String(editInKsa)}
-                onChange={(e) => setEditInKsa(clampQty(e.target.value))}
-                placeholder="In KSA"
-                className="w-full rounded-xl border border-gray-200 px-4 py-3 outline-none"
-              />
-
-              <div className="text-sm text-gray-600">
-                Available:
-                <span className="ml-2 font-semibold text-black">
-                  {rowAvailableFromTotal(
-                    clampQty(editTotal),
-                    clampQty(editInUse),
-                    clampQty(editingRow.maintenance_qty),
-                    clampQty(editInKsa)
-                  )}
-                </span>
-              </div>
-            </div>
-
-            <div className="mt-6 flex justify-end gap-2">
-              <button
-                onClick={closeEditPopup}
-                className="rounded-full border px-4 py-1 text-xs"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={saveEditPopup}
-                disabled={savingEdit}
-                className="rounded-full bg-black px-4 py-1 text-xs text-white disabled:opacity-50"
-              >
-                {savingEdit ? "Saving..." : "Save"}
-              </button>
-            </div>
-          </div>
-        </div>
+          </SortableContext>
+        </DndContext>
       )}
 
       {addingModelId && (
@@ -2098,6 +2620,56 @@ export default function SubcategoryClientLedScreen({
   );
 }
 
+function SortableLedModel({
+  id,
+  disabled,
+  children,
+}: {
+  id: string;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id, disabled });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.65 : 1,
+    zIndex: isDragging ? 9999 : "auto",
+    position: "relative",
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="relative pl-2 sm:pl-3">
+      {!disabled ? (
+        <button
+          type="button"
+          data-led-model-select="true"
+          {...attributes}
+          {...listeners}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          className="absolute left-0 top-5 z-30 flex h-11 w-4 cursor-grab touch-none items-center justify-center rounded-r-md bg-white/95 text-gray-400 shadow-sm ring-1 ring-gray-200 hover:bg-gray-50 hover:text-red-500 active:cursor-grabbing"
+          aria-label="Drag to reorder LED model"
+          title="Drag to reorder model"
+        >
+          <span className="h-7 w-1 rounded-full bg-current" />
+        </button>
+      ) : null}
+      {children}
+    </div>
+  );
+}
+
 function LedModelCard({
   model,
   brand,
@@ -2109,6 +2681,9 @@ function LedModelCard({
   onSelectRow,
   onRowsReorder,
   getReportHref,
+  allocationsByRow,
+  activeDraftList,
+  onAddToList,
 }: {
   model: MatrixModel;
   brand: string;
@@ -2120,6 +2695,9 @@ function LedModelCard({
   onSelectRow: (rowId: string) => void;
   onRowsReorder: (modelId: string, activeId: string, overId: string) => Promise<void>;
   getReportHref: (rowId: string) => string;
+  allocationsByRow: Record<string, ActiveAllocation[]>;
+  activeDraftList: EquipmentList | null;
+  onAddToList: (row: MatrixRow) => void;
 }) {
   const rows = sortRows(model.matrix_rows);
   const sensors = useSensors(
@@ -2133,21 +2711,47 @@ function LedModelCard({
     0
   );
   const availableDisplay = rows.reduce(
-    (sum, row) => sum + toSqm(clampQty(row.available_qty), row.size),
-    0
-  );
-  const inUseDisplay = rows.reduce(
-    (sum, row) => sum + toSqm(clampQty(row.in_use_qty), row.size),
+    (sum, row) => {
+      const activeAllocated = (allocationsByRow[row.id] ?? []).reduce(
+        (total, allocation) => total + clampQty(allocation.quantity),
+        0,
+      );
+      const allocated =
+        activeAllocated + existingMovementQuantity(row, activeAllocated);
+      return (
+        sum +
+        toSqm(
+          rowAvailableFromTotal(
+            clampQty(row.qty),
+            allocated,
+            clampQty(row.maintenance_qty),
+          ),
+          row.size,
+        )
+      );
+    },
     0
   );
   const maintenanceDisplay = rows.reduce(
     (sum, row) => sum + toSqm(clampQty(row.maintenance_qty), row.size),
     0
   );
-  const inKsaDisplay = rows.reduce(
-    (sum, row) => sum + toSqm(clampQty(row.in_ksa_qty), row.size),
-    0
-  );
+  const modelMovementMap = new Map<string, ActiveAllocation>();
+  for (const row of rows) {
+    for (const allocation of allocationsByRow[row.id] ?? []) {
+      const current = modelMovementMap.get(allocation.listId);
+      if (current) current.quantity += allocation.quantity;
+      else modelMovementMap.set(allocation.listId, { ...allocation });
+    }
+  }
+  const modelMovements = Array.from(modelMovementMap.values());
+  const modelExistingMovement = rows.reduce((total, row) => {
+    const activeAllocated = (allocationsByRow[row.id] ?? []).reduce(
+      (sum, allocation) => sum + clampQty(allocation.quantity),
+      0,
+    );
+    return total + existingMovementQuantity(row, activeAllocated);
+  }, 0);
 
   function handleDragEnd(event: any) {
     const { active, over } = event;
@@ -2182,15 +2786,33 @@ function LedModelCard({
             {modelName ? <span>{` ${modelName}`}</span> : null}
           </h2>
         </button>
+
+        {editable ? (
+          <button
+            type="button"
+            data-led-model-select="true"
+            aria-label={`Open ${model.name} tools`}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onSelectModel();
+            }}
+            className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm sm:hidden"
+          >
+            ⋮
+          </button>
+        ) : null}
       </div>
 
       <div className="mt-2 sm:hidden">
-        <div className="grid grid-cols-5 gap-x-1.5 gap-y-1 text-center">
+        <div className={`grid gap-x-1.5 gap-y-1 text-center ${
+          maintenanceDisplay > 0 ? "grid-cols-3" : "grid-cols-2"
+        }`}>
           <ModelMobileStat label="Total" value={totalDisplay} tone="gray" />
           <ModelMobileStat label="Available" value={availableDisplay} tone="green" />
-          <ModelMobileStat label="In Use" value={inUseDisplay} tone="blue" />
-          <ModelMobileStat label="Maintenance" value={maintenanceDisplay} tone="yellow" />
-          <ModelMobileStat label="In KSA" value={inKsaDisplay} tone="purple" />
+          {maintenanceDisplay > 0 ? (
+            <ModelMobileStat label="Maintenance" value={maintenanceDisplay} tone="yellow" />
+          ) : null}
         </div>
       </div>
 
@@ -2198,26 +2820,52 @@ function LedModelCard({
         <div className="flex flex-wrap gap-2">
           <SmallStat label="Total" value={totalDisplay} tone="gray" />
           <SmallStat label="Available" value={availableDisplay} tone="green" />
-          <SmallStat label="In Use" value={inUseDisplay} tone="blue" />
-          <SmallStat label="Maintenance" value={maintenanceDisplay} tone="yellow" />
-          <SmallStat label="In KSA" value={inKsaDisplay} tone="purple" />
+          {maintenanceDisplay > 0 ? (
+            <SmallStat label="Maintenance" value={maintenanceDisplay} tone="yellow" />
+          ) : null}
         </div>
       </div>
+
+      {modelMovements.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {modelMovements.map((allocation) => (
+            <Link
+              key={allocation.listId}
+              href={`/inventory/lists/${allocation.listId}`}
+              onClick={(event) => event.stopPropagation()}
+              title={`${allocation.reference} · ${allocation.label}`}
+              className={`max-w-full truncate rounded-lg px-2 py-1 text-[9px] font-semibold transition hover:opacity-80 ${
+                allocation.status === "partially_returned"
+                  ? "bg-purple-100 text-purple-800"
+                  : "bg-blue-100 text-blue-800"
+              }`}
+            >
+              {allocation.quantity} pcs · {allocation.label}
+            </Link>
+          ))}
+        </div>
+      ) : null}
+      {modelExistingMovement > 0 ? (
+        <div className="mt-2">
+          <span className="rounded-lg bg-gray-100 px-2 py-1 text-[9px] font-semibold text-gray-600">
+            {modelExistingMovement} pcs · Existing movement
+          </span>
+        </div>
+      ) : null}
     </div>
   </div>
 </div>
 
       <div className="mt-4 overflow-visible rounded-2xl border border-gray-200 bg-white">
         <div className="hidden sm:block">
-          <div className="grid grid-cols-[64px_1.1fr_1.1fr_repeat(5,96px)_52px_28px] bg-gray-100 px-3 py-2 text-[10px] font-bold text-gray-600 items-center gap-1">
+          <div className="grid grid-cols-[64px_1.1fr_1.1fr_90px_90px_90px_minmax(150px,1fr)_52px_28px] bg-gray-100 px-3 py-2 text-[10px] font-bold text-gray-600 items-center gap-1">
             <div>Photo</div>
             <div>Cabinet Model</div>
             <div>Cabinet Size</div>
             <div className="text-center">Total</div>
             <div className="text-center">Available</div>
-            <div className="text-center">In Use</div>
             <div className="text-center">Maintenance</div>
-            <div className="text-center">In KSA</div>
+            <div>Active Movement</div>
             <div className="text-center">Report</div>
             <div />
           </div>
@@ -2243,6 +2891,9 @@ function LedModelCard({
                       selected={selectedRowId === r.id}
                       onSelect={() => onSelectRow(r.id)}
                       reportHref={getReportHref(r.id)}
+                      allocations={allocationsByRow[r.id] ?? []}
+                      activeDraftList={activeDraftList}
+                      onAddToList={() => onAddToList(r)}
                     />
                   </SortableCabinetRow>
                 ))}
@@ -2272,8 +2923,24 @@ function LedModelCard({
                       onClick={() => {
                         window.location.href = getReportHref(r.id);
                       }}
-                      className="cursor-pointer rounded-2xl border border-gray-100 bg-white px-2 py-2"
+                      className="relative cursor-pointer rounded-2xl border border-gray-100 bg-white px-2 py-2 pr-10"
                     >
+                      {editable ? (
+                        <button
+                          type="button"
+                          data-led-cabinet-row="true"
+                          aria-label={`Open ${r.cabinet_model || r.size} tools`}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            onSelectRow(r.id);
+                          }}
+                          className="absolute right-2 top-2 z-30 flex h-[26px] w-[26px] items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm"
+                        >
+                          ⋮
+                        </button>
+                      ) : null}
+
                       <div className="flex items-start gap-3">
                         <PhotoBox
                           photo={r.photo_data}
@@ -2303,7 +2970,13 @@ function LedModelCard({
                             <div />
                           </div>
 
-                          <div className="grid grid-cols-5 gap-x-1 gap-y-1 text-center">
+                          <div
+                            className={`grid gap-x-1 gap-y-1 text-center ${
+                              clampQty(r.maintenance_qty) > 0
+                                ? "grid-cols-3"
+                                : "grid-cols-2"
+                            }`}
+                          >
                             <MobileStat
                               label="Total"
                               value={toSqm(r.qty, r.size)}
@@ -2312,28 +2985,80 @@ function LedModelCard({
 
                             <MobileStat
                               label="Available"
-                              value={toSqm(r.available_qty, r.size)}
+                              value={toSqm(
+                                rowAvailableFromTotal(
+                                  clampQty(r.qty),
+                                  (allocationsByRow[r.id] ?? []).reduce(
+                                    (total, allocation) =>
+                                      total + clampQty(allocation.quantity),
+                                    0,
+                                  ) +
+                                    existingMovementQuantity(
+                                      r,
+                                      (allocationsByRow[r.id] ?? []).reduce(
+                                        (total, allocation) =>
+                                          total +
+                                          clampQty(allocation.quantity),
+                                        0,
+                                      ),
+                                    ),
+                                  clampQty(r.maintenance_qty),
+                                ),
+                                r.size,
+                              )}
                               tone="green"
                             />
 
-                            <MobileStat
-                              label="In Use"
-                              value={toSqm(r.in_use_qty, r.size)}
-                              tone="blue"
-                            />
-
-                            <MobileStat
-                              label="Maintenance"
-                              value={toSqm(r.maintenance_qty, r.size)}
-                              tone="yellow"
-                            />
-
-                            <MobileStat
-                              label="In KSA"
-                              value={toSqm(r.in_ksa_qty, r.size)}
-                              tone="purple"
-                            />
+                            {clampQty(r.maintenance_qty) > 0 ? (
+                              <MobileStat
+                                label="Maintenance"
+                                value={toSqm(r.maintenance_qty, r.size)}
+                                tone="yellow"
+                              />
+                            ) : null}
                           </div>
+
+                          {(allocationsByRow[r.id] ?? []).length > 0 ? (
+                            <div className="mt-2 flex flex-wrap gap-1">
+                              {(allocationsByRow[r.id] ?? []).map(
+                                (allocation) => (
+                                  <span
+                                    key={allocation.listId}
+                                    className={`max-w-full truncate rounded-md px-1.5 py-1 text-[8px] font-semibold ${
+                                      allocation.status ===
+                                      "partially_returned"
+                                        ? "bg-purple-100 text-purple-800"
+                                        : "bg-blue-100 text-blue-800"
+                                    }`}
+                                  >
+                                    {allocation.quantity} pcs · {allocation.label}
+                                  </span>
+                                ),
+                              )}
+                            </div>
+                          ) : null}
+                          {existingMovementQuantity(
+                            r,
+                            (allocationsByRow[r.id] ?? []).reduce(
+                              (total, allocation) =>
+                                total + clampQty(allocation.quantity),
+                              0,
+                            ),
+                          ) > 0 ? (
+                            <div className="mt-1">
+                              <span className="rounded-md bg-gray-100 px-1.5 py-1 text-[8px] font-semibold text-gray-600">
+                                {existingMovementQuantity(
+                                  r,
+                                  (allocationsByRow[r.id] ?? []).reduce(
+                                    (total, allocation) =>
+                                      total + clampQty(allocation.quantity),
+                                    0,
+                                  ),
+                                )}{" "}
+                                pcs · Existing movement
+                              </span>
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -2408,24 +3133,35 @@ function DesktopEditableCabinetRow({
   selected,
   onSelect,
   reportHref,
+  allocations,
+  activeDraftList,
+  onAddToList,
 }: {
   row: MatrixRow;
   selected: boolean;
   onSelect: () => void;
   reportHref: string;
+  allocations: ActiveAllocation[];
+  activeDraftList: EquipmentList | null;
+  onAddToList: () => void;
 }) {
+  const activeAllocated = allocations.reduce(
+    (total, allocation) => total + clampQty(allocation.quantity),
+    0,
+  );
+  const legacyMovement = existingMovementQuantity(row, activeAllocated);
+  const allocated = activeAllocated + legacyMovement;
   const available = rowAvailableFromTotal(
     clampQty(row.qty),
-    clampQty(row.in_use_qty),
+    allocated,
     clampQty(row.maintenance_qty),
-    clampQty(row.in_ksa_qty)
   );
 
   return (
     <div
       data-led-cabinet-row="true"
       onClick={onSelect}
-      className={`grid cursor-pointer grid-cols-[64px_1.1fr_1.1fr_repeat(5,96px)_52px_28px] items-center gap-1 border-t border-gray-100 px-3 py-[2px] text-[9px] text-gray-900 transition ${
+      className={`grid cursor-pointer grid-cols-[64px_1.1fr_1.1fr_90px_90px_90px_minmax(150px,1fr)_52px_28px] items-center gap-1 border-t border-gray-100 px-3 py-[2px] text-[9px] text-gray-900 transition ${
         selected ? "bg-gray-50 ring-2 ring-inset ring-black" : "hover:bg-gray-50"
       }`}
     >
@@ -2459,21 +3195,40 @@ function DesktopEditableCabinetRow({
       </div>
 
       <div className="text-center">
-        <span className="inline-flex min-w-7 justify-center rounded-lg bg-blue-100 px-2 py-1 font-bold">
-          {formatSqm(toSqm(row.in_use_qty, row.size))} SQM
-        </span>
+        {clampQty(row.maintenance_qty) > 0 ? (
+          <span className="inline-flex min-w-7 justify-center rounded-lg bg-yellow-100 px-2 py-1 font-bold">
+            {formatSqm(toSqm(row.maintenance_qty, row.size))} SQM
+          </span>
+        ) : (
+          <span className="text-gray-300">—</span>
+        )}
       </div>
 
-      <div className="text-center">
-        <span className="inline-flex min-w-7 justify-center rounded-lg bg-yellow-100 px-2 py-1 font-bold">
-          {formatSqm(toSqm(row.maintenance_qty, row.size))} SQM
-        </span>
-      </div>
-
-      <div className="text-center">
-        <span className="inline-flex min-w-7 justify-center rounded-lg bg-purple-100 px-2 py-1 font-bold">
-          {formatSqm(toSqm(row.in_ksa_qty, row.size))} SQM
-        </span>
+      <div className="flex min-w-0 flex-wrap gap-1">
+        {allocations.length > 0 ? (
+          allocations.map((allocation) => (
+            <Link
+              key={allocation.listId}
+              href={`/inventory/lists/${allocation.listId}`}
+              onClick={(event) => event.stopPropagation()}
+              title={`${allocation.reference} · ${allocation.label}`}
+              className={`max-w-full truncate rounded-md px-1.5 py-1 text-[8px] font-semibold transition hover:opacity-80 ${
+                allocation.status === "partially_returned"
+                  ? "bg-purple-100 text-purple-800"
+                  : "bg-blue-100 text-blue-800"
+              }`}
+            >
+              {allocation.quantity} pcs · {allocation.label}
+            </Link>
+          ))
+        ) : (
+          legacyMovement === 0 ? <span className="text-gray-300">—</span> : null
+        )}
+        {legacyMovement > 0 ? (
+          <span className="max-w-full truncate rounded-md bg-gray-100 px-1.5 py-1 text-[8px] font-semibold text-gray-600">
+            {legacyMovement} pcs · Existing movement
+          </span>
+        ) : null}
       </div>
 
       <div className="text-center">
@@ -2486,7 +3241,22 @@ function DesktopEditableCabinetRow({
         </Link>
       </div>
 
-      <div />
+      <div className="text-center">
+        {activeDraftList ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onAddToList();
+            }}
+            title={`Add cabinets to ${activeDraftList.reference}`}
+            className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-black text-xs font-bold text-white hover:bg-gray-800"
+          >
+            +
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }

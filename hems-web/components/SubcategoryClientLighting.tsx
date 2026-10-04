@@ -6,6 +6,16 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
 import { Trash2, ChevronDown } from "lucide-react";
+import EquipmentListUnitPicker from "@/components/EquipmentListUnitPicker";
+import {
+  ACTIVE_EQUIPMENT_LIST_EVENT,
+  ACTIVE_EQUIPMENT_LIST_KEY,
+  EQUIPMENT_LIST_ITEMS_EVENT,
+  EQUIPMENT_LISTS_EVENT,
+  equipmentListSummary,
+  equipmentListTypeLabel,
+  type EquipmentList,
+} from "@/lib/equipmentLists";
 
 type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
@@ -38,6 +48,14 @@ type ItemStats = {
   inKsa: number;
 };
 
+type ActiveAllocation = {
+  listId: string;
+  reference: string;
+  label: string;
+  quantity: number;
+  status: "active" | "partially_returned";
+};
+
 type OnlineImage = {
   title?: string;
   image?: string;
@@ -49,7 +67,32 @@ type FixturesCache = {
   subId: string | null;
   items: ItemRow[];
   statsByItem: Record<string, ItemStats>;
+  allocationsByItem: Record<string, ActiveAllocation[]>;
 };
+
+const ACTIVE_LIST_SELECT = `
+  id,
+  reference,
+  list_type,
+  status,
+  client_company,
+  event_name,
+  venue,
+  purpose,
+  assigned_to,
+  from_location_name,
+  destination_name,
+  pickup_date,
+  return_date,
+  setup_date,
+  dismantling_date,
+  loading_date,
+  receiving_date,
+  notes,
+  created_by_name,
+  created_at,
+  updated_at
+`;
 
 async function compressImageFile(
   file: File,
@@ -174,7 +217,13 @@ function countByStatus(statuses: UnitStatus[]): ItemStats {
 }
 
 function cacheKeyFor(category: string, subcategory: string) {
-  return `hems:${category}:${subcategory}:fixtures:v3`;
+  return `hems:${category}:${subcategory}:fixtures:v4`;
+}
+
+function allocationLabel(list: EquipmentList) {
+  const type = equipmentListTypeLabel(list.list_type);
+  const summary = equipmentListSummary(list);
+  return summary ? `${type} · ${summary}` : type;
 }
 
 function readFixturesCache(
@@ -326,7 +375,7 @@ export default function SubcategoryClientLighting({
   category: string;
   subcategory: string;
 }) {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const listPhotoFileRef = useRef<HTMLInputElement | null>(null);
   const editable = canEditInventory();
@@ -337,6 +386,9 @@ export default function SubcategoryClientLighting({
   const [subId, setSubId] = useState<string | null>(null);
   const [items, setItems] = useState<ItemRow[]>([]);
   const [statsByItem, setStatsByItem] = useState<Record<string, ItemStats>>({});
+  const [allocationsByItem, setAllocationsByItem] = useState<
+    Record<string, ActiveAllocation[]>
+  >({});
 
   const [fixtureType, setFixtureType] = useState("");
   const [brand, setBrand] = useState("");
@@ -352,6 +404,9 @@ export default function SubcategoryClientLighting({
   const [selectedModelDraft, setSelectedModelDraft] = useState("");
   const [mobileMenuItemId, setMobileMenuItemId] = useState<string | null>(null);
   const [mobileAddFixtureOpen, setMobileAddFixtureOpen] = useState(false);
+  const [activeEquipmentList, setActiveEquipmentList] =
+    useState<EquipmentList | null>(null);
+  const [listPickerItem, setListPickerItem] = useState<ItemRow | null>(null);
 
   const [photoMenuOpen, setPhotoMenuOpen] = useState(false);
   const [searchPanelOpen, setSearchPanelOpen] = useState(false);
@@ -420,6 +475,9 @@ export default function SubcategoryClientLighting({
     [items, selectedFixtureId],
   );
 
+  const activeDraftList =
+    activeEquipmentList?.status === "draft" ? activeEquipmentList : null;
+
   useEffect(() => {
     const parsed = splitBrandModel(selectedFixture?.name ?? "");
     setSelectedBrandDraft(parsed.brand);
@@ -463,6 +521,7 @@ export default function SubcategoryClientLighting({
         setSubId(cached.subId);
         setItems(cached.items || []);
         setStatsByItem(cached.statsByItem || {});
+        setAllocationsByItem(cached.allocationsByItem || {});
         setLoading(false);
 
         void refreshData(cacheKey);
@@ -490,6 +549,9 @@ export default function SubcategoryClientLighting({
       const ids = list.map((x) => x.id);
 
       let stats: Record<string, ItemStats> = {};
+      const allocations: Record<string, ActiveAllocation[]> = {};
+
+      for (const itemId of ids) allocations[itemId] = [];
 
       if (ids.length > 0) {
         let allUnits: any[] = [];
@@ -526,14 +588,126 @@ export default function SubcategoryClientLighting({
         for (const itId of ids) {
           stats[itId] = countByStatus(by[itId] || []);
         }
+
+        const activeListsResult = await supabase
+          .from("equipment_lists")
+          .select(ACTIVE_LIST_SELECT)
+          .in("status", ["active", "partially_returned"])
+          .order("created_at", { ascending: false })
+          .limit(200);
+
+        if (activeListsResult.error) {
+          console.error(
+            "load lighting active equipment lists error",
+            activeListsResult.error,
+          );
+        } else {
+          const activeLists = (activeListsResult.data ?? []) as EquipmentList[];
+          const activeListIds = activeLists.map((activeList) => activeList.id);
+          const activeListsById = new Map(
+            activeLists.map((activeList) => [activeList.id, activeList]),
+          );
+
+          if (activeListIds.length > 0) {
+            let allocationRows: Array<{
+              list_id: string;
+              parent_record_id: string | null;
+              requested_quantity: number;
+              approved_quantity: number;
+              returned_ok_quantity: number;
+              returned_maintenance_quantity: number;
+            }> = [];
+            let allocationFrom = 0;
+            const allocationPageSize = 1000;
+
+            while (true) {
+              const allocationResult = await supabase
+                .from("equipment_list_items")
+                .select(
+                  "list_id,parent_record_id,requested_quantity,approved_quantity,returned_ok_quantity,returned_maintenance_quantity",
+                )
+                .eq("inventory_record_type", "unit")
+                .in("list_id", activeListIds)
+                .in("parent_record_id", ids)
+                .range(
+                  allocationFrom,
+                  allocationFrom + allocationPageSize - 1,
+                );
+
+              if (allocationResult.error) {
+                console.error(
+                  "load lighting active allocations error",
+                  allocationResult.error,
+                );
+                break;
+              }
+
+              const page = (allocationResult.data ?? []) as typeof allocationRows;
+              allocationRows = [...allocationRows, ...page];
+
+              if (page.length < allocationPageSize) break;
+              allocationFrom += allocationPageSize;
+            }
+
+            const allocationMap = new Map<string, ActiveAllocation>();
+
+            for (const row of allocationRows) {
+              const itemId = row.parent_record_id;
+              const activeList = activeListsById.get(row.list_id);
+              if (!itemId || !activeList) continue;
+
+              const approved = Number(row.approved_quantity) || 0;
+              const requested = Number(row.requested_quantity) || 0;
+              const returned =
+                (Number(row.returned_ok_quantity) || 0) +
+                (Number(row.returned_maintenance_quantity) || 0);
+              const quantity = Math.max(
+                0,
+                (approved > 0 ? approved : requested) - returned,
+              );
+
+              if (quantity === 0) continue;
+
+              const key = `${itemId}:${activeList.id}`;
+              const current = allocationMap.get(key);
+
+              if (current) {
+                current.quantity += quantity;
+              } else {
+                allocationMap.set(key, {
+                  listId: activeList.id,
+                  reference: activeList.reference,
+                  label: allocationLabel(activeList),
+                  quantity,
+                  status:
+                    activeList.status === "partially_returned"
+                      ? "partially_returned"
+                      : "active",
+                });
+              }
+            }
+
+            for (const [key, allocation] of allocationMap) {
+              const itemId = key.split(":", 1)[0];
+              if (!allocations[itemId]) allocations[itemId] = [];
+              allocations[itemId].push(allocation);
+            }
+          }
+        }
       }
 
       setItems(list);
       setStatsByItem(stats);
+      setAllocationsByItem(allocations);
 
       sessionStorage.setItem(
         cacheKey,
-        JSON.stringify({ subId: sid, items: list, statsByItem: stats }),
+        JSON.stringify({
+          subId: sid,
+          items: list,
+          statsByItem: stats,
+          allocationsByItem: allocations,
+        }),
       );
     } catch (e: any) {
       setErr(e?.message || "Failed to load");
@@ -544,6 +718,30 @@ export default function SubcategoryClientLighting({
 
   useEffect(() => {
     void load(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [category, subcategory]);
+
+  useEffect(() => {
+    function refreshEquipmentMovements() {
+      void load(true);
+    }
+
+    window.addEventListener(EQUIPMENT_LISTS_EVENT, refreshEquipmentMovements);
+    window.addEventListener(
+      EQUIPMENT_LIST_ITEMS_EVENT,
+      refreshEquipmentMovements,
+    );
+
+    return () => {
+      window.removeEventListener(
+        EQUIPMENT_LISTS_EVENT,
+        refreshEquipmentMovements,
+      );
+      window.removeEventListener(
+        EQUIPMENT_LIST_ITEMS_EVENT,
+        refreshEquipmentMovements,
+      );
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category, subcategory]);
 
@@ -562,6 +760,75 @@ export default function SubcategoryClientLighting({
 
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let loadVersion = 0;
+
+    async function syncActiveList(listId?: string | null) {
+      const version = ++loadVersion;
+      let nextListId = listId;
+
+      if (nextListId === undefined) {
+        try {
+          nextListId = localStorage.getItem(ACTIVE_EQUIPMENT_LIST_KEY);
+        } catch {
+          nextListId = null;
+        }
+      }
+
+      setListPickerItem(null);
+
+      if (!nextListId) {
+        setActiveEquipmentList(null);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("equipment_lists")
+        .select(ACTIVE_LIST_SELECT)
+        .eq("id", nextListId)
+        .maybeSingle();
+
+      if (cancelled || version !== loadVersion) return;
+
+      if (error || !data || data.status === "cancelled") {
+        if (error) console.error("load active equipment list error", error);
+        setActiveEquipmentList(null);
+        return;
+      }
+
+      setActiveEquipmentList(data as EquipmentList);
+    }
+
+    function handleActiveListChange(event: Event) {
+      const listId = (event as CustomEvent<{ listId?: string | null }>).detail
+        ?.listId;
+      void syncActiveList(listId ?? null);
+    }
+
+    function handleStorage(event: StorageEvent) {
+      if (event.key === ACTIVE_EQUIPMENT_LIST_KEY) {
+        void syncActiveList(event.newValue);
+      }
+    }
+
+    void syncActiveList();
+    window.addEventListener(
+      ACTIVE_EQUIPMENT_LIST_EVENT,
+      handleActiveListChange,
+    );
+    window.addEventListener("storage", handleStorage);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener(
+        ACTIVE_EQUIPMENT_LIST_EVENT,
+        handleActiveListChange,
+      );
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, [supabase]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -678,6 +945,7 @@ export default function SubcategoryClientLighting({
       subId,
       items: nextItems,
       statsByItem,
+      allocationsByItem,
     });
 
     setSaveMsg("Photo updated");
@@ -825,6 +1093,7 @@ export default function SubcategoryClientLighting({
         subId,
         items: nextItems,
         statsByItem: nextStats,
+        allocationsByItem,
       });
 
       setFixtureType("");
@@ -878,6 +1147,7 @@ export default function SubcategoryClientLighting({
         subId,
         items: nextItems,
         statsByItem,
+        allocationsByItem,
       });
 
       setSaveMsg("Item renamed");
@@ -918,6 +1188,7 @@ export default function SubcategoryClientLighting({
         subId,
         items: nextItems,
         statsByItem,
+        allocationsByItem,
       });
 
       setSaveMsg("Fixture type updated");
@@ -1066,6 +1337,7 @@ export default function SubcategoryClientLighting({
         subId,
         items: nextItems,
         statsByItem: nextStats,
+        allocationsByItem,
       });
 
       setSaveMsg("Item deleted");
@@ -1095,6 +1367,15 @@ export default function SubcategoryClientLighting({
       maintenance: 0,
       inKsa: 0,
     };
+    const allocations = allocationsByItem[it.id] || [];
+    const allocatedQuantity = allocations.reduce(
+      (total, allocation) => total + allocation.quantity,
+      0,
+    );
+    const existingMovementQuantity = Math.max(
+      0,
+      stats.inUse + stats.inKsa - allocatedQuantity,
+    );
 
     const detailsHref = `/inventory/${category}/${subcategory}/${it.id}`;
 
@@ -1128,7 +1409,9 @@ export default function SubcategoryClientLighting({
                 window.location.href = detailsHref;
               }
             }}
-            className="flex w-full flex-col gap-3 p-2 pr-10 text-left sm:flex-row sm:items-start sm:pr-20"
+            className={`flex w-full flex-col gap-3 p-2 pr-10 text-left sm:flex-row sm:items-start ${
+              editable && activeDraftList ? "sm:pr-36" : "sm:pr-20"
+            }`}
           >
             <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
               <div className="flex items-start gap-3 min-w-0 flex-1 group">
@@ -1149,22 +1432,24 @@ export default function SubcategoryClientLighting({
                   </div>
 
                   <div className="mt-2 sm:hidden">
-                    <div className="grid grid-cols-5 gap-x-2 gap-y-1 text-center">
+                    <div
+                      className={`grid gap-x-2 gap-y-1 text-center ${
+                        stats.maintenance > 0
+                          ? "grid-cols-3"
+                          : "grid-cols-2"
+                      }`}
+                    >
                       <div className="text-[8px] font-semibold text-gray-500">
                         Total
                       </div>
                       <div className="text-[8px] font-semibold text-gray-500">
                         Available
                       </div>
-                      <div className="text-[8px] font-semibold text-gray-500">
-                        In Use
-                      </div>
-                      <div className="text-[8px] font-semibold text-gray-500">
-                        Maintenance
-                      </div>
-                      <div className="text-[8px] font-semibold text-gray-500">
-                        In KSA
-                      </div>
+                      {stats.maintenance > 0 ? (
+                        <div className="text-[8px] font-semibold text-gray-500">
+                          Maintenance
+                        </div>
+                      ) : null}
 
                       <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">
                         {stats.total}
@@ -1172,15 +1457,11 @@ export default function SubcategoryClientLighting({
                       <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
                         {stats.available}
                       </div>
-                      <div className="rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold">
-                        {stats.inUse}
-                      </div>
-                      <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
-                        {stats.maintenance}
-                      </div>
-                      <div className="rounded-md bg-purple-100 px-1 py-0.5 text-[9px] font-semibold">
-                        {stats.inKsa}
-                      </div>
+                      {stats.maintenance > 0 ? (
+                        <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
+                          {stats.maintenance}
+                        </div>
+                      ) : null}
                     </div>
                   </div>
 
@@ -1192,21 +1473,13 @@ export default function SubcategoryClientLighting({
                         value={stats.available}
                         tone="green"
                       />
-                      <StatPill
-                        label="In Use"
-                        value={stats.inUse}
-                        tone="blue"
-                      />
-                      <StatPill
-                        label="Maintenance"
-                        value={stats.maintenance}
-                        tone="yellow"
-                      />
-                      <StatPill
-                        label="In KSA"
-                        value={stats.inKsa}
-                        tone="purple"
-                      />
+                      {stats.maintenance > 0 ? (
+                        <StatPill
+                          label="Maintenance"
+                          value={stats.maintenance}
+                          tone="yellow"
+                        />
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -1214,13 +1487,67 @@ export default function SubcategoryClientLighting({
             </div>
           </button>
 
-          <Link
-            href={detailsHref}
-            onClick={(event) => event.stopPropagation()}
-            className="absolute right-2 top-2 hidden rounded-full border border-gray-300 bg-white px-2.5 py-1 text-[9px] font-medium text-gray-700 transition hover:border-red-200 hover:bg-red-50 hover:text-red-700 sm:block"
-          >
-            Report
-          </Link>
+          {allocations.length > 0 || existingMovementQuantity > 0 ? (
+            <div
+              data-lighting-active-allocations="true"
+              className={`px-2 pb-2 sm:pl-[76px] ${
+                editable && activeDraftList ? "sm:pr-36" : "sm:pr-20"
+              }`}
+            >
+              <div className="mb-1 text-[8px] font-bold uppercase tracking-wider text-gray-400">
+                Active Movements
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {allocations.map((allocation) => (
+                  <Link
+                    key={allocation.listId}
+                    href={`/inventory/lists/${allocation.listId}`}
+                    onClick={(event) => event.stopPropagation()}
+                    title={`${allocation.reference} · ${allocation.label}`}
+                    className={`max-w-full truncate rounded-lg px-2 py-1 text-[9px] font-semibold transition hover:opacity-80 ${
+                      allocation.status === "partially_returned"
+                        ? "bg-purple-100 text-purple-800"
+                        : "bg-blue-100 text-blue-800"
+                    }`}
+                  >
+                    {allocation.quantity} pcs · {allocation.label}
+                  </Link>
+                ))}
+
+                {existingMovementQuantity > 0 ? (
+                  <span className="rounded-lg bg-gray-100 px-2 py-1 text-[9px] font-semibold text-gray-600">
+                    {existingMovementQuantity} pcs · Existing movement
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+
+          <div className="absolute right-2 top-2 hidden items-center gap-1.5 sm:flex">
+            {activeDraftList ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setListPickerItem(it);
+                }}
+                title={`Add units to ${activeDraftList.reference}`}
+                className="rounded-full bg-black px-2.5 py-1 text-[9px] font-semibold text-white shadow-sm transition hover:bg-gray-800"
+              >
+                + List
+              </button>
+            ) : null}
+
+            <Link
+              href={detailsHref}
+              onClick={(event) => event.stopPropagation()}
+              className="rounded-full border border-gray-300 bg-white px-2.5 py-1 text-[9px] font-medium text-gray-700 transition hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+            >
+              Report
+            </Link>
+          </div>
 
           {editable ? (
             <div
@@ -1637,6 +1964,23 @@ export default function SubcategoryClientLighting({
         className="hidden"
         onChange={onPickListItemPhoto}
       />
+
+      {activeDraftList && listPickerItem ? (
+        <EquipmentListUnitPicker
+          list={activeDraftList}
+          item={listPickerItem}
+          category={category}
+          subcategory={subcategory}
+          onClose={() => setListPickerItem(null)}
+          onAdded={(count) => {
+            const message = `${count} unit${count === 1 ? "" : "s"} added to ${activeDraftList.reference}`;
+            setSaveMsg(message);
+            setTimeout(() => {
+              setSaveMsg((current) => (current === message ? "" : current));
+            }, 1800);
+          }}
+        />
+      ) : null}
 
       {editable && mobileMenuItemId && selectedFixture ? (
         <div

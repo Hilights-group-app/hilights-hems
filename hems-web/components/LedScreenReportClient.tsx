@@ -6,6 +6,13 @@ import { createClient } from "@/lib/supabase/client";
 import { canEditInventory, getUserName } from "@/lib/authStore";
 import { logActivity } from "@/lib/activityStore";
 import { Pencil, Trash2 } from "lucide-react";
+import {
+  EQUIPMENT_LIST_ITEMS_EVENT,
+  EQUIPMENT_LISTS_EVENT,
+  equipmentListSummary,
+  equipmentListTypeLabel,
+  type EquipmentList,
+} from "@/lib/equipmentLists";
 
 type QtyViewMode = "cabinet" | "sqm";
 
@@ -46,6 +53,38 @@ type MaintenanceLog = {
   created_at: string;
   created_by: string | null;
 };
+
+type ActiveAllocation = {
+  listId: string;
+  reference: string;
+  label: string;
+  quantity: number;
+  status: "active" | "partially_returned";
+};
+
+const ACTIVE_LIST_SELECT = `
+  id,
+  reference,
+  list_type,
+  status,
+  client_company,
+  event_name,
+  venue,
+  purpose,
+  assigned_to,
+  from_location_name,
+  destination_name,
+  pickup_date,
+  return_date,
+  setup_date,
+  dismantling_date,
+  loading_date,
+  receiving_date,
+  notes,
+  created_by_name,
+  created_at,
+  updated_at
+`;
 
 const ISSUE_OPTIONS: { value: IssueType; label: string }[] = [
   { value: "dead_pixels", label: "Dead Pixels" },
@@ -140,11 +179,16 @@ function getIssueLabel(type: IssueType) {
 
 function rowAvailableFromTotal(
   total: number,
-  inUse: number,
+  allocated: number,
   maintenance: number,
-  inKsa: number
 ) {
-  return Math.max(0, total - inUse - maintenance - inKsa);
+  return Math.max(0, total - allocated - maintenance);
+}
+
+function allocationLabel(list: EquipmentList) {
+  const type = equipmentListTypeLabel(list.list_type);
+  const summary = equipmentListSummary(list);
+  return summary ? `${type} · ${summary}` : type;
 }
 
 async function compressImageFile(
@@ -187,7 +231,7 @@ async function compressImageFile(
 }
 
 async function uploadReportPhoto(file: File): Promise<string> {
-  const supabase = createClient();
+  const supabase = useMemo(() => createClient(), []);
   const compressed = await compressImageFile(file);
 
   const fileName = `${Date.now()}-${Math.random()
@@ -251,6 +295,9 @@ export default function LedScreenReportClient({
   const [row, setRow] = useState<MatrixRow | null>(null);
   const [model, setModel] = useState<MatrixModel | null>(null);
   const [issues, setIssues] = useState<MaintenanceLog[]>([]);
+  const [activeAllocations, setActiveAllocations] = useState<
+    ActiveAllocation[]
+  >([]);
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -268,6 +315,24 @@ export default function LedScreenReportClient({
   const [editQty, setEditQty] = useState(1);
   const [showEditModal, setShowEditModal] = useState(false);
 
+  const activeAllocatedQuantity = useMemo(
+    () =>
+      activeAllocations.reduce(
+        (total, allocation) => total + clampQty(allocation.quantity),
+        0,
+      ),
+    [activeAllocations],
+  );
+  const existingMovementQty = row
+    ? Math.max(
+        0,
+        clampQty(row.in_use_qty) +
+          clampQty(row.in_ksa_qty) -
+          activeAllocatedQuantity,
+      )
+    : 0;
+  const trackedMovementQty = activeAllocatedQuantity + existingMovementQty;
+
   useEffect(() => {
     if (!rowId) {
       setLoading(false);
@@ -277,13 +342,117 @@ export default function LedScreenReportClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rowId]);
 
+  useEffect(() => {
+    function refreshEquipmentMovements() {
+      if (rowId) void loadActiveAllocations(rowId);
+    }
+
+    window.addEventListener(EQUIPMENT_LISTS_EVENT, refreshEquipmentMovements);
+    window.addEventListener(
+      EQUIPMENT_LIST_ITEMS_EVENT,
+      refreshEquipmentMovements,
+    );
+
+    return () => {
+      window.removeEventListener(
+        EQUIPMENT_LISTS_EVENT,
+        refreshEquipmentMovements,
+      );
+      window.removeEventListener(
+        EQUIPMENT_LIST_ITEMS_EVENT,
+        refreshEquipmentMovements,
+      );
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowId]);
+
+  async function loadActiveAllocations(targetRowId: string) {
+    const activeListsResult = await supabase
+      .from("equipment_lists")
+      .select(ACTIVE_LIST_SELECT)
+      .in("status", ["active", "partially_returned"])
+      .order("created_at", { ascending: false })
+      .limit(200);
+
+    if (activeListsResult.error) {
+      console.error(
+        "load LED report active lists error",
+        activeListsResult.error,
+      );
+      setActiveAllocations([]);
+      return;
+    }
+
+    const activeLists = (activeListsResult.data ?? []) as EquipmentList[];
+    const activeListIds = activeLists.map((activeList) => activeList.id);
+    if (activeListIds.length === 0) {
+      setActiveAllocations([]);
+      return;
+    }
+
+    const itemsResult = await supabase
+      .from("equipment_list_items")
+      .select(
+        "list_id,requested_quantity,approved_quantity,returned_ok_quantity,returned_maintenance_quantity",
+      )
+      .eq("inventory_record_type", "matrix_row")
+      .eq("inventory_record_id", targetRowId)
+      .in("list_id", activeListIds);
+
+    if (itemsResult.error) {
+      console.error(
+        "load LED report active allocations error",
+        itemsResult.error,
+      );
+      setActiveAllocations([]);
+      return;
+    }
+
+    const activeListsById = new Map(
+      activeLists.map((activeList) => [activeList.id, activeList]),
+    );
+    const allocationsByList = new Map<string, ActiveAllocation>();
+
+    for (const item of itemsResult.data ?? []) {
+      const activeList = activeListsById.get(String(item.list_id));
+      if (!activeList) continue;
+
+      const approved = clampQty(item.approved_quantity);
+      const requested = clampQty(item.requested_quantity);
+      const returned =
+        clampQty(item.returned_ok_quantity) +
+        clampQty(item.returned_maintenance_quantity);
+      const quantity = Math.max(
+        0,
+        (approved > 0 ? approved : requested) - returned,
+      );
+      if (quantity === 0) continue;
+
+      const current = allocationsByList.get(activeList.id);
+      if (current) current.quantity += quantity;
+      else {
+        allocationsByList.set(activeList.id, {
+          listId: activeList.id,
+          reference: activeList.reference,
+          label: allocationLabel(activeList),
+          quantity,
+          status:
+            activeList.status === "partially_returned"
+              ? "partially_returned"
+              : "active",
+        });
+      }
+    }
+
+    setActiveAllocations(Array.from(allocationsByList.values()));
+  }
+
   async function loadData() {
+    if (loadingRef.current) return;
+    loadingRef.current = true;
     setLoading(true);
 
     try {
-      if (loadingRef.current) return;
-      loadingRef.current = true;
-
       const { data: rowData, error: rowError } = await supabase
         .from("matrix_rows")
         .select(
@@ -297,6 +466,7 @@ export default function LedScreenReportClient({
         setRow(null);
         setModel(null);
         setIssues([]);
+        setActiveAllocations([]);
         setLoading(false);
         return;
       }
@@ -331,11 +501,13 @@ export default function LedScreenReportClient({
       setRow(rowData as MatrixRow);
       setModel((modelData ?? null) as MatrixModel | null);
       setIssues(normalizedIssues);
+      await loadActiveAllocations(rowId);
     } catch (error) {
       console.error("loadData unexpected error", error);
       setRow(null);
       setModel(null);
       setIssues([]);
+      setActiveAllocations([]);
     } finally {
       loadingRef.current = false;
       setLoading(false);
@@ -355,9 +527,8 @@ export default function LedScreenReportClient({
 
     const nextAvailable = rowAvailableFromTotal(
       clampQty(row.qty),
-      clampQty(row.in_use_qty),
+      trackedMovementQty,
       maintenanceQty,
-      clampQty(row.in_ksa_qty)
     );
 
     const { error } = await supabase
@@ -365,6 +536,8 @@ export default function LedScreenReportClient({
       .update({
         maintenance_qty: maintenanceQty,
         available_qty: nextAvailable,
+        in_use_qty: trackedMovementQty,
+        in_ksa_qty: 0,
       })
       .eq("id", row.id);
 
@@ -379,6 +552,8 @@ export default function LedScreenReportClient({
             ...prev,
             maintenance_qty: maintenanceQty,
             available_qty: nextAvailable,
+            in_use_qty: trackedMovementQty,
+            in_ksa_qty: 0,
           }
         : prev
     );
@@ -754,16 +929,18 @@ export default function LedScreenReportClient({
 
   const totalDisplay = row ? toDisplayQty(row.qty, row.size, viewMode) : 0;
   const availableDisplay = row
-    ? toDisplayQty(row.available_qty, row.size, viewMode)
-    : 0;
-  const inUseDisplay = row
-    ? toDisplayQty(row.in_use_qty, row.size, viewMode)
+    ? toDisplayQty(
+        rowAvailableFromTotal(
+          clampQty(row.qty),
+          trackedMovementQty,
+          clampQty(row.maintenance_qty),
+        ),
+        row.size,
+        viewMode,
+      )
     : 0;
   const maintenanceDisplay = row
     ? toDisplayQty(row.maintenance_qty, row.size, viewMode)
-    : 0;
-  const inKsaDisplay = row
-    ? toDisplayQty(row.in_ksa_qty, row.size, viewMode)
     : 0;
 
   if (loading) {
@@ -880,18 +1057,41 @@ export default function LedScreenReportClient({
               {unitSuffix(viewMode)}
             </span>
 
-            <span className="px-2.5 py-1 rounded-lg bg-blue-100 text-blue-700 text-[10px] font-semibold">
-              In Use : {formatQty(inUseDisplay, viewMode)} {unitSuffix(viewMode)}
-            </span>
+            {maintenanceDisplay > 0 ? (
+              <span className="px-2.5 py-1 rounded-lg bg-yellow-100 text-yellow-700 text-[10px] font-semibold">
+                Maintenance : {formatQty(maintenanceDisplay, viewMode)}{" "}
+                {unitSuffix(viewMode)}
+              </span>
+            ) : null}
 
-            <span className="px-2.5 py-1 rounded-lg bg-yellow-100 text-yellow-700 text-[10px] font-semibold">
-              Maintenance : {formatQty(maintenanceDisplay, viewMode)}{" "}
-              {unitSuffix(viewMode)}
-            </span>
+            {activeAllocations.map((allocation) => (
+              <Link
+                key={allocation.listId}
+                href={`/inventory/lists/${allocation.listId}`}
+                title={`${allocation.reference} · ${allocation.label}`}
+                className={`max-w-full truncate rounded-lg px-2.5 py-1 text-[10px] font-semibold transition hover:opacity-80 ${
+                  allocation.status === "partially_returned"
+                    ? "bg-purple-100 text-purple-800"
+                    : "bg-blue-100 text-blue-800"
+                }`}
+              >
+                {formatQty(
+                  toDisplayQty(allocation.quantity, row.size, viewMode),
+                  viewMode,
+                )}{" "}
+                {unitSuffix(viewMode)} · {allocation.label}
+              </Link>
+            ))}
 
-            <span className="px-2.5 py-1 rounded-lg bg-purple-100 text-purple-700 text-[10px] font-semibold">
-              In KSA : {formatQty(inKsaDisplay, viewMode)} {unitSuffix(viewMode)}
-            </span>
+            {existingMovementQty > 0 ? (
+              <span className="max-w-full truncate rounded-lg bg-gray-100 px-2.5 py-1 text-[10px] font-semibold text-gray-600">
+                {formatQty(
+                  toDisplayQty(existingMovementQty, row.size, viewMode),
+                  viewMode,
+                )}{" "}
+                {unitSuffix(viewMode)} · Existing movement
+              </span>
+            ) : null}
           </div>
         </div>
 

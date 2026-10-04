@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { AlertTriangle, Clock3 } from "lucide-react";
+import { AlertTriangle, Clock3, Wrench } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
@@ -22,6 +22,19 @@ type Alert = {
   href: string;
   expired: boolean;
   time: number;
+  kind: "certificate" | "maintenance";
+};
+
+type MaintenanceRequest = {
+  id: string;
+  display_name: string;
+  serial_number: string | null;
+  quantity: number;
+  department: string;
+  source_reference: string;
+  source_summary: string | null;
+  report_href: string | null;
+  created_at: string;
 };
 
 const ALERTS_CACHE_KEY = "hems:home-sidebar:alerts";
@@ -87,16 +100,6 @@ export default function HomeRightSidebar() {
     (segment) =>
       segment.includes("projector") || segment.includes("projection"),
   );
-  const showLedScreenAction = pathSegments.some((segment) =>
-    segment.includes("led-screen"),
-  );
-  const showSerializedAction =
-    pathSegments[0] === "inventory" &&
-    pathSegments.length === 3 &&
-    !showLightingAction &&
-    !showChainHoistAction &&
-    !showProjectorAction &&
-    !showLedScreenAction;
 
   useEffect(() => {
     let cancelled = false;
@@ -108,110 +111,194 @@ export default function HomeRightSidebar() {
     if (cachedActivity !== null) setActivity(cachedActivity);
 
     async function load() {
-      const [notificationResult, unitResult] = await Promise.all([
-        supabase
-          .from("notifications")
-          .select("id,title,message,link,created_at,actor_name")
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      let role = "";
+      let department = "";
+
+      if (user?.id) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role,department")
+          .eq("id", user.id)
+          .single();
+
+        role = String(profile?.role || "");
+        department = String(profile?.department || "");
+      }
+
+      let maintenanceQuery: any = null;
+      if (role === "admin" || role === "warehouse_manager" || role === "head") {
+        maintenanceQuery = supabase
+          .from("maintenance_requests")
+          .select(
+            "id,display_name,serial_number,quantity,department,source_reference,source_summary,report_href,created_at",
+          )
+          .eq("status", "pending_report")
           .order("created_at", { ascending: false })
-          .limit(8),
-        supabase
-          .from("units")
-          .select("id,item_id,unit_no,serial,expiry_date")
-          .not("expiry_date", "is", null)
-          .order("expiry_date", { ascending: true })
-          .limit(100),
-      ]);
+          .limit(20);
+
+        if (role === "head") {
+          maintenanceQuery = maintenanceQuery.eq("department", department);
+        }
+      }
+
+      const [notificationResult, unitResult, maintenanceResult] =
+        await Promise.all([
+          supabase
+            .from("notifications")
+            .select("id,title,message,link,created_at,actor_name")
+            .order("created_at", { ascending: false })
+            .limit(8),
+          supabase
+            .from("units")
+            .select("id,item_id,unit_no,serial,expiry_date")
+            .not("expiry_date", "is", null)
+            .order("expiry_date", { ascending: true })
+            .limit(100),
+          maintenanceQuery ?? Promise.resolve({ data: [], error: null }),
+        ]);
 
       if (cancelled) return;
+
       if (!notificationResult.error) {
         const nextActivity = (notificationResult.data ?? []) as Activity[];
         setActivity(nextActivity);
         writeCache(ACTIVITY_CACHE_KEY, nextActivity);
       }
 
+      const maintenanceAlerts = maintenanceResult.error
+        ? []
+        : ((maintenanceResult.data ?? []) as MaintenanceRequest[]).map(
+            (request): Alert => {
+              const reportHref = request.report_href || "/inventory";
+              const separator = reportHref.includes("?") ? "&" : "?";
+              const serial = request.serial_number?.trim()
+                ? ` · ${request.serial_number.trim()}`
+                : request.quantity > 1
+                  ? ` · ${request.quantity} pcs`
+                  : "";
+
+              return {
+                id: `maintenance:${request.id}`,
+                title: `${request.display_name}${serial}`,
+                description: `Returned to Maintenance from ${request.source_reference}${
+                  request.source_summary ? ` · ${request.source_summary}` : ""
+                }`,
+                href: `${reportHref}${separator}maintenanceRequest=${encodeURIComponent(
+                  request.id,
+                )}`,
+                expired: true,
+                time: new Date(request.created_at).getTime(),
+                kind: "maintenance",
+              };
+            },
+          );
+
+      if (unitResult.error) {
+        setAlerts(maintenanceAlerts);
+        writeCache(ALERTS_CACHE_KEY, maintenanceAlerts);
+        return;
+      }
+
       const units = (unitResult.data ?? []) as any[];
       const itemIds = [...new Set(units.map((unit) => unit.item_id))].filter(
         Boolean,
       );
+      let certificateAlerts: Alert[] = [];
 
-      if (unitResult.error) {
-        return;
+      if (itemIds.length > 0) {
+        const itemResult = await supabase
+          .from("items")
+          .select("id,name,subcategory_id")
+          .in("id", itemIds);
+        if (cancelled) return;
+
+        if (!itemResult.error) {
+          const items = (itemResult.data ?? []) as any[];
+          const subIds = [
+            ...new Set(items.map((item) => item.subcategory_id)),
+          ].filter(Boolean);
+          const subResult = subIds.length
+            ? await supabase
+                .from("subcategories")
+                .select("id,slug,category_id")
+                .in("id", subIds)
+            : { data: [], error: null };
+
+          if (cancelled) return;
+
+          if (!subResult.error) {
+            const subs = (subResult.data ?? []) as any[];
+            const categoryIds = [
+              ...new Set(subs.map((sub) => sub.category_id)),
+            ].filter(Boolean);
+            const categoryResult = categoryIds.length
+              ? await supabase
+                  .from("categories")
+                  .select("id,slug")
+                  .in("id", categoryIds)
+              : { data: [], error: null };
+
+            if (cancelled) return;
+
+            if (!categoryResult.error) {
+              const itemMap = new Map(items.map((item) => [item.id, item]));
+              const subMap = new Map(subs.map((sub) => [sub.id, sub]));
+              const categoryMap = new Map(
+                (categoryResult.data ?? []).map((category: any) => [
+                  category.id,
+                  category,
+                ]),
+              );
+              const alertLimit = Date.now() + 30 * 86_400_000;
+
+              certificateAlerts = units
+                .map((unit): Alert | null => {
+                  const time = new Date(unit.expiry_date).getTime();
+                  if (!Number.isFinite(time) || time > alertLimit) return null;
+
+                  const item: any = itemMap.get(unit.item_id);
+                  const sub: any = item
+                    ? subMap.get(item.subcategory_id)
+                    : null;
+                  const category: any = sub
+                    ? categoryMap.get(sub.category_id)
+                    : null;
+                  if (!item || !sub?.slug || !category?.slug) return null;
+
+                  const unitName =
+                    unit.unit_no !== null
+                      ? `Unit #${unit.unit_no}`
+                      : unit.serial
+                        ? `Serial ${unit.serial}`
+                        : "Unit";
+
+                  return {
+                    id: `certificate:${unit.id}`,
+                    title: `${item.name} — ${unitName}`,
+                    description: expiryText(time),
+                    href: `/inventory/${encodeURIComponent(
+                      category.slug,
+                    )}/${encodeURIComponent(sub.slug)}/${encodeURIComponent(
+                      item.id,
+                    )}`,
+                    expired: time < Date.now(),
+                    time,
+                    kind: "certificate",
+                  };
+                })
+                .filter((item): item is Alert => item !== null)
+                .sort((a, b) => a.time - b.time)
+                .slice(0, 5);
+            }
+          }
+        }
       }
 
-      if (itemIds.length === 0) {
-        setAlerts([]);
-        writeCache(ALERTS_CACHE_KEY, []);
-        return;
-      }
-
-      const itemResult = await supabase
-        .from("items")
-        .select("id,name,subcategory_id")
-        .in("id", itemIds);
-      if (cancelled || itemResult.error) return;
-
-      const items = (itemResult.data ?? []) as any[];
-      const subIds = [
-        ...new Set(items.map((item) => item.subcategory_id)),
-      ].filter(Boolean);
-      const subResult = await supabase
-        .from("subcategories")
-        .select("id,slug,category_id")
-        .in("id", subIds);
-      if (cancelled || subResult.error) return;
-
-      const subs = (subResult.data ?? []) as any[];
-      const categoryIds = [
-        ...new Set(subs.map((sub) => sub.category_id)),
-      ].filter(Boolean);
-      const categoryResult = await supabase
-        .from("categories")
-        .select("id,slug")
-        .in("id", categoryIds);
-      if (cancelled || categoryResult.error) return;
-
-      const itemMap = new Map(items.map((item) => [item.id, item]));
-      const subMap = new Map(subs.map((sub) => [sub.id, sub]));
-      const categoryMap = new Map(
-        (categoryResult.data ?? []).map((category: any) => [
-          category.id,
-          category,
-        ]),
-      );
-      const alertLimit = Date.now() + 30 * 86_400_000;
-
-      const next = units
-        .map((unit): Alert | null => {
-          const time = new Date(unit.expiry_date).getTime();
-          if (!Number.isFinite(time) || time > alertLimit) return null;
-
-          const item: any = itemMap.get(unit.item_id);
-          const sub: any = item ? subMap.get(item.subcategory_id) : null;
-          const category: any = sub ? categoryMap.get(sub.category_id) : null;
-          if (!item || !sub?.slug || !category?.slug) return null;
-
-          const unitName =
-            unit.unit_no !== null
-              ? `Unit #${unit.unit_no}`
-              : unit.serial
-                ? `Serial ${unit.serial}`
-                : "Unit";
-
-          return {
-            id: unit.id,
-            title: `${item.name} — ${unitName}`,
-            description: expiryText(time),
-            href: `/inventory/${encodeURIComponent(category.slug)}/${encodeURIComponent(
-              sub.slug,
-            )}/${encodeURIComponent(item.id)}`,
-            expired: time < Date.now(),
-            time,
-          };
-        })
-        .filter((item): item is Alert => item !== null)
-        .sort((a, b) => a.time - b.time)
-        .slice(0, 5);
-
+      const next = [...maintenanceAlerts, ...certificateAlerts].slice(0, 8);
       setAlerts(next);
       writeCache(ALERTS_CACHE_KEY, next);
     }
@@ -223,37 +310,31 @@ export default function HomeRightSidebar() {
     }
 
     window.addEventListener("focus", refreshInBackground);
+    window.addEventListener(
+      "hems:maintenance-requests-change",
+      refreshInBackground,
+    );
     return () => {
       cancelled = true;
       window.removeEventListener("focus", refreshInBackground);
+      window.removeEventListener(
+        "hems:maintenance-requests-change",
+        refreshInBackground,
+      );
     };
   }, [supabase]);
 
-  if (
-    showLightingAction ||
-    showChainHoistAction ||
-    showProjectorAction ||
-    showLedScreenAction ||
-    showSerializedAction
-  ) {
+  if (showLightingAction || showChainHoistAction || showProjectorAction) {
     const toolsTitle = showChainHoistAction
       ? "Chain Hoist Tools"
       : showProjectorAction
         ? "Projector Tools"
-        : showLedScreenAction
-          ? "LED Screen Tools"
-          : showLightingAction
-            ? "Lighting Tools"
-            : "Item Tools";
+        : "Lighting Tools";
     const toolsDescription = showChainHoistAction
       ? "Select a chain hoist to edit it, or add a new one."
       : showProjectorAction
         ? "Select a projector to edit it, or add a new one."
-        : showLedScreenAction
-          ? "Select a cabinet to edit it, or add a new LED screen."
-          : showLightingAction
-            ? "Select a fixture to edit it, or add a new one."
-            : "Select an item to edit it, or add a new one.";
+        : "Select a fixture to edit it, or add a new one.";
 
     return (
       <div className="p-4">
@@ -292,18 +373,22 @@ export default function HomeRightSidebar() {
                 key={alert.id}
                 href={alert.href}
                 className={`block rounded-xl border px-3 py-3 transition hover:shadow-sm ${
-                  alert.expired
+                  alert.kind === "maintenance" || alert.expired
                     ? "border-red-200 bg-red-50"
                     : "border-amber-200 bg-amber-50"
                 }`}
               >
                 <div className="flex items-start gap-2">
-                  <AlertTriangle
-                    size={15}
-                    className={
-                      alert.expired ? "text-red-600" : "text-amber-600"
-                    }
-                  />
+                  {alert.kind === "maintenance" ? (
+                    <Wrench size={15} className="shrink-0 text-red-600" />
+                  ) : (
+                    <AlertTriangle
+                      size={15}
+                      className={
+                        alert.expired ? "text-red-600" : "text-amber-600"
+                      }
+                    />
+                  )}
                   <div className="min-w-0">
                     <div className="line-clamp-2 text-xs font-semibold text-gray-900">
                       {alert.title}
