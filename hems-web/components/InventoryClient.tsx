@@ -99,7 +99,9 @@ export default function InventoryClient() {
   return (
     <div className="min-h-screen bg-gray-50 p-3">
       <div className="mx-auto w-full space-y-3">
-        <InventoryImportClient categories={categories} />
+        <div className="hidden lg:block">
+          <InventoryImportClient categories={categories} />
+        </div>
 
         {categories.map((cat) => (
           <div

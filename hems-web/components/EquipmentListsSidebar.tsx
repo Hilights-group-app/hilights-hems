@@ -162,6 +162,11 @@ function statusClass(status: EquipmentListStatus) {
   return "bg-red-100 text-red-700";
 }
 
+function sidebarStatusLabel(list: EquipmentList) {
+  if (list.list_type === "internal_use") return "Internal";
+  return equipmentListStatusLabel(list.status);
+}
+
 function listItemUnitLabel(item: EquipmentListItem) {
   if (item.inventory_record_type === "matrix_row") {
     const actualSquareMetres = Number(item.metadata?.actual_sqm);
@@ -200,6 +205,7 @@ export default function EquipmentListsSidebar() {
   );
   const [createOpen, setCreateOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [internalUseOpen, setInternalUseOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<EquipmentListType | null>(
     null,
   );
@@ -358,10 +364,26 @@ export default function EquipmentListsSidebar() {
     [lists],
   );
 
+  const internalUseLists = useMemo(
+    () =>
+      lists.filter(
+        (list) =>
+          list.list_type === "internal_use" && list.status !== "cancelled",
+      ),
+    [lists],
+  );
+
+  const workflowLists = useMemo(
+    () => visibleLists.filter((list) => list.list_type !== "internal_use"),
+    [visibleLists],
+  );
+
   const historyLists = useMemo(
     () =>
       lists.filter(
-        (list) => list.status === "closed" || list.status === "cancelled",
+        (list) =>
+          list.list_type !== "internal_use" &&
+          (list.status === "closed" || list.status === "cancelled"),
       ),
     [lists],
   );
@@ -371,23 +393,23 @@ export default function EquipmentListsSidebar() {
       {
         key: "draft",
         title: "Drafts",
-        rows: visibleLists.filter((list) => list.status === "draft"),
+        rows: workflowLists.filter((list) => list.status === "draft"),
       },
       {
         key: "pending",
         title: "Pending Approval",
-        rows: visibleLists.filter((list) => list.status === "pending"),
+        rows: workflowLists.filter((list) => list.status === "pending"),
       },
       {
         key: "active",
         title: "Active Lists",
-        rows: visibleLists.filter(
+        rows: workflowLists.filter(
           (list) =>
             list.status === "active" || list.status === "partially_returned",
         ),
       },
     ],
-    [visibleLists],
+    [workflowLists],
   );
 
   function updateForm<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -738,7 +760,11 @@ export default function EquipmentListsSidebar() {
                 ) : (
                   <Check size={13} />
                 )}
-                {saving ? "Creating..." : "Create Draft"}
+                {saving
+                  ? "Creating..."
+                  : selectedType === "internal_use"
+                    ? "Create Internal Use"
+                    : "Create Draft"}
               </button>
             </div>
           )}
@@ -765,7 +791,7 @@ export default function EquipmentListsSidebar() {
                           activeList.status,
                         )}`}
                       >
-                        {equipmentListStatusLabel(activeList.status)}
+                        {sidebarStatusLabel(activeList)}
                       </span>
                     </div>
 
@@ -787,7 +813,9 @@ export default function EquipmentListsSidebar() {
 
                 <div className="mt-2 flex items-center justify-between border-t border-gray-200 pt-2">
                   <span className="text-[9px] font-bold uppercase tracking-wider text-gray-500">
-                    Current List
+                    {activeList.list_type === "internal_use"
+                      ? "Internal Use List"
+                      : "Current List"}
                   </span>
                   <span className="rounded-full bg-black px-2 py-0.5 text-[8px] font-bold text-white">
                     {activeListItems.reduce(
@@ -960,7 +988,7 @@ export default function EquipmentListsSidebar() {
                                     list.status,
                                   )}`}
                                 >
-                                  {equipmentListStatusLabel(list.status)}
+                                  {sidebarStatusLabel(list)}
                                 </span>
                               </span>
 
@@ -980,7 +1008,9 @@ export default function EquipmentListsSidebar() {
                           {selected ? (
                             <span className="mt-2 flex items-center gap-1 border-t border-gray-200 pt-2 text-[9px] font-semibold text-gray-600">
                               <CircleUserRound size={10} />
-                              Active list
+                              {list.list_type === "internal_use"
+                                ? "Selected internal list"
+                                : "Active list"}
                             </span>
                           ) : null}
                         </button>
@@ -1060,6 +1090,93 @@ export default function EquipmentListsSidebar() {
                           </span>
                         </Link>
                       ))}
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
+
+              {internalUseLists.length > 0 ? (
+                <section>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setInternalUseOpen((current) => !current)
+                    }
+                    aria-expanded={internalUseOpen}
+                    className="flex w-full items-center justify-between rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-left transition hover:border-gray-300 hover:bg-gray-100"
+                  >
+                    <span className="flex items-center gap-2">
+                      <BriefcaseBusiness size={13} className="text-gray-500" />
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-gray-500">
+                        Internal Use
+                      </span>
+                    </span>
+
+                    <span className="flex items-center gap-2">
+                      <span className="rounded-full bg-white px-1.5 py-0.5 text-[9px] font-bold text-gray-500">
+                        {internalUseLists.length}
+                      </span>
+                      <ChevronDown
+                        size={13}
+                        className={`text-gray-500 transition-transform ${
+                          internalUseOpen ? "rotate-180" : ""
+                        }`}
+                      />
+                    </span>
+                  </button>
+
+                  {internalUseOpen ? (
+                    <div className="mt-2 space-y-2">
+                      {internalUseLists.map((list) => {
+                        const selected = list.id === activeListId;
+
+                        return (
+                          <button
+                            key={list.id}
+                            type="button"
+                            onClick={() => chooseActiveList(list)}
+                            className={`w-full rounded-xl border px-3 py-2.5 text-left transition ${
+                              selected
+                                ? "border-black bg-gray-50 shadow-sm"
+                                : "border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm"
+                            }`}
+                          >
+                            <span className="flex items-start gap-2">
+                              <span
+                                className={`mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg ${
+                                  selected
+                                    ? "bg-black text-white"
+                                    : "bg-gray-100 text-gray-600"
+                                }`}
+                              >
+                                {typeIcon(list.list_type, 13)}
+                              </span>
+
+                              <span className="min-w-0 flex-1">
+                                <span className="flex items-center gap-1.5">
+                                  <span className="truncate text-[11px] font-bold text-gray-900">
+                                    {list.reference}
+                                  </span>
+                                  <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[8px] font-bold text-blue-700">
+                                    Internal
+                                  </span>
+                                </span>
+
+                                <span className="mt-1 block truncate text-[10px] text-gray-600">
+                                  {equipmentListSummary(list)}
+                                </span>
+
+                                {selected ? (
+                                  <span className="mt-2 flex items-center gap-1 border-t border-gray-200 pt-2 text-[9px] font-semibold text-gray-600">
+                                    <CircleUserRound size={10} />
+                                    Selected internal list
+                                  </span>
+                                ) : null}
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   ) : null}
                 </section>

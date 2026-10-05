@@ -46,14 +46,14 @@ type ActiveAllocation = {
   reference: string;
   label: string;
   quantity: number;
-  status: "active" | "partially_returned";
+  status: "draft" | "active" | "partially_returned";
 };
 
 type ActiveMovementList = {
   id: string;
   reference: string;
   list_type: string;
-  status: "active" | "partially_returned";
+  status: "draft" | "active" | "partially_returned";
   client_company?: string | null;
   event_name?: string | null;
   venue?: string | null;
@@ -200,8 +200,11 @@ function activeMovementLabel(list: ActiveMovementList) {
     return `Local Event${event ? ` · ${event}` : ""}`;
   }
   if (list.list_type === "internal_use") {
-    const purpose = list.purpose || list.assigned_to;
-    return `Internal Use${purpose ? ` · ${purpose}` : ""}`;
+    const details = [list.assigned_to, list.purpose]
+      .map((value) => value?.trim())
+      .filter(Boolean)
+      .join(" · ");
+    return `Internal Use${details ? ` · ${details}` : ""}`;
   }
   if (list.list_type === "transfer_out") {
     return `Transfer${list.destination_name ? ` · ${list.destination_name}` : ""}`;
@@ -1066,7 +1069,7 @@ export default function SubcategoryClientMatrix({
         .select(
           "id,reference,list_type,status,client_company,event_name,venue,purpose,assigned_to,destination_name",
         )
-        .in("status", ["active", "partially_returned"])
+        .in("status", ["draft", "active", "partially_returned"])
         .order("created_at", { ascending: false })
         .limit(200);
 
@@ -1076,7 +1079,15 @@ export default function SubcategoryClientMatrix({
           activeListsResult.error,
         );
       } else {
-        const activeLists = (activeListsResult.data ?? []) as ActiveMovementList[];
+        const activeLists = (
+          (activeListsResult.data ?? []) as ActiveMovementList[]
+        ).filter(
+          (movementList) =>
+            movementList.status === "active" ||
+            movementList.status === "partially_returned" ||
+            (movementList.status === "draft" &&
+              movementList.list_type === "internal_use"),
+        );
         const activeListIds = activeLists.map((activeList) => activeList.id);
         const activeListsById = new Map(
           activeLists.map((activeList) => [activeList.id, activeList]),
@@ -1938,9 +1949,7 @@ export default function SubcategoryClientMatrix({
             {(
               [
                 ["Total", "total_qty"],
-                ["In Use", "in_use_qty"],
                 ["Maintenance", "maintenance_qty"],
-                ["In KSA", "in_ksa_qty"],
               ] as const
             ).map(([label, field]) => (
               <label key={field} className="text-[8px] font-semibold text-gray-500">
@@ -2043,9 +2052,7 @@ export default function SubcategoryClientMatrix({
           {(
             [
               ["Total", "total_qty"],
-              ["In Use", "in_use_qty"],
               ["Maintenance", "maintenance_qty"],
-              ["In KSA", "in_ksa_qty"],
             ] as const
           ).map(([label, field]) => (
             <label key={field} className="text-[8px] font-semibold text-gray-500">
@@ -2578,6 +2585,12 @@ export default function SubcategoryClientMatrix({
 
                 </div>
 
+                <AllocationBadges
+                  allocations={
+                    allocationsByRecordKey[`matrix_model:${it.id}`] || []
+                  }
+                />
+
                 <div className="mt-2 sm:hidden">
                   <div className={`grid gap-x-2 gap-y-1 text-center ${
                     stats.maintenance > 0 ? "grid-cols-3" : "grid-cols-2"
@@ -2665,6 +2678,14 @@ export default function SubcategoryClientMatrix({
 
   return (
     <div className="w-full mx-auto space-y-3">
+      <input
+        ref={listPhotoFileRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={onPickListItemPhoto}
+      />
+
       {(selectedBlockName || selectedItem || selectedCableRowInfo) ? (
         <div
           data-mobile-matrix-tools="true"
@@ -2867,14 +2888,6 @@ export default function SubcategoryClientMatrix({
               accept="image/*"
               className="hidden"
               onChange={onPickPhoto}
-            />
-
-            <input
-              ref={listPhotoFileRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={onPickListItemPhoto}
             />
 
             <div id="add-photo-menu" className="relative">

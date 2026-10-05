@@ -2,6 +2,7 @@
 
 import {
   ArrowLeft,
+  BriefcaseBusiness,
   CalendarDays,
   CheckCircle2,
   Clock3,
@@ -598,6 +599,11 @@ function pdfFileName(list: EquipmentList) {
   return `${safeName || list.reference}.pdf`;
 }
 
+function displayedStatusLabel(list: EquipmentList) {
+  if (list.list_type === "internal_use") return "Internal Use";
+  return equipmentListStatusLabel(list.status);
+}
+
 export default function EquipmentListDetailsClient({
   listId,
 }: {
@@ -888,7 +894,10 @@ export default function EquipmentListDetailsClient({
   }
 
   const isDraft = list?.status === "draft";
-  const canReview = Boolean(isManager && list?.status === "pending");
+  const isInternalUse = list?.list_type === "internal_use";
+  const canReview = Boolean(
+    isManager && !isInternalUse && list?.status === "pending",
+  );
   const canReceiveReturns = Boolean(
     isManager &&
       (list?.status === "active" || list?.status === "partially_returned"),
@@ -1294,7 +1303,7 @@ export default function EquipmentListDetailsClient({
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8);
     pdf.setTextColor(105, 105, 105);
-    pdf.text(equipmentListStatusLabel(list.status), 196, 20, {
+    pdf.text(displayedStatusLabel(list), 196, 20, {
       align: "right",
     });
 
@@ -1840,7 +1849,15 @@ export default function EquipmentListDetailsClient({
   }
 
   async function submitForApproval() {
-    if (!editable || !list || list.status !== "draft" || submitting) return;
+    if (
+      !editable ||
+      !list ||
+      list.list_type === "internal_use" ||
+      list.status !== "draft" ||
+      submitting
+    ) {
+      return;
+    }
 
     if (items.length === 0) {
       setError("Add at least one equipment item before submitting the list.");
@@ -2082,7 +2099,7 @@ export default function EquipmentListDetailsClient({
                   list.status,
                 )}`}
               >
-                {equipmentListStatusLabel(list.status)}
+                {displayedStatusLabel(list)}
               </span>
             </div>
 
@@ -2136,19 +2153,21 @@ export default function EquipmentListDetailsClient({
                   Delete
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => void submitForApproval()}
-                  disabled={submitting || items.length === 0}
-                  className="inline-flex items-center justify-center gap-2 rounded-xl bg-black px-4 py-2.5 text-[10px] font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {submitting ? (
-                    <Loader2 size={13} className="animate-spin" />
-                  ) : (
-                    <Send size={13} />
-                  )}
-                  {submitting ? "Submitting..." : "Submit"}
-                </button>
+                {!isInternalUse ? (
+                  <button
+                    type="button"
+                    onClick={() => void submitForApproval()}
+                    disabled={submitting || items.length === 0}
+                    className="inline-flex items-center justify-center gap-2 rounded-xl bg-black px-4 py-2.5 text-[10px] font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {submitting ? (
+                      <Loader2 size={13} className="animate-spin" />
+                    ) : (
+                      <Send size={13} />
+                    )}
+                    {submitting ? "Submitting..." : "Submit"}
+                  </button>
+                ) : null}
               </>
             ) : null}
 
@@ -2213,6 +2232,19 @@ export default function EquipmentListDetailsClient({
               {canReview
                 ? "Check the equipment quantities and serial numbers, make any needed changes, then approve and dispatch."
                 : "Equipment is locked for editing, but inventory availability has not changed yet."}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isInternalUse ? (
+        <div className="flex items-start gap-3 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-blue-900">
+          <BriefcaseBusiness size={17} className="mt-0.5 shrink-0" />
+          <div>
+            <div className="text-[11px] font-bold">Internal Use</div>
+            <div className="mt-0.5 text-[10px] leading-4 text-blue-700">
+              Everyone can view this list. Only Warehouse and Admin users can
+              edit its equipment.
             </div>
           </div>
         </div>
@@ -2848,7 +2880,7 @@ export default function EquipmentListDetailsClient({
           </div>
         )}
 
-        {editable && isDraft ? (
+        {editable && isDraft && !isInternalUse ? (
           <div className="border-t border-gray-200 px-4 py-4 sm:px-5">
             <button
               type="button"
