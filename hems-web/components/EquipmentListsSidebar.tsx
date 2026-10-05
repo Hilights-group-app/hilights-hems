@@ -773,6 +773,16 @@ export default function EquipmentListsSidebar() {
                       {equipmentListSummary(activeList)}
                     </div>
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => chooseActiveList(activeList)}
+                    title="Collapse current list"
+                    aria-label="Collapse current list"
+                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-gray-200 bg-white text-gray-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                  >
+                    <X size={12} />
+                  </button>
                 </div>
 
                 <div className="mt-2 flex items-center justify-between border-t border-gray-200 pt-2">
@@ -801,7 +811,7 @@ export default function EquipmentListsSidebar() {
                     serial numbers here.
                   </div>
                 ) : (
-                  <div className="space-y-1.5">
+                  <div className="max-h-[42vh] space-y-1.5 overflow-y-auto overscroll-contain pr-1">
                     {activeListItemGroups.map((group) => {
                       const groupQuantity = group.items.reduce(
                         (total, item) =>

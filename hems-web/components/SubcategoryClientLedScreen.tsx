@@ -573,6 +573,16 @@ export default function SubcategoryClientLedScreen({
     setSelectedModelName(parsed.model);
   }, [selectedModelId, selectedModel?.name]);
 
+  useEffect(() => {
+    if (selectedModelId || selectedRowId || photoTarget?.type !== "row") return;
+
+    setSearchPanelOpen(false);
+    setImageResults([]);
+    setImageSearch("");
+    setSearchingImages(false);
+    setPhotoTarget(null);
+  }, [selectedModelId, selectedRowId, photoTarget?.type]);
+
   async function resolveCategoryId(subId: string) {
     if (categoryId) {
       setResolvedCategoryId(categoryId);

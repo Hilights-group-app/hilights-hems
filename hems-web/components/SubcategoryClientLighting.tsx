@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
 import { Trash2, ChevronDown } from "lucide-react";
 import EquipmentListUnitPicker from "@/components/EquipmentListUnitPicker";
+import OnlineImageSearchPanel from "@/components/OnlineImageSearchPanel";
 import {
   ACTIVE_EQUIPMENT_LIST_EVENT,
   ACTIVE_EQUIPMENT_LIST_KEY,
@@ -484,6 +485,16 @@ export default function SubcategoryClientLighting({
     setSelectedModelDraft(parsed.model);
   }, [selectedFixtureId, selectedFixture?.name]);
 
+  useEffect(() => {
+    if (selectedFixtureId !== null) return;
+
+    setSearchPanelOpen(false);
+    setImageResults([]);
+    setImageSearch("");
+    setSearchingImages(false);
+    setEditingPhotoItemId(null);
+  }, [selectedFixtureId]);
+
   async function resolveSubcategoryId() {
     const catRes = await supabase
       .from("categories")
@@ -886,33 +897,61 @@ export default function SubcategoryClientLighting({
     setImageResults([]);
 
     try {
-      const res = await fetch(`/api/google-image?q=${encodeURIComponent(q)}`);
+      const simplified = q
+        .replace(/\b(lighting|light|fixture|luminaire|led|profile)\b/gi, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      const simplifiedParts = simplified.split(/\s+/).filter(Boolean);
+      const shortQuery = [
+        simplifiedParts[0],
+        ...simplifiedParts.slice(1).filter((part) => /\d/.test(part)),
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const queries = Array.from(
+        new Map(
+          [q, simplified, shortQuery]
+            .filter(Boolean)
+            .map((query) => [query.toLowerCase(), query] as const),
+        ).values(),
+      );
 
-      if (!res.ok) {
-        const text = await res.text();
-        console.error("Image API error:", text);
-        alert("Image search API error");
-        return;
+      let results: OnlineImage[] = [];
+
+      for (const query of queries) {
+        const res = await fetch(
+          `/api/google-image?q=${encodeURIComponent(query)}`,
+        );
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => null);
+          alert(data?.error || "Image search failed. Please try again.");
+          return;
+        }
+
+        const data = await res.json();
+        results = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.images_results)
+            ? data.images_results
+            : Array.isArray(data?.items)
+              ? data.items
+              : Array.isArray(data?.results)
+                ? data.results
+                : Array.isArray(data?.images)
+                  ? data.images
+                  : [];
+
+        if (results.length > 0) {
+          setImageSearch(query);
+          break;
+        }
       }
-
-      const data = await res.json();
-
-      const results = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.images_results)
-          ? data.images_results
-          : Array.isArray(data?.items)
-            ? data.items
-            : Array.isArray(data?.results)
-              ? data.results
-              : Array.isArray(data?.images)
-                ? data.images
-                : [];
 
       setImageResults(results);
 
       if (results.length === 0) {
-        alert("No images found. Try another search keyword.");
+        alert("No images found. Try the brand and model only.");
       }
     } catch (e) {
       console.error("Image search error:", e);
@@ -1955,6 +1994,25 @@ export default function SubcategoryClientLighting({
     </div>
   ) : null;
 
+  const selectedPhotoSearchPanel =
+    selectedFixture &&
+    searchPanelOpen &&
+    editingPhotoItemId === selectedFixture.id ? (
+      <OnlineImageSearchPanel
+        initialQuery={imageSearch}
+        results={imageResults}
+        searching={searchingImages}
+        onSearch={(query) => searchOnlineImages(query)}
+        onSelect={(image) => selectOnlinePhoto(image)}
+        onClose={() => {
+          setSearchPanelOpen(false);
+          setImageResults([]);
+          setEditingPhotoItemId(null);
+        }}
+        className="mt-3"
+      />
+    ) : null;
+
   return (
     <div className="w-full space-y-3">
       <input
@@ -2107,6 +2165,7 @@ export default function SubcategoryClientLighting({
 
       <div className="hidden sm:block xl:hidden">
         {editFixturePanel}
+        {selectedPhotoSearchPanel}
         {!selectedFixtureId ? addFixturePanel : null}
       </div>
 
@@ -2162,6 +2221,7 @@ export default function SubcategoryClientLighting({
         ? createPortal(
             <div className="[&_.add-fixture-grid]:!grid-cols-1 [&_.fixture-image-grid]:!grid-cols-2 [&>div]:rounded-xl [&>div]:p-3">
               {editFixturePanel}
+              {selectedPhotoSearchPanel}
               {!selectedFixtureId ? addFixturePanel : null}
             </div>,
             sidebarTarget,

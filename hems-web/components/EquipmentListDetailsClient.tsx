@@ -15,7 +15,6 @@ import {
   Share2,
   ShieldCheck,
   Trash2,
-  Wrench,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -57,6 +56,13 @@ type ItemGroup = {
   displayName: string;
   blockName: string | null;
   items: EquipmentListItem[];
+};
+
+type RackContentRow = {
+  id: string;
+  item_id: string;
+  cable_length: string;
+  total_qty: number | null;
 };
 
 type ReviewPickerState = {
@@ -611,7 +617,6 @@ export default function EquipmentListDetailsClient({
     null,
   );
   const [returnOkQuantity, setReturnOkQuantity] = useState(0);
-  const [returnMaintenanceQuantity, setReturnMaintenanceQuantity] = useState(0);
   const [removingItemId, setRemovingItemId] = useState<string | null>(null);
   const [reviewPicker, setReviewPicker] = useState<ReviewPickerState | null>(
     null,
@@ -626,6 +631,10 @@ export default function EquipmentListDetailsClient({
   const [addingCustomItem, setAddingCustomItem] = useState(false);
   const [updatingItemId, setUpdatingItemId] = useState<string | null>(null);
   const [hiddenUnitGroups, setHiddenUnitGroups] = useState<string[]>([]);
+  const [rackRowsByModel, setRackRowsByModel] = useState<
+    Record<string, RackContentRow[]>
+  >({});
+  const [rackRowsLoading, setRackRowsLoading] = useState(false);
 
   useClientLayoutEffect(() => {
     try {
@@ -758,6 +767,71 @@ export default function EquipmentListDetailsClient({
   }, [listId, supabase]);
 
   useEffect(() => {
+    let cancelled = false;
+    const rackModelIds = Array.from(
+      new Set(
+        items
+          .filter(
+            (item) =>
+              item.inventory_record_type === "matrix_model" &&
+              metadataText(item, "item_type") === "rack",
+          )
+          .map((item) => item.inventory_record_id),
+      ),
+    );
+
+    if (rackModelIds.length === 0) {
+      setRackRowsByModel({});
+      setRackRowsLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    async function loadRackRows() {
+      setRackRowsLoading(true);
+
+      const { data, error: rackRowsError } = await supabase
+        .from("matrix_rows")
+        .select("id,item_id,cable_length,total_qty")
+        .in("item_id", rackModelIds);
+
+      if (cancelled) return;
+
+      if (rackRowsError) {
+        console.error("load rack contents error", rackRowsError);
+        setRackRowsByModel({});
+        setRackRowsLoading(false);
+        return;
+      }
+
+      const grouped: Record<string, RackContentRow[]> = {};
+      for (const row of (data ?? []) as RackContentRow[]) {
+        if (!grouped[row.item_id]) grouped[row.item_id] = [];
+        grouped[row.item_id].push(row);
+      }
+
+      for (const modelId of Object.keys(grouped)) {
+        grouped[modelId].sort((left, right) =>
+          left.cable_length.localeCompare(right.cable_length, undefined, {
+            numeric: true,
+            sensitivity: "base",
+          }),
+        );
+      }
+
+      setRackRowsByModel(grouped);
+      setRackRowsLoading(false);
+    }
+
+    void loadRackRows();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [items, supabase]);
+
+  useEffect(() => {
     if (!loading && list && list.id === listId) {
       writeListDetailsCache(listId, list, items);
     }
@@ -875,22 +949,12 @@ export default function EquipmentListDetailsClient({
   async function receiveReturn(
     item: EquipmentListItem,
     okQuantity: number,
-    maintenanceQuantity: number,
   ) {
     if (!list || !canReceiveReturns || returningItemId) return;
 
     const ok = Math.max(0, Math.floor(Number(okQuantity) || 0));
-    const maintenance = Math.max(
-      0,
-      Math.floor(Number(maintenanceQuantity) || 0),
-    );
-    const total = ok + maintenance;
+    const total = ok;
     const remaining = remainingQuantity(item);
-
-    if (item.inventory_record_type === "item" && maintenance > 0) {
-      setError("A custom item can only be returned OK.");
-      return;
-    }
 
     if (total < 1) {
       setError("Enter at least one returned item.");
@@ -902,13 +966,8 @@ export default function EquipmentListDetailsClient({
       return;
     }
 
-    const actionText = maintenance > 0
-      ? `${maintenance} item${maintenance === 1 ? "" : "s"} to Maintenance${
-          ok > 0 ? ` and ${ok} OK` : ""
-        }`
-      : `${ok} item${ok === 1 ? "" : "s"} returned OK`;
     const confirmed = window.confirm(
-      `Receive ${item.display_name}: ${actionText}? Inventory will update immediately.`,
+      `Receive ${item.display_name}: ${ok} item${ok === 1 ? "" : "s"}? Inventory will update immediately.`,
     );
     if (!confirmed) return;
 
@@ -922,7 +981,7 @@ export default function EquipmentListDetailsClient({
         {
           p_list_item_id: item.id,
           p_return_ok_quantity: ok,
-          p_return_maintenance_quantity: maintenance,
+          p_return_maintenance_quantity: 0,
         },
       );
 
@@ -931,12 +990,7 @@ export default function EquipmentListDetailsClient({
       await refreshListAndItems();
       setReturnDialog(null);
       setReturnOkQuantity(0);
-      setReturnMaintenanceQuantity(0);
-      setMessage(
-        maintenance > 0
-          ? "Returned to Maintenance. The department Head has a new report alert."
-          : "Return received. The equipment is Available again.",
-      );
+      setMessage("Return received. The equipment is Available again.");
 
       window.dispatchEvent(
         new CustomEvent(EQUIPMENT_LISTS_EVENT, {
@@ -948,7 +1002,6 @@ export default function EquipmentListDetailsClient({
           detail: { listId: list.id },
         }),
       );
-      window.dispatchEvent(new CustomEvent("hems:maintenance-requests-change"));
     } catch (returnError: any) {
       console.error("receive equipment return error", returnError);
       setError(returnError?.message || "The return could not be saved.");
@@ -963,7 +1016,6 @@ export default function EquipmentListDetailsClient({
 
     setReturnDialog({ item, remaining });
     setReturnOkQuantity(remaining);
-    setReturnMaintenanceQuantity(0);
     setError("");
   }
 
@@ -1303,6 +1355,12 @@ export default function EquipmentListDetailsClient({
         firstItem.inventory_record_type === "matrix_model" ||
         (firstItem.inventory_record_type === "matrix_row" &&
           firstItem.metadata?.matrix_source === "generic");
+      const isRackModel =
+        firstItem.inventory_record_type === "matrix_model" &&
+        metadataText(firstItem, "item_type") === "rack";
+      const rackRows = isRackModel
+        ? rackRowsByModel[firstItem.inventory_record_id] || []
+        : [];
       const isMatrixChildCollection =
         firstItem.inventory_record_type === "matrix_row" &&
         firstItem.metadata?.matrix_source === "generic" &&
@@ -1348,11 +1406,19 @@ export default function EquipmentListDetailsClient({
         isSerializedGroup && showUnitDetails
           ? group.items.map((item) => pdfUnitLabel(item))
           : [];
+      const rackDetails =
+        isRackModel && showUnitDetails
+          ? rackRows.map((row) => {
+              const rowQuantity = Math.max(0, Number(row.total_qty) || 0);
+              return `${rowQuantity} × ${row.cable_length}`;
+            })
+          : [];
       const hasAreaDetail = squareMetres > 0 && !isGenericMatrix;
       const hasDetailRows = Boolean(
         blockDetail ||
           customDetail ||
           isMatrixChildCollection ||
+          rackDetails.length > 0 ||
           serialDetails.length > 0,
       );
       const itemPhotoUrl = metadataText(firstItem, "photo_url").trim();
@@ -1429,6 +1495,44 @@ export default function EquipmentListDetailsClient({
             },
           },
           { content: "", styles: { lineWidth: 0 } },
+        ]);
+      }
+
+      for (let index = 0; index < rackDetails.length; index += 3) {
+        const rackCell = (content: string) => ({
+          content,
+          styles: {
+            fillColor: [250, 250, 250],
+            textColor: [82, 82, 82],
+            fontStyle: "normal",
+            fontSize: 5.8,
+            minCellHeight: 3.6,
+            cellPadding: { top: 0.5, right: 1.5, bottom: 0.5, left: 1.5 },
+            lineColor: [228, 230, 233],
+            lineWidth: 0.08,
+          },
+        });
+        const emptyRackCell = () => ({
+          content: "",
+          styles: {
+            lineWidth: 0,
+            cellPadding: 0,
+            minCellHeight: 3.6,
+            fontSize: 5.8,
+          },
+        });
+
+        body.push([
+          rackCell(rackDetails[index]),
+          emptyRackCell(),
+          rackDetails[index + 1]
+            ? rackCell(rackDetails[index + 1])
+            : emptyRackCell(),
+          emptyRackCell(),
+          rackDetails[index + 2]
+            ? rackCell(rackDetails[index + 2])
+            : emptyRackCell(),
+          emptyRackCell(),
         ]);
       }
 
@@ -1933,13 +2037,8 @@ export default function EquipmentListDetailsClient({
           item={returnDialog.item}
           remaining={returnDialog.remaining}
           okQuantity={returnOkQuantity}
-          maintenanceQuantity={returnMaintenanceQuantity}
-          allowMaintenance={
-            returnDialog.item.inventory_record_type !== "item"
-          }
           saving={returningItemId === returnDialog.item.id}
           onOkQuantityChange={setReturnOkQuantity}
-          onMaintenanceQuantityChange={setReturnMaintenanceQuantity}
           onClose={() => {
             if (!returningItemId) setReturnDialog(null);
           }}
@@ -1947,9 +2046,6 @@ export default function EquipmentListDetailsClient({
             void receiveReturn(
               returnDialog.item,
               returnOkQuantity,
-              returnDialog.item.inventory_record_type === "item"
-                ? 0
-                : returnMaintenanceQuantity,
             )
           }
         />
@@ -2001,7 +2097,7 @@ export default function EquipmentListDetailsClient({
                 <button
                   type="button"
                   onClick={() => void shareList()}
-                  disabled={Boolean(pdfAction)}
+                  disabled={Boolean(pdfAction) || rackRowsLoading}
                   className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-[10px] font-semibold text-gray-700 transition hover:border-black hover:text-black disabled:opacity-40"
                 >
                   {pdfAction === "share" ? (
@@ -2015,7 +2111,7 @@ export default function EquipmentListDetailsClient({
                 <button
                   type="button"
                   onClick={() => void downloadPdf()}
-                  disabled={Boolean(pdfAction)}
+                  disabled={Boolean(pdfAction) || rackRowsLoading}
                   className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-[10px] font-semibold text-gray-700 transition hover:border-black hover:text-black disabled:opacity-40"
                 >
                   {pdfAction === "download" ? (
@@ -2203,6 +2299,12 @@ export default function EquipmentListDetailsClient({
                 firstItem.inventory_record_type === "unit";
               const showUnitDetails =
                 !hiddenUnitGroupKeys.has(group.key);
+              const isRackModel =
+                isGenericMatrixModel &&
+                metadataText(firstItem, "item_type") === "rack";
+              const rackRows = isRackModel
+                ? rackRowsByModel[firstItem.inventory_record_id] || []
+                : [];
               const isQuantityRecord =
                 isMatrixRow || isGenericMatrix || isCustomItem;
               const canEditQuantity = Boolean(
@@ -2320,6 +2422,26 @@ export default function EquipmentListDetailsClient({
                               {metadataText(firstItem, "notes")}
                             </div>
                           ) : null}
+                          {isRackModel && showUnitDetails && rackRows.length > 0 ? (
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              {rackRows.map((row) => {
+                                const rowQuantity = Math.max(
+                                  0,
+                                  Number(row.total_qty) || 0,
+                                );
+
+                                return (
+                                  <span
+                                    key={row.id}
+                                    className="max-w-full truncate rounded-md bg-gray-100 px-1.5 py-0.5 text-[7px] font-medium text-gray-600 sm:text-[8px]"
+                                    title={`${rowQuantity} × ${row.cable_length}`}
+                                  >
+                                    {rowQuantity} × {row.cable_length}
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          ) : null}
                         </div>
 
                         <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
@@ -2421,6 +2543,36 @@ export default function EquipmentListDetailsClient({
                               className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2 text-[8px] font-semibold text-gray-600 transition hover:border-black"
                             >
                               <span>ID / Serial</span>
+                              <span
+                                className={`relative h-3.5 w-6 rounded-full transition ${
+                                  showUnitDetails ? "bg-black" : "bg-gray-300"
+                                }`}
+                              >
+                                <span
+                                  className={`absolute left-0.5 top-0.5 h-2.5 w-2.5 rounded-full bg-white transition-transform ${
+                                    showUnitDetails
+                                      ? "translate-x-2.5"
+                                      : "translate-x-0"
+                                  }`}
+                                />
+                              </span>
+                            </button>
+                          ) : null}
+
+                          {isRackModel && rackRows.length > 0 ? (
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={showUnitDetails}
+                              onClick={() => toggleUnitGroupVisibility(group.key)}
+                              title={
+                                showUnitDetails
+                                  ? "Hide rack items from the list and PDF"
+                                  : "Show rack items in the list and PDF"
+                              }
+                              className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-2 text-[8px] font-semibold text-gray-600 transition hover:border-black"
+                            >
+                              <span>Rack Items</span>
                               <span
                                 className={`relative h-3.5 w-6 rounded-full transition ${
                                   showUnitDetails ? "bg-black" : "bg-gray-300"
@@ -2560,7 +2712,7 @@ export default function EquipmentListDetailsClient({
                                       className="inline-flex items-center gap-1 rounded-lg bg-black px-2 py-1.5 text-[8px] font-bold text-white hover:bg-gray-800 disabled:opacity-50"
                                     >
                                       <RotateCcw size={9} />
-                                      Receive Return
+                                      Received
                                     </button>
                                   ) : returnedOk > 0 || returnedMaintenance > 0 ? (
                                     <span
@@ -2643,33 +2795,22 @@ export default function EquipmentListDetailsClient({
                                     className="inline-flex items-center gap-1 rounded-lg bg-black px-2 py-1.5 text-[8px] font-bold text-white hover:bg-gray-800 disabled:opacity-50"
                                   >
                                     <RotateCcw size={9} />
-                                    Receive Return
+                                    Received
                                   </button>
                                 ) : (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={() => void receiveReturn(item, 1, 0)}
-                                      disabled={Boolean(returningItemId)}
-                                      className="inline-flex items-center gap-1 rounded-lg bg-green-600 px-2 py-1.5 text-[8px] font-bold text-white hover:bg-green-700 disabled:opacity-50"
-                                    >
-                                      {returningItemId === item.id ? (
-                                        <Loader2 size={9} className="animate-spin" />
-                                      ) : (
-                                        <RotateCcw size={9} />
-                                      )}
-                                      Return OK
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => void receiveReturn(item, 0, 1)}
-                                      disabled={Boolean(returningItemId)}
-                                      className="inline-flex items-center gap-1 rounded-lg bg-amber-500 px-2 py-1.5 text-[8px] font-bold text-white hover:bg-amber-600 disabled:opacity-50"
-                                    >
-                                      <Wrench size={9} />
-                                      Maintenance
-                                    </button>
-                                  </>
+                                  <button
+                                    type="button"
+                                    onClick={() => void receiveReturn(item, 1)}
+                                    disabled={Boolean(returningItemId)}
+                                    className="inline-flex items-center gap-1 rounded-lg bg-green-600 px-2 py-1.5 text-[8px] font-bold text-white hover:bg-green-700 disabled:opacity-50"
+                                  >
+                                    {returningItemId === item.id ? (
+                                      <Loader2 size={9} className="animate-spin" />
+                                    ) : (
+                                      <RotateCcw size={9} />
+                                    )}
+                                    Received
+                                  </button>
                                 )}
                               </div>
                             );
@@ -2905,26 +3046,20 @@ function ReturnQuantityDialog({
   item,
   remaining,
   okQuantity,
-  maintenanceQuantity,
-  allowMaintenance,
   saving,
   onOkQuantityChange,
-  onMaintenanceQuantityChange,
   onClose,
   onConfirm,
 }: {
   item: EquipmentListItem;
   remaining: number;
   okQuantity: number;
-  maintenanceQuantity: number;
-  allowMaintenance: boolean;
   saving: boolean;
   onOkQuantityChange: (value: number) => void;
-  onMaintenanceQuantityChange: (value: number) => void;
   onClose: () => void;
   onConfirm: () => void;
 }) {
-  const total = okQuantity + (allowMaintenance ? maintenanceQuantity : 0);
+  const total = okQuantity;
   const valid = total > 0 && total <= remaining;
   const genericMatrix =
     item.inventory_record_type === "matrix_model" ||
@@ -2974,14 +3109,10 @@ function ReturnQuantityDialog({
           </button>
         </div>
 
-        <div
-          className={`mt-5 grid gap-3 ${
-            allowMaintenance ? "grid-cols-2" : "grid-cols-1"
-          }`}
-        >
+        <div className="mt-5 grid grid-cols-1 gap-3">
           <label className="rounded-2xl border border-green-200 bg-green-50 p-3">
             <span className="flex items-center gap-1.5 text-[10px] font-bold text-green-800">
-              <RotateCcw size={12} /> Returned OK
+              <RotateCcw size={12} /> Received
             </span>
             <input
               type="number"
@@ -2993,25 +3124,6 @@ function ReturnQuantityDialog({
               className="mt-2 w-full rounded-xl border border-green-200 bg-white px-3 py-2.5 text-sm font-bold text-gray-900 outline-none focus:border-green-500"
             />
           </label>
-
-          {allowMaintenance ? (
-            <label className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
-              <span className="flex items-center gap-1.5 text-[10px] font-bold text-amber-800">
-                <Wrench size={12} /> Maintenance
-              </span>
-              <input
-                type="number"
-                min={0}
-                max={remaining}
-                value={maintenanceQuantity}
-                disabled={saving}
-                onChange={(event) =>
-                  onMaintenanceQuantityChange(clamp(event.target.value))
-                }
-                className="mt-2 w-full rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-sm font-bold text-gray-900 outline-none focus:border-amber-500"
-              />
-            </label>
-          ) : null}
         </div>
 
         <div
@@ -3039,7 +3151,7 @@ function ReturnQuantityDialog({
           ) : (
             <PackageCheck size={14} />
           )}
-          {saving ? "Saving Return..." : "Confirm Return"}
+          {saving ? "Saving..." : "Confirm Received"}
         </button>
       </div>
     </div>

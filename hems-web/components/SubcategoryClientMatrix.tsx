@@ -2,10 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
 import { Trash2, ChevronDown } from "lucide-react";
 import EquipmentListMatrixQuantityAction from "@/components/EquipmentListMatrixQuantityAction";
+import OnlineImageSearchPanel from "@/components/OnlineImageSearchPanel";
 
 type MatrixItemRow = {
   id: string;
@@ -37,6 +39,27 @@ type ItemStats = {
   inUse: number;
   maintenance: number;
   inKsa: number;
+};
+
+type ActiveAllocation = {
+  listId: string;
+  reference: string;
+  label: string;
+  quantity: number;
+  status: "active" | "partially_returned";
+};
+
+type ActiveMovementList = {
+  id: string;
+  reference: string;
+  list_type: string;
+  status: "active" | "partially_returned";
+  client_company?: string | null;
+  event_name?: string | null;
+  venue?: string | null;
+  purpose?: string | null;
+  assigned_to?: string | null;
+  destination_name?: string | null;
 };
 
 type OnlineImage = {
@@ -166,6 +189,24 @@ function cableStats(row: CableRow): ItemStats {
   const available = Math.max(0, total - inUse - maintenance - inKsa);
 
   return { total, available, inUse, maintenance, inKsa };
+}
+
+function activeMovementLabel(list: ActiveMovementList) {
+  if (list.list_type === "dry_hire") {
+    return `Dry Hire${list.client_company ? ` · ${list.client_company}` : ""}`;
+  }
+  if (list.list_type === "local_event") {
+    const event = list.event_name || list.venue;
+    return `Local Event${event ? ` · ${event}` : ""}`;
+  }
+  if (list.list_type === "internal_use") {
+    const purpose = list.purpose || list.assigned_to;
+    return `Internal Use${purpose ? ` · ${purpose}` : ""}`;
+  }
+  if (list.list_type === "transfer_out") {
+    return `Transfer${list.destination_name ? ` · ${list.destination_name}` : ""}`;
+  }
+  return list.reference;
 }
 
 function cableLengthNumber(value: string) {
@@ -431,6 +472,34 @@ function StatPill({
   );
 }
 
+function AllocationBadges({
+  allocations,
+}: {
+  allocations: ActiveAllocation[];
+}) {
+  if (allocations.length === 0) return null;
+
+  return (
+    <div className="mt-1 flex min-w-0 flex-wrap gap-1">
+      {allocations.map((allocation) => (
+        <Link
+          key={allocation.listId}
+          href={`/inventory/lists/${allocation.listId}`}
+          onClick={(event) => event.stopPropagation()}
+          title={`${allocation.reference} · ${allocation.label}`}
+          className={`max-w-full truncate rounded-md px-1.5 py-0.5 text-[7px] font-semibold transition hover:opacity-80 lg:text-[8px] ${
+            allocation.status === "partially_returned"
+              ? "bg-purple-100 text-purple-800"
+              : "bg-blue-100 text-blue-800"
+          }`}
+        >
+          {allocation.quantity} pcs · {allocation.label}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 function ItemPhoto({
   photo,
   name,
@@ -553,6 +622,9 @@ export default function SubcategoryClientMatrix({
   const [cableRowsByItem, setCableRowsByItem] = useState<
     Record<string, CableRow[]>
   >({});
+  const [allocationsByRecordKey, setAllocationsByRecordKey] = useState<
+    Record<string, ActiveAllocation[]>
+  >({});
 
   const [itemType, setItemType] = useState<"unit" | "cable" | "rack">("unit");
   const [brand, setBrand] = useState("");
@@ -625,6 +697,16 @@ export default function SubcategoryClientMatrix({
     // Drafts are initialized only when a different item is selected.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedItemId]);
+
+  useEffect(() => {
+    if (selectedBlockName || selectedItemId || selectedCableRow) return;
+
+    setSearchPanelOpen(false);
+    setImageResults([]);
+    setImageSearch("");
+    setSearchingImages(false);
+    setEditingPhotoItemId(null);
+  }, [selectedBlockName, selectedItemId, selectedCableRow]);
 
   const itemName = useMemo(() => {
     if (itemType === "cable" || itemType === "rack") return cableModel.trim();
@@ -949,6 +1031,9 @@ export default function SubcategoryClientMatrix({
         (x) => x.item_type === "cable" || x.item_type === "rack",
       );
 
+      let nextCableRowsByItem: Record<string, CableRow[]> = {};
+      let allMatrixRows: CableRow[] = [];
+
       if (cableItems.length > 0) {
         const rowsRes = await supabase
           .from("matrix_rows")
@@ -960,22 +1045,138 @@ export default function SubcategoryClientMatrix({
 
         if (rowsRes.error) throw rowsRes.error;
 
+        allMatrixRows = (rowsRes.data || []) as CableRow[];
         const grouped: Record<string, CableRow[]> = {};
 
-        for (const row of (rowsRes.data || []) as CableRow[]) {
+        for (const row of allMatrixRows) {
           if (!grouped[row.item_id]) grouped[row.item_id] = [];
           grouped[row.item_id].push(row);
         }
 
-        const sortedGrouped: Record<string, CableRow[]> = {};
         for (const key of Object.keys(grouped)) {
-          sortedGrouped[key] = sortCableRows(grouped[key]);
+          nextCableRowsByItem[key] = sortCableRows(grouped[key]);
         }
-
-        setCableRowsByItem(sortedGrouped);
-      } else {
-        setCableRowsByItem({});
       }
+
+      setCableRowsByItem(nextCableRowsByItem);
+
+      const nextAllocations: Record<string, ActiveAllocation[]> = {};
+      const activeListsResult = await supabase
+        .from("equipment_lists")
+        .select(
+          "id,reference,list_type,status,client_company,event_name,venue,purpose,assigned_to,destination_name",
+        )
+        .in("status", ["active", "partially_returned"])
+        .order("created_at", { ascending: false })
+        .limit(200);
+
+      if (activeListsResult.error) {
+        console.error(
+          "load matrix active equipment lists error",
+          activeListsResult.error,
+        );
+      } else {
+        const activeLists = (activeListsResult.data ?? []) as ActiveMovementList[];
+        const activeListIds = activeLists.map((activeList) => activeList.id);
+        const activeListsById = new Map(
+          activeLists.map((activeList) => [activeList.id, activeList]),
+        );
+        const modelIds = new Set(list.map((item) => item.id));
+        const rowIds = new Set(allMatrixRows.map((row) => row.id));
+
+        if (activeListIds.length > 0) {
+          type AllocationRow = {
+            list_id: string;
+            inventory_record_type: "matrix_model" | "matrix_row";
+            inventory_record_id: string;
+            requested_quantity: number;
+            approved_quantity: number;
+            returned_ok_quantity: number;
+            returned_maintenance_quantity: number;
+          };
+
+          let allocationRows: AllocationRow[] = [];
+          let allocationFrom = 0;
+          const allocationPageSize = 1000;
+
+          while (true) {
+            const allocationResult = await supabase
+              .from("equipment_list_items")
+              .select(
+                "list_id,inventory_record_type,inventory_record_id,requested_quantity,approved_quantity,returned_ok_quantity,returned_maintenance_quantity",
+              )
+              .in("list_id", activeListIds)
+              .in("inventory_record_type", ["matrix_model", "matrix_row"])
+              .range(
+                allocationFrom,
+                allocationFrom + allocationPageSize - 1,
+              );
+
+            if (allocationResult.error) {
+              console.error(
+                "load matrix active allocations error",
+                allocationResult.error,
+              );
+              break;
+            }
+
+            const page = (allocationResult.data ?? []) as AllocationRow[];
+            allocationRows = [...allocationRows, ...page];
+            if (page.length < allocationPageSize) break;
+            allocationFrom += allocationPageSize;
+          }
+
+          const allocationMap = new Map<string, ActiveAllocation>();
+
+          for (const row of allocationRows) {
+            const recordId = String(row.inventory_record_id || "");
+            const belongsToPage =
+              row.inventory_record_type === "matrix_model"
+                ? modelIds.has(recordId)
+                : rowIds.has(recordId);
+            const activeList = activeListsById.get(row.list_id);
+            if (!recordId || !belongsToPage || !activeList) continue;
+
+            const approved = Number(row.approved_quantity) || 0;
+            const requested = Number(row.requested_quantity) || 0;
+            const returned =
+              (Number(row.returned_ok_quantity) || 0) +
+              (Number(row.returned_maintenance_quantity) || 0);
+            const quantity = Math.max(
+              0,
+              (approved > 0 ? approved : requested) - returned,
+            );
+            if (quantity === 0) continue;
+
+            const recordKey = `${row.inventory_record_type}:${recordId}`;
+            const allocationKey = `${recordKey}:${activeList.id}`;
+            const current = allocationMap.get(allocationKey);
+
+            if (current) {
+              current.quantity += quantity;
+            } else {
+              allocationMap.set(allocationKey, {
+                listId: activeList.id,
+                reference: activeList.reference,
+                label: activeMovementLabel(activeList),
+                quantity,
+                status: activeList.status,
+              });
+            }
+          }
+
+          for (const [allocationKey, allocation] of allocationMap) {
+            const recordKey = allocationKey.slice(
+              0,
+              allocationKey.lastIndexOf(":"),
+            );
+            if (!nextAllocations[recordKey]) nextAllocations[recordKey] = [];
+            nextAllocations[recordKey].push(allocation);
+          }
+        }
+      }
+
+      setAllocationsByRecordKey(nextAllocations);
 
       setItems(list);
       setStatsByItem(stats);
@@ -1098,28 +1299,73 @@ export default function SubcategoryClientMatrix({
   }
 
   async function searchOnlineImages(customQuery?: string) {
-    const q = (customQuery || imageSearch || itemSearchName).trim();
+    const q = (customQuery || imageSearch || itemSearchName)
+      .replace(/\s+/g, " ")
+      .trim();
 
     if (!q) {
       alert("Write item name first");
       return;
     }
 
+    const simplified = q
+      .replace(
+        /\b(equipment|system|professional|lighting|light|fixture|luminaire|led|profile|accessory|accessories)\b/gi,
+        " ",
+      )
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const shortQuery = q.split(" ").slice(0, 7).join(" ");
+    const simplifiedShortQuery = simplified.split(" ").slice(0, 5).join(" ");
+
+    const queries = Array.from(
+      new Map(
+        [q.slice(0, 120), simplified.slice(0, 120), shortQuery, simplifiedShortQuery]
+          .map((query) => query.trim())
+          .filter(Boolean)
+          .map((query) => [query.toLowerCase(), query] as const),
+      ).values(),
+    );
+
     setSearchPanelOpen(true);
     setSearchingImages(true);
     setImageResults([]);
 
     try {
-      const res = await fetch(`/api/google-image?q=${encodeURIComponent(q)}`);
-      const data = await res.json();
+      let lastError = "";
+      let foundResults: OnlineImage[] = [];
 
-      const results = Array.isArray(data)
-        ? data
-        : Array.isArray(data?.images_results)
-          ? data.images_results
-          : [];
+      for (const query of queries) {
+        const res = await fetch(
+          `/api/google-image?q=${encodeURIComponent(query)}`,
+        );
 
-      setImageResults(results);
+        if (!res.ok) {
+          const data = await res.json().catch(() => null);
+          lastError = data?.error || "Image search failed. Please try again.";
+          continue;
+        }
+
+        const data = await res.json();
+        const results: OnlineImage[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.images_results)
+            ? data.images_results
+            : [];
+
+        if (results.length > 0) {
+          foundResults = results;
+          setImageSearch(query);
+          break;
+        }
+      }
+
+      setImageResults(foundResults);
+
+      if (foundResults.length === 0) {
+        alert(lastError || "No images found. Try another search keyword.");
+      }
     } catch (e) {
       console.error(e);
       alert("Failed to search images");
@@ -1842,6 +2088,26 @@ export default function SubcategoryClientMatrix({
     </div>
   ) : null;
 
+  const selectedPhotoSearchPanel =
+    selectedItem &&
+    searchPanelOpen &&
+    editingPhotoItemId === selectedItem.id ? (
+      <div data-matrix-tools="true" className="mb-4">
+        <OnlineImageSearchPanel
+          initialQuery={imageSearch}
+          results={imageResults}
+          searching={searchingImages}
+          onSearch={(query) => searchOnlineImages(query)}
+          onSelect={(image) => selectOnlinePhoto(image)}
+          onClose={() => {
+            setSearchPanelOpen(false);
+            setImageResults([]);
+            setEditingPhotoItemId(null);
+          }}
+        />
+      </div>
+    ) : null;
+
   async function closeMobileMatrixTools() {
     await saveSelectedItemName();
 
@@ -1914,6 +2180,27 @@ export default function SubcategoryClientMatrix({
             </button>
           ) : null}
 
+          <div className="absolute right-10 top-2 z-20 sm:right-2">
+            <EquipmentListMatrixQuantityAction
+              target={{
+                id: it.id,
+                parentId: null,
+                recordType: "matrix_model",
+                displayName: it.name,
+                blockName: itemBlockName(it),
+                photoUrl: it.photo_data,
+                itemType: it.item_type,
+                total: it.total_qty ?? 0,
+                inUse: it.in_use_qty ?? 0,
+                maintenance: it.maintenance_qty ?? 0,
+                inKsa: it.in_ksa_qty ?? 0,
+              }}
+              category={category}
+              subcategory={subcategory}
+              compact
+            />
+          </div>
+
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
               <div className="flex items-start gap-3 min-w-0 flex-1">
@@ -1932,8 +2219,13 @@ export default function SubcategoryClientMatrix({
                     >
                       <span className="font-bold">{it.name}</span>
                     </h2>
-
                   </div>
+
+                  <AllocationBadges
+                    allocations={
+                      allocationsByRecordKey[`matrix_model:${it.id}`] || []
+                    }
+                  />
 
                   <div className="mt-2 sm:hidden">
                   <div className={`grid gap-x-2 gap-y-1 text-center ${
@@ -2007,7 +2299,7 @@ export default function SubcategoryClientMatrix({
                     setSelectedItemId(null);
                     setSelectedBlockName(null);
                   }}
-                  className={`grid cursor-pointer grid-cols-[1fr_64px_76px] items-center gap-2 border-t border-gray-100 px-4 py-2 text-[6px] first:border-t-0 sm:text-[8px] ${
+                  className={`grid cursor-pointer grid-cols-[1fr_64px] items-center gap-2 border-t border-gray-100 px-4 py-2 text-[6px] first:border-t-0 sm:text-[8px] ${
                     selectedCableRow?.rowId === row.id
                       ? "ring-2 ring-inset ring-black"
                       : "hover:bg-gray-50"
@@ -2024,28 +2316,6 @@ export default function SubcategoryClientMatrix({
                     className="text-right font-bold text-gray-900 whitespace-nowrap"
                   >
                     Qty: {row.total_qty ?? 0}
-                  </div>
-
-                  <div className="text-right">
-                    <EquipmentListMatrixQuantityAction
-                      target={{
-                        id: row.id,
-                        parentId: it.id,
-                        recordType: "matrix_row",
-                        displayName: it.name,
-                        blockName: itemBlockName(it),
-                        photoUrl: it.photo_data,
-                        itemType: it.item_type,
-                        rowLabel: row.cable_length,
-                        total: row.total_qty ?? 0,
-                        inUse: row.in_use_qty ?? 0,
-                        maintenance: row.maintenance_qty ?? 0,
-                        inKsa: row.in_ksa_qty ?? 0,
-                      }}
-                      category={category}
-                      subcategory={subcategory}
-                      compact
-                    />
                   </div>
                 </div>
               ))
@@ -2146,6 +2416,8 @@ export default function SubcategoryClientMatrix({
               ) : (
                 cableRows.map((row) => {
                   const s = cableStats(row);
+                  const rowAllocations =
+                    allocationsByRecordKey[`matrix_row:${row.id}`] || [];
 
                   return (
                     <div
@@ -2167,8 +2439,9 @@ export default function SubcategoryClientMatrix({
                           : "hover:bg-gray-50"
                       }`}
                     >
-                      <div className="text-left font-bold">
-                        {row.cable_length}
+                      <div className="min-w-0 text-left">
+                        <div className="font-bold">{row.cable_length}</div>
+                        <AllocationBadges allocations={rowAllocations} />
                       </div>
 
                       <div className="text-center">
@@ -2427,80 +2700,7 @@ export default function SubcategoryClientMatrix({
               {selectedBlockPanel}
               {selectedItemPanel}
               {selectedCableRowPanel}
-
-              {searchPanelOpen &&
-              editingPhotoItemId === selectedItem?.id ? (
-                <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm">
-                  <div className="mb-3 flex items-center justify-between gap-2">
-                    <div className="text-[12px] font-semibold text-gray-900">
-                      Search Photo Online
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSearchPanelOpen(false);
-                        setImageResults([]);
-                        setEditingPhotoItemId(null);
-                      }}
-                      className="text-[10px] text-red-500 hover:text-black"
-                    >
-                      Close
-                    </button>
-                  </div>
-
-                  <div className="flex gap-2">
-                    <input
-                      value={imageSearch}
-                      onChange={(event) => setImageSearch(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          void searchOnlineImages();
-                        }
-                      }}
-                      placeholder="Search image..."
-                      className="h-10 min-w-0 flex-1 rounded-xl border border-gray-300 px-3 text-[12px] text-gray-900 outline-none focus:ring-1 focus:ring-black"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void searchOnlineImages()}
-                      disabled={searchingImages}
-                      className="h-10 rounded-xl bg-black px-3 text-[11px] font-medium text-white disabled:opacity-40"
-                    >
-                      {searchingImages ? "..." : "Search"}
-                    </button>
-                  </div>
-
-                  {imageResults.length > 0 ? (
-                    <div className="mt-3 grid grid-cols-2 gap-2">
-                      {imageResults.map((img, index) => {
-                        const imageUrl =
-                          img.original || img.image || img.thumbnail;
-                        const thumb = img.thumbnail || imageUrl;
-                        if (!imageUrl || !thumb) return null;
-
-                        return (
-                          <button
-                            key={`${imageUrl}-${index}`}
-                            type="button"
-                            onClick={() => void selectOnlinePhoto(img)}
-                            className="overflow-hidden rounded-xl border border-gray-200"
-                            title={img.title || "Select photo"}
-                          >
-                            <img
-                              src={thumb}
-                              alt={img.title || "Online image"}
-                              loading="lazy"
-                              decoding="async"
-                              className="aspect-square w-full object-cover"
-                            />
-                          </button>
-                        );
-                      })}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
+              {selectedPhotoSearchPanel}
             </div>
           </div>
         </div>
@@ -2512,6 +2712,7 @@ export default function SubcategoryClientMatrix({
               {selectedBlockPanel}
               {selectedItemPanel}
               {selectedCableRowPanel}
+              {selectedPhotoSearchPanel}
             </div>,
             sidebarTarget,
           )
@@ -2520,6 +2721,9 @@ export default function SubcategoryClientMatrix({
       <div className="hidden sm:block xl:hidden">{selectedBlockPanel}</div>
       <div className="hidden sm:block xl:hidden">{selectedItemPanel}</div>
       <div className="hidden sm:block xl:hidden">{selectedCableRowPanel}</div>
+      <div className="hidden sm:block xl:hidden">
+        {selectedPhotoSearchPanel}
+      </div>
 
       {editable &&
         !selectedBlockName &&

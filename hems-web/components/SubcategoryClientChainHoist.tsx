@@ -9,6 +9,7 @@ import { canEditInventory } from "@/lib/authStore";
 import { readCatalog } from "@/lib/catalogStore";
 import { Trash2 } from "lucide-react";
 import EquipmentListAddUnitsAction from "@/components/EquipmentListAddUnitsAction";
+import OnlineImageSearchPanel from "@/components/OnlineImageSearchPanel";
 
 type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
@@ -324,12 +325,16 @@ export default function SubcategoryClientChainHoist({
 
   const filteredBlockOptions = useMemo(() => {
     const query = selectedBlockDraft.trim().toLowerCase();
-    if (!query) return blockOptions;
+    const currentBlock = selectedItem
+      ? (getHoistBlockName(selectedItem) || "").trim().toLowerCase()
+      : "";
+
+    if (!query || query === currentBlock) return blockOptions;
 
     return blockOptions.filter((option) =>
       option.toLowerCase().startsWith(query),
     );
-  }, [blockOptions, selectedBlockDraft]);
+  }, [blockOptions, selectedBlockDraft, selectedItem]);
 
   useEffect(() => {
     const details = selectedItem
@@ -345,6 +350,17 @@ export default function SubcategoryClientChainHoist({
     );
     setBlockSuggestionsOpen(false);
   }, [selectedItemId, selectedItem?.name, selectedItem?.fixture_type]);
+
+  useEffect(() => {
+    if (selectedItemId !== null) return;
+
+    setSearchPanelOpen(false);
+    setImageResults([]);
+    setImageSearch("");
+    setSearchingImages(false);
+    setEditingPhotoItemId(null);
+    setPhotoSearchItemId(null);
+  }, [selectedItemId]);
 
   useEffect(() => {
     function handleArrowNavigation(event: KeyboardEvent) {
@@ -629,9 +645,8 @@ export default function SubcategoryClientChainHoist({
       );
 
       if (!response.ok) {
-        const responseText = await response.text();
-        console.error("Image API error:", responseText);
-        alert("Image search API error");
+        const data = await response.json().catch(() => null);
+        alert(data?.error || "Image search failed. Please try again.");
         return;
       }
 
@@ -1410,6 +1425,25 @@ export default function SubcategoryClientChainHoist({
     </div>
   ) : null;
 
+  const selectedPhotoSearchPanel =
+    selectedItem &&
+    searchPanelOpen &&
+    photoSearchItemId === selectedItem.id ? (
+      <OnlineImageSearchPanel
+        initialQuery={imageSearch}
+        results={imageResults}
+        searching={searchingImages}
+        onSearch={(query) => searchOnlineImages(query, selectedItem.id)}
+        onSelect={(image) => selectOnlinePhoto(image)}
+        onClose={() => {
+          setSearchPanelOpen(false);
+          setPhotoSearchItemId(null);
+          setImageResults([]);
+        }}
+        className="mt-3"
+      />
+    ) : null;
+
   async function closeMobileHoistTools() {
     await saveSelectedHoistName();
     await saveSelectedBlockName();
@@ -1596,11 +1630,17 @@ export default function SubcategoryClientChainHoist({
         ? createPortal(
             <div className="[&_.add-hoist-grid]:!grid-cols-1 [&>div]:rounded-xl [&>div]:p-3">
               {editItemPanel}
+              {selectedPhotoSearchPanel}
               {addItemPanel}
             </div>,
             sidebarTarget,
           )
         : null}
+
+      <div className="hidden sm:block xl:hidden">
+        {editItemPanel}
+        {selectedPhotoSearchPanel}
+      </div>
 
       {items.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">

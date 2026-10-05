@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
 import { Trash2 } from "lucide-react";
 import EquipmentListAddUnitsAction from "@/components/EquipmentListAddUnitsAction";
+import OnlineImageSearchPanel from "@/components/OnlineImageSearchPanel";
 
 type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
@@ -291,12 +292,15 @@ export default function SubcategoryClientProjectors({
 
   const filteredBlockOptions = useMemo(() => {
     const query = selectedBlockDraft.trim().toLowerCase();
-    if (!query) return blockOptions;
+    const currentBlock =
+      selectedItem?.fixture_type?.trim().toLowerCase() || "";
+
+    if (!query || query === currentBlock) return blockOptions;
 
     return blockOptions.filter((option) =>
       option.toLowerCase().startsWith(query),
     );
-  }, [blockOptions, selectedBlockDraft]);
+  }, [blockOptions, selectedBlockDraft, selectedItem?.fixture_type]);
 
   useEffect(() => {
     const parsed = splitProjectorName(selectedItem?.name ?? "");
@@ -305,6 +309,17 @@ export default function SubcategoryClientProjectors({
     setSelectedBlockDraft(selectedItem?.fixture_type?.trim() || "");
     setBlockSuggestionsOpen(false);
   }, [selectedItemId, selectedItem?.name, selectedItem?.fixture_type]);
+
+  useEffect(() => {
+    if (selectedItemId !== null) return;
+
+    setSearchPanelOpen(false);
+    setImageResults([]);
+    setImageSearch("");
+    setSearchingImages(false);
+    setEditingPhotoItemId(null);
+    setPhotoSearchItemId(null);
+  }, [selectedItemId]);
 
   useEffect(() => {
     function handleArrowNavigation(event: KeyboardEvent) {
@@ -653,9 +668,8 @@ export default function SubcategoryClientProjectors({
       const res = await fetch(`/api/google-image?q=${encodeURIComponent(q)}`);
 
       if (!res.ok) {
-        const text = await res.text();
-        console.error("Image API error:", text);
-        alert("Image search API error");
+        const data = await res.json().catch(() => null);
+        alert(data?.error || "Image search failed. Please try again.");
         return;
       }
 
@@ -1152,6 +1166,25 @@ export default function SubcategoryClientProjectors({
     </div>
   ) : null;
 
+  const selectedPhotoSearchPanel =
+    selectedItem &&
+    searchPanelOpen &&
+    photoSearchItemId === selectedItem.id ? (
+      <OnlineImageSearchPanel
+        initialQuery={imageSearch}
+        results={imageResults}
+        searching={searchingImages}
+        onSearch={(query) => searchOnlineImages(query, selectedItem.id)}
+        onSelect={(image) => selectOnlinePhoto(image)}
+        onClose={() => {
+          setSearchPanelOpen(false);
+          setPhotoSearchItemId(null);
+          setImageResults([]);
+        }}
+        className="mt-3"
+      />
+    ) : null;
+
   const sidebarAddPanel = editable && !selectedItem ? (
     <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
       <div className="mb-4">
@@ -1480,13 +1513,17 @@ export default function SubcategoryClientProjectors({
         ? createPortal(
             <div>
               {editItemPanel}
+              {selectedPhotoSearchPanel}
               {sidebarAddPanel}
             </div>,
             sidebarTarget,
           )
         : null}
 
-      <div className="hidden sm:block xl:hidden">{editItemPanel}</div>
+      <div className="hidden sm:block xl:hidden">
+        {editItemPanel}
+        {selectedPhotoSearchPanel}
+      </div>
 
       {editable && !selectedItem && (
         <div className="hidden rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:block sm:p-5 xl:hidden">

@@ -100,6 +100,13 @@ export default function HomeRightSidebar() {
     (segment) =>
       segment.includes("projector") || segment.includes("projection"),
   );
+  const showLedScreenAction = pathSegments.some((segment) =>
+    segment.includes("led-screen"),
+  );
+  const showInventoryTools =
+    pathSegments[0] === "inventory" &&
+    pathSegments[1] !== "lists" &&
+    pathSegments.length === 3;
 
   useEffect(() => {
     let cancelled = false;
@@ -324,17 +331,25 @@ export default function HomeRightSidebar() {
     };
   }, [supabase]);
 
-  if (showLightingAction || showChainHoistAction || showProjectorAction) {
+  if (showInventoryTools) {
     const toolsTitle = showChainHoistAction
       ? "Chain Hoist Tools"
       : showProjectorAction
         ? "Projector Tools"
-        : "Lighting Tools";
+        : showLightingAction
+          ? "Lighting Tools"
+          : showLedScreenAction
+            ? "LED Screen Tools"
+            : "Inventory Tools";
     const toolsDescription = showChainHoistAction
       ? "Select a chain hoist to edit it, or add a new one."
       : showProjectorAction
         ? "Select a projector to edit it, or add a new one."
-        : "Select a fixture to edit it, or add a new one.";
+        : showLightingAction
+          ? "Select a fixture to edit it, or add a new one."
+          : showLedScreenAction
+            ? "Select an LED model or cabinet to edit it, or add a new one."
+            : "Select an item to edit it, or add a new one.";
 
     return (
       <div className="p-4">

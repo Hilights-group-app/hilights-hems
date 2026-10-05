@@ -1,8 +1,12 @@
+import type { Metadata } from "next";
 import "./globals.css";
+
 import TopBar from "@/components/TopBar";
 import AppShellClient from "@/components/AppShellClient";
 
-export const metadata = {
+export const metadata: Metadata = {
+  metadataBase: new URL("https://hilights-hems.vercel.app"),
+
   title: "Hilights Equipment Management System",
   description: "Equipment Inventory",
   manifest: "/manifest.json",
