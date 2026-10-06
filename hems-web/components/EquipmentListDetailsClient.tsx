@@ -27,7 +27,11 @@ import {
   useMemo,
   useState,
 } from "react";
-import { canEditInventory, getUserName } from "@/lib/authStore";
+import {
+  canManageEquipmentLists,
+  getUserId,
+  getUserName,
+} from "@/lib/authStore";
 import { createClient } from "@/lib/supabase/client";
 import {
   EQUIPMENT_LIST_ITEMS_EVENT,
@@ -96,7 +100,9 @@ const useClientLayoutEffect =
   typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 function listDetailsCacheKey(listId: string) {
-  const userScope = (getUserName() || "signed-in-user").trim().toLowerCase();
+  const userScope =
+    getUserId() ||
+    (getUserName() || "signed-in-user").trim().toLowerCase();
   return `${LIST_DETAILS_CACHE_PREFIX}:${encodeURIComponent(userScope)}:${listId}`;
 }
 
@@ -195,6 +201,7 @@ const LIST_SELECT = `
   loading_date,
   receiving_date,
   notes,
+  created_by,
   created_by_name,
   created_at,
   updated_at,
@@ -611,8 +618,8 @@ export default function EquipmentListDetailsClient({
 }) {
   const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
-  const [editable, setEditable] = useState(false);
   const [isManager, setIsManager] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [list, setList] = useState<DetailedEquipmentList | null>(null);
   const [items, setItems] = useState<EquipmentListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -674,24 +681,29 @@ export default function EquipmentListDetailsClient({
   }, [listId]);
 
   useEffect(() => {
-    setEditable(canEditInventory());
+    setIsManager(canManageEquipmentLists());
 
     let cancelled = false;
 
     async function loadManagerAccess() {
-      const { data, error: accessError } = await supabase.rpc(
-        "is_equipment_list_manager",
-      );
+      const [userResult, managerResult] = await Promise.all([
+        supabase.auth.getUser(),
+        supabase.rpc("is_equipment_list_manager"),
+      ]);
 
       if (cancelled) return;
 
-      if (accessError) {
-        console.error("equipment list manager access error", accessError);
-        setIsManager(false);
+      setCurrentUserId(userResult.data.user?.id ?? null);
+
+      if (managerResult.error) {
+        console.error(
+          "equipment list manager access error",
+          managerResult.error,
+        );
         return;
       }
 
-      setIsManager(data === true);
+      setIsManager(managerResult.data === true);
     }
 
     void loadManagerAccess();
@@ -895,6 +907,13 @@ export default function EquipmentListDetailsClient({
 
   const isDraft = list?.status === "draft";
   const isInternalUse = list?.list_type === "internal_use";
+  const isOwner = Boolean(
+    list && currentUserId && list.created_by === currentUserId,
+  );
+  const canEditDraft = Boolean(
+    isDraft && (isInternalUse ? isManager : isOwner),
+  );
+  const canSubmitDraft = Boolean(canEditDraft && !isInternalUse && isOwner);
   const canReview = Boolean(
     isManager && !isInternalUse && list?.status === "pending",
   );
@@ -902,7 +921,7 @@ export default function EquipmentListDetailsClient({
     isManager &&
       (list?.status === "active" || list?.status === "partially_returned"),
   );
-  const canChangeItems = Boolean((editable && isDraft) || canReview);
+  const canChangeItems = Boolean(canEditDraft || canReview);
 
   async function refreshItems() {
     if (!list) return;
@@ -1062,7 +1081,7 @@ export default function EquipmentListDetailsClient({
     nextValue: number,
     quantityUnit: "units" | "sqm" = "units",
   ) {
-    if (!list || !editable || !isDraft || updatingItemId) return;
+    if (!list || !canChangeItems || updatingItemId) return;
     if (item.inventory_record_type === "unit") return;
 
     const metadata = { ...(item.metadata || {}) };
@@ -1148,7 +1167,7 @@ export default function EquipmentListDetailsClient({
     quantity: number;
     notes: string;
   }) {
-    if (!list || !editable || !isDraft || addingCustomItem) return;
+    if (!list || !canChangeItems || addingCustomItem) return;
 
     const name = input.name.trim();
     const category = input.category.trim().toLowerCase() || "other";
@@ -1198,7 +1217,7 @@ export default function EquipmentListDetailsClient({
   }
 
   async function deleteDraftList() {
-    if (!list || !editable || !isDraft || deletingList) return;
+    if (!list || !canEditDraft || deletingList) return;
 
     const confirmed = window.confirm(
       `Delete draft ${list.reference}? This cannot be undone.`,
@@ -1850,10 +1869,8 @@ export default function EquipmentListDetailsClient({
 
   async function submitForApproval() {
     if (
-      !editable ||
       !list ||
-      list.list_type === "internal_use" ||
-      list.status !== "draft" ||
+      !canSubmitDraft ||
       submitting
     ) {
       return;
@@ -2109,36 +2126,36 @@ export default function EquipmentListDetailsClient({
           </div>
 
           <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
-            {editable && isDraft ? (
+            <button
+              type="button"
+              onClick={() => void shareList()}
+              disabled={Boolean(pdfAction) || rackRowsLoading}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-[10px] font-semibold text-gray-700 transition hover:border-black hover:text-black disabled:opacity-40"
+            >
+              {pdfAction === "share" ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Share2 size={12} />
+              )}
+              Share
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void downloadPdf()}
+              disabled={Boolean(pdfAction) || rackRowsLoading}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-[10px] font-semibold text-gray-700 transition hover:border-black hover:text-black disabled:opacity-40"
+            >
+              {pdfAction === "download" ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Download size={12} />
+              )}
+              PDF
+            </button>
+
+            {canEditDraft ? (
               <>
-                <button
-                  type="button"
-                  onClick={() => void shareList()}
-                  disabled={Boolean(pdfAction) || rackRowsLoading}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-[10px] font-semibold text-gray-700 transition hover:border-black hover:text-black disabled:opacity-40"
-                >
-                  {pdfAction === "share" ? (
-                    <Loader2 size={12} className="animate-spin" />
-                  ) : (
-                    <Share2 size={12} />
-                  )}
-                  Share
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => void downloadPdf()}
-                  disabled={Boolean(pdfAction) || rackRowsLoading}
-                  className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-[10px] font-semibold text-gray-700 transition hover:border-black hover:text-black disabled:opacity-40"
-                >
-                  {pdfAction === "download" ? (
-                    <Loader2 size={12} className="animate-spin" />
-                  ) : (
-                    <Download size={12} />
-                  )}
-                  PDF
-                </button>
-
                 <button
                   type="button"
                   onClick={() => void deleteDraftList()}
@@ -2153,7 +2170,7 @@ export default function EquipmentListDetailsClient({
                   Delete
                 </button>
 
-                {!isInternalUse ? (
+                {canSubmitDraft ? (
                   <button
                     type="button"
                     onClick={() => void submitForApproval()}
@@ -2287,7 +2304,7 @@ export default function EquipmentListDetailsClient({
           </div>
 
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-            {editable && isDraft ? (
+            {canChangeItems ? (
               <button
                 type="button"
                 onClick={() => setCustomItemOpen(true)}
@@ -2340,8 +2357,7 @@ export default function EquipmentListDetailsClient({
               const isQuantityRecord =
                 isMatrixRow || isGenericMatrix || isCustomItem;
               const canEditQuantity = Boolean(
-                editable &&
-                  isDraft &&
+                canChangeItems &&
                   isQuantityRecord &&
                   !isMatrixChildCollection,
               );
@@ -2379,7 +2395,7 @@ export default function EquipmentListDetailsClient({
                 metadataText(firstItem, "item_id") || firstItem.parent_record_id || "";
               const photoUrl = metadataText(firstItem, "photo_url");
               const canPickUnits = Boolean(
-                (canReview || (editable && isDraft)) &&
+                canChangeItems &&
                   firstItem.inventory_record_type === "unit" &&
                   category &&
                   subcategory &&
@@ -2661,7 +2677,7 @@ export default function EquipmentListDetailsClient({
                               Number(item.returned_ok_quantity) || 0;
                             const returnedMaintenance =
                               Number(item.returned_maintenance_quantity) || 0;
-                            const childCanEdit = Boolean(editable && isDraft);
+                            const childCanEdit = canChangeItems;
 
                             return (
                               <div
@@ -2880,7 +2896,7 @@ export default function EquipmentListDetailsClient({
           </div>
         )}
 
-        {editable && isDraft && !isInternalUse ? (
+        {canSubmitDraft ? (
           <div className="border-t border-gray-200 px-4 py-4 sm:px-5">
             <button
               type="button"

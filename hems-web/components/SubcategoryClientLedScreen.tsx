@@ -5,7 +5,11 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { canEditInventory } from "@/lib/authStore";
+import {
+  canEditInventory,
+  canManageEquipmentLists,
+  canReorderInventory,
+} from "@/lib/authStore";
 import { logActivity } from "@/lib/activityStore";
 import { ChevronDown, Trash2 } from "lucide-react";
 import EquipmentListQuantityPicker from "@/components/EquipmentListQuantityPicker";
@@ -106,6 +110,7 @@ const ACTIVE_LIST_SELECT = `
   loading_date,
   receiving_date,
   notes,
+  created_by,
   created_by_name,
   created_at,
   updated_at
@@ -472,6 +477,7 @@ export default function SubcategoryClientLedScreen({
 }) {
   const supabase = createClient();
   const editable = canEditInventory();
+  const reorderable = canReorderInventory();
   const pathname = usePathname();
 
   const getReportHref = (rowId: string) => {
@@ -557,8 +563,7 @@ export default function SubcategoryClientLedScreen({
   const selectedModel =
     models.find((currentModel) => currentModel.id === selectedModelId) ?? null;
 
-  const activeDraftList =
-    activeEquipmentList?.status === "draft" ? activeEquipmentList : null;
+  const activeDraftList = activeEquipmentList;
 
   function rowAllocatedQuantity(rowId: string) {
     return (allocationsByRow[rowId] ?? []).reduce(
@@ -864,15 +869,31 @@ export default function SubcategoryClientLedScreen({
         return;
       }
 
-      const { data, error } = await supabase
-        .from("equipment_lists")
-        .select(ACTIVE_LIST_SELECT)
-        .eq("id", nextListId)
-        .maybeSingle();
+      const [listResult, userResult] = await Promise.all([
+        supabase
+          .from("equipment_lists")
+          .select(ACTIVE_LIST_SELECT)
+          .eq("id", nextListId)
+          .maybeSingle(),
+        supabase.auth.getUser(),
+      ]);
+
+      const { data, error } = listResult;
+      const user = userResult.data.user;
 
       if (cancelled || version !== loadVersion) return;
 
-      if (error || !data || data.status === "cancelled") {
+      const manager = canManageEquipmentLists();
+      const canUseList = Boolean(
+        data &&
+          ((data.status === "pending" && manager) ||
+            (data.status === "draft" &&
+              (data.list_type === "internal_use"
+                ? manager
+                : data.created_by === user?.id))),
+      );
+
+      if (error || !data || !canUseList) {
         if (error) console.error("load active equipment list error", error);
         setActiveEquipmentList(null);
         return;
@@ -1469,6 +1490,7 @@ export default function SubcategoryClientLedScreen({
   }
 
   async function reorderRows(modelId: string, activeId: string, overId: string) {
+    if (!reorderable) return;
     if (!editable || activeId === overId) return;
 
     let nextRows: MatrixRow[] = [];
@@ -1516,6 +1538,7 @@ export default function SubcategoryClientLedScreen({
   }
 
   async function reorderModels(activeId: string, overId: string) {
+    if (!reorderable) return;
     if (!editable || activeId === overId) return;
 
     const oldIndex = models.findIndex((model) => model.id === activeId);
@@ -2130,6 +2153,10 @@ export default function SubcategoryClientLedScreen({
             listPickerTarget.row,
             rowAllocatedQuantity(listPickerTarget.row.id),
           )}
+          allowPendingReview={
+            activeDraftList.status === "pending" &&
+            canManageEquipmentLists()
+          }
           onClose={() => setListPickerTarget(null)}
           onAdded={(quantity) => {
             const message = `${quantity} cabinet${quantity === 1 ? "" : "s"} added to ${activeDraftList.reference}`;
@@ -2400,6 +2427,7 @@ export default function SubcategoryClientLedScreen({
           sensors={modelSensors}
           collisionDetection={closestCenter}
           onDragEnd={(event) => {
+            if (!reorderable) return;
             const { active, over } = event;
             if (!over || active.id === over.id) return;
             void reorderModels(String(active.id), String(over.id));
@@ -2414,13 +2442,14 @@ export default function SubcategoryClientLedScreen({
                 <SortableLedModel
                   key={currentModel.id}
                   id={currentModel.id}
-                  disabled={!editable}
+                  disabled={!reorderable}
                 >
                   <LedModelCard
                     model={currentModel}
                     brand={currentModel.parsed.brand}
                     modelName={currentModel.parsed.model}
                     editable={editable}
+                    reorderable={reorderable}
                     selectedModel={selectedModelId === currentModel.id}
                     onSelectModel={() => {
                       setSelectedModelId(currentModel.id);
@@ -2685,6 +2714,7 @@ function LedModelCard({
   brand,
   modelName,
   editable,
+  reorderable,
   selectedModel,
   onSelectModel,
   selectedRowId,
@@ -2699,6 +2729,7 @@ function LedModelCard({
   brand: string;
   modelName: string;
   editable: boolean;
+  reorderable: boolean;
   selectedModel: boolean;
   onSelectModel: () => void;
   selectedRowId: string | null;
@@ -2764,6 +2795,7 @@ function LedModelCard({
   }, 0);
 
   function handleDragEnd(event: any) {
+    if (!reorderable) return;
     const { active, over } = event;
     if (!over || active.id === over.id) return;
     void onRowsReorder(model.id, String(active.id), String(over.id));
@@ -2895,7 +2927,7 @@ function LedModelCard({
                 strategy={verticalListSortingStrategy}
               >
                 {rows.map((r) => (
-                  <SortableCabinetRow key={r.id} id={r.id} disabled={!editable}>
+                  <SortableCabinetRow key={r.id} id={r.id} disabled={!reorderable}>
                     <DesktopEditableCabinetRow
                       row={r}
                       selected={selectedRowId === r.id}
@@ -2928,7 +2960,7 @@ function LedModelCard({
                 strategy={verticalListSortingStrategy}
               >
                 {rows.map((r) => (
-                  <SortableCabinetRow key={r.id} id={r.id} disabled={!editable}>
+                  <SortableCabinetRow key={r.id} id={r.id} disabled={!reorderable}>
                     <div
                       onClick={() => {
                         window.location.href = getReportHref(r.id);

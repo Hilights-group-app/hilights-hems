@@ -8,7 +8,10 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { createClient } from "@/lib/supabase/client";
 
-import { canEditInventory } from "@/lib/authStore";
+import {
+  canEditInventory,
+  canEditReportForRoute,
+} from "@/lib/authStore";
 
 import { ChainHoistRowsBlock } from "@/components/ChainHoistRowsBlock";
 
@@ -90,7 +93,8 @@ export default function ItemEditClientChainHoistUnits({
 
   const itemPhotoRef = useRef<HTMLInputElement | null>(null);
 
-  const editable = canEditInventory();
+  const inventoryEditable = canEditInventory();
+  const reportEditable = canEditReportForRoute(category, subcategory);
 
 
 
@@ -202,7 +206,7 @@ export default function ItemEditClientChainHoistUnits({
 
   async function updateItem(patch: Partial<Pick<DbItem, "name" | "photo_url">>) {
 
-    if (!editable || !item) return;
+    if (!inventoryEditable || !item) return;
 
 
 
@@ -280,7 +284,7 @@ export default function ItemEditClientChainHoistUnits({
 
   async function onPickItemPhoto(e: React.ChangeEvent<HTMLInputElement>) {
 
-    if (!editable) return;
+    if (!inventoryEditable) return;
 
 
 
@@ -318,7 +322,7 @@ export default function ItemEditClientChainHoistUnits({
 
   async function onEditName() {
 
-    if (!editable || !item) return;
+    if (!inventoryEditable || !item) return;
 
 
 
@@ -472,7 +476,7 @@ export default function ItemEditClientChainHoistUnits({
 
 
 
-                  {editable ? (
+                  {inventoryEditable ? (
 
                     <button
 
@@ -510,7 +514,7 @@ export default function ItemEditClientChainHoistUnits({
 
 
 
-                  {editable ? (
+                  {inventoryEditable ? (
 
                     <button
 
@@ -616,13 +620,13 @@ export default function ItemEditClientChainHoistUnits({
 
           onStatsChange={setStats}
 
-          editable={editable}
+          editable={reportEditable}
 
-          allowAdd={editable}
+          allowAdd={reportEditable}
 
-          allowDelete={editable}
+          allowDelete={reportEditable}
 
-          allowUpload={editable}
+          allowUpload={reportEditable}
 
           workflowControlledStatus
 

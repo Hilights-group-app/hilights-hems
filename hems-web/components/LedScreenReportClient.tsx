@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { canEditInventory, getUserName } from "@/lib/authStore";
+import { canEditReportForRoute, getUserName } from "@/lib/authStore";
 import { logActivity } from "@/lib/activityStore";
 import { Pencil, Trash2 } from "lucide-react";
 import {
@@ -278,7 +278,7 @@ export default function LedScreenReportClient({
 }) {
   const supabase = createClient();
   const loadingRef = useRef(false);
-  const editable = canEditInventory();
+  const editable = canEditReportForRoute(category, subcategory);
 
   const backHref = useMemo(() => {
     return `/inventory/${encodeURIComponent(category)}/${encodeURIComponent(

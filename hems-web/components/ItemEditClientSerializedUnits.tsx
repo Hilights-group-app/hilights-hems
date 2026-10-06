@@ -3,7 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { canEditInventory } from "@/lib/authStore";
+import {
+  canEditInventory,
+  canEditReportForRoute,
+} from "@/lib/authStore";
 import { SerializedRowsBlock } from "@/components/SerializedRowsBlock";
 import { logActivity } from "@/lib/activityStore";
 
@@ -48,7 +51,8 @@ export default function ItemEditClientSerializedUnits({
 }) {
   const supabase = createClient();
   const itemPhotoRef = useRef<HTMLInputElement | null>(null);
-  const editable = canEditInventory();
+  const inventoryEditable = canEditInventory();
+  const reportEditable = canEditReportForRoute(category, subcategory);
   const [photoMenuOpen, setPhotoMenuOpen] = useState(false);
   const photoMenuRef = useRef<HTMLDivElement | null>(null);
 
@@ -126,7 +130,7 @@ export default function ItemEditClientSerializedUnits({
 }, []);
 
   async function updateItem(patch: Partial<Pick<DbItem, "name" | "photo_url">>) {
-    if (!editable || !item) return;
+    if (!inventoryEditable || !item) return;
 
     const previousItem = item;
 
@@ -165,7 +169,7 @@ export default function ItemEditClientSerializedUnits({
   }
 
   async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
-    if (!editable) return;
+    if (!inventoryEditable) return;
 
     const f = e.target.files?.[0];
     if (!f) return;
@@ -184,7 +188,7 @@ export default function ItemEditClientSerializedUnits({
   }
 
   async function onEditName() {
-    if (!editable || !item) return;
+    if (!inventoryEditable || !item) return;
 
     const next = prompt("Item name:", item.name);
     if (!next) return;
@@ -313,7 +317,7 @@ export default function ItemEditClientSerializedUnits({
                     </div>
                   )}
 
-                  {editable ? (
+                  {inventoryEditable ? (
   <div
   ref={photoMenuRef}
   className="absolute right-0 top-0 z-30"
@@ -365,7 +369,7 @@ export default function ItemEditClientSerializedUnits({
                     {item.name}
                   </h1>
 
-                  {editable ? (
+                  {inventoryEditable ? (
                     <button
                       type="button"
                       onClick={onEditName}
@@ -476,7 +480,7 @@ export default function ItemEditClientSerializedUnits({
           itemId={itemId}
           itemName={item.name}
           activityLink={activityLink}
-          editable={editable}
+          editable={reportEditable}
           workflowControlledStatus
           onStatsChange={setStats}
         />

@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { canEditInventory } from "@/lib/authStore";
+import {
+  canCreateEquipmentLists,
+  canManageEquipmentLists,
+} from "@/lib/authStore";
 import { createClient } from "@/lib/supabase/client";
 import EquipmentListUnitPicker from "@/components/EquipmentListUnitPicker";
 import {
@@ -36,6 +39,7 @@ const ACTIVE_LIST_SELECT = `
   loading_date,
   receiving_date,
   notes,
+  created_by,
   created_by_name,
   created_at,
   updated_at
@@ -53,7 +57,7 @@ export default function EquipmentListAddUnitsAction({
   compact?: boolean;
 }) {
   const supabase = useMemo(() => createClient(), []);
-  const editable = canEditInventory();
+  const canBuildLists = canCreateEquipmentLists();
   const [activeList, setActiveList] = useState<EquipmentList | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [message, setMessage] = useState("");
@@ -90,7 +94,20 @@ export default function EquipmentListAddUnitsAction({
 
       if (cancelled || version !== loadVersion) return;
 
-      if (error || !data || data.status !== "draft") {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      const manager = canManageEquipmentLists();
+      const canEditList = Boolean(
+        data &&
+          ((data.status === "pending" && manager) ||
+            (data.status === "draft" &&
+              (data.list_type === "internal_use"
+                ? manager
+                : data.created_by === user?.id))),
+      );
+
+      if (error || !data || !canEditList) {
         if (error) console.error("load active equipment list error", error);
         setActiveList(null);
         return;
@@ -128,7 +145,7 @@ export default function EquipmentListAddUnitsAction({
     };
   }, [supabase]);
 
-  if (!editable) return null;
+  if (!canBuildLists) return null;
 
   if (!activeList) {
     if (compact) return null;
@@ -176,6 +193,9 @@ export default function EquipmentListAddUnitsAction({
           item={item}
           category={category}
           subcategory={subcategory}
+          allowPendingReview={
+            activeList.status === "pending" && canManageEquipmentLists()
+          }
           onClose={() => setPickerOpen(false)}
           onAdded={(count) => {
             const nextMessage = `${count} unit${count === 1 ? "" : "s"} added to ${activeList.reference}`;

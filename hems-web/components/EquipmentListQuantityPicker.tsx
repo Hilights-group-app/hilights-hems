@@ -77,6 +77,7 @@ export default function EquipmentListQuantityPicker({
   category,
   subcategory,
   activeAllocatedQuantity,
+  allowPendingReview = false,
   onClose,
   onAdded,
 }: {
@@ -86,6 +87,7 @@ export default function EquipmentListQuantityPicker({
   category: string;
   subcategory: string;
   activeAllocatedQuantity: number;
+  allowPendingReview?: boolean;
   onClose: () => void;
   onAdded: (quantity: number) => void;
 }) {
@@ -179,7 +181,15 @@ export default function EquipmentListQuantityPicker({
   }, [availableQuantity, cabinetArea, list.id, row.id, supabase]);
 
   async function saveQuantity() {
-    if (saving || list.status !== "draft") return;
+    if (
+      saving ||
+      !(
+        list.status === "draft" ||
+        (allowPendingReview && list.status === "pending")
+      )
+    ) {
+      return;
+    }
 
     const nextQuantity = clampQty(quantity);
     if (cabinetArea <= 0) {
@@ -426,7 +436,10 @@ export default function EquipmentListQuantityPicker({
               quantity < 1 ||
               quantity > availableQuantity ||
               cabinetArea <= 0 ||
-              list.status !== "draft"
+              !(
+                list.status === "draft" ||
+                (allowPendingReview && list.status === "pending")
+              )
             }
             className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-black px-4 text-[11px] font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
           >

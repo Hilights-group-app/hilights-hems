@@ -4,7 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { canEditInventory } from "@/lib/authStore";
+import {
+  canEditInventory,
+  canManageEquipmentLists,
+} from "@/lib/authStore";
 import { Trash2, ChevronDown } from "lucide-react";
 import EquipmentListUnitPicker from "@/components/EquipmentListUnitPicker";
 import OnlineImageSearchPanel from "@/components/OnlineImageSearchPanel";
@@ -90,6 +93,7 @@ const ACTIVE_LIST_SELECT = `
   loading_date,
   receiving_date,
   notes,
+  created_by,
   created_by_name,
   created_at,
   updated_at
@@ -476,8 +480,7 @@ export default function SubcategoryClientLighting({
     [items, selectedFixtureId],
   );
 
-  const activeDraftList =
-    activeEquipmentList?.status === "draft" ? activeEquipmentList : null;
+  const activeDraftList = activeEquipmentList;
 
   useEffect(() => {
     const parsed = splitBrandModel(selectedFixture?.name ?? "");
@@ -795,15 +798,31 @@ export default function SubcategoryClientLighting({
         return;
       }
 
-      const { data, error } = await supabase
-        .from("equipment_lists")
-        .select(ACTIVE_LIST_SELECT)
-        .eq("id", nextListId)
-        .maybeSingle();
+      const [listResult, userResult] = await Promise.all([
+        supabase
+          .from("equipment_lists")
+          .select(ACTIVE_LIST_SELECT)
+          .eq("id", nextListId)
+          .maybeSingle(),
+        supabase.auth.getUser(),
+      ]);
+
+      const { data, error } = listResult;
+      const user = userResult.data.user;
 
       if (cancelled || version !== loadVersion) return;
 
-      if (error || !data || data.status === "cancelled") {
+      const manager = canManageEquipmentLists();
+      const canUseList = Boolean(
+        data &&
+          ((data.status === "pending" && manager) ||
+            (data.status === "draft" &&
+              (data.list_type === "internal_use"
+                ? manager
+                : data.created_by === user?.id))),
+      );
+
+      if (error || !data || !canUseList) {
         if (error) console.error("load active equipment list error", error);
         setActiveEquipmentList(null);
         return;
@@ -2029,6 +2048,10 @@ export default function SubcategoryClientLighting({
           item={listPickerItem}
           category={category}
           subcategory={subcategory}
+          allowPendingReview={
+            activeDraftList.status === "pending" &&
+            canManageEquipmentLists()
+          }
           onClose={() => setListPickerItem(null)}
           onAdded={(count) => {
             const message = `${count} unit${count === 1 ? "" : "s"} added to ${activeDraftList.reference}`;

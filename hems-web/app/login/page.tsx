@@ -4,7 +4,12 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { setUserDepartment, setUserName, setUserRole } from "@/lib/authStore";
+import {
+  setUserDepartment,
+  setUserId,
+  setUserName,
+  setUserRole,
+} from "@/lib/authStore";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -57,6 +62,7 @@ export default function LoginPage() {
       }
 
       setUserRole(profile.role ?? "viewer");
+      setUserId(userId);
       setUserName(profile.full_name ?? "");
       setUserDepartment(profile.department ?? "");
 

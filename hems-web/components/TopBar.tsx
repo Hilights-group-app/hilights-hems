@@ -12,7 +12,14 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { getUserName, logout } from "@/lib/authStore";
+import {
+  getUserName,
+  logout,
+  setUserDepartment,
+  setUserId,
+  setUserName,
+  setUserRole,
+} from "@/lib/authStore";
 
 type NotificationRow = {
   id: string;
@@ -409,6 +416,9 @@ export default function TopBar() {
 
       localStorage.setItem("hems:profile:role", data.role ?? "");
       localStorage.setItem("hems:profile:department", data.department ?? "");
+      setUserId(userId);
+      setUserRole(data.role ?? "viewer");
+      setUserDepartment(data.department ?? "");
 
       if (avatar && !avatar.startsWith("data:image")) {
         localStorage.setItem("hems:profile:avatar_url", avatar);
@@ -416,11 +426,10 @@ export default function TopBar() {
         localStorage.removeItem("hems:profile:avatar_url");
       }
 
-      if (data.full_name) setUserNameState(data.full_name);
-
       if (data.full_name) {
-  localStorage.setItem("hems:user_name", data.full_name);
-}
+        setUserNameState(data.full_name);
+        setUserName(data.full_name);
+      }
 
     }
 
@@ -435,12 +444,7 @@ export default function TopBar() {
       setUserNameState(getUserName());
 
       if (session?.user?.id) {
-        const cachedRole = localStorage.getItem("hems:profile:role");
-        const cachedDepartment = localStorage.getItem("hems:profile:department");
-
-        if (!cachedRole || !cachedDepartment) {
-          await loadProfile(session.user.id);
-        }
+        await loadProfile(session.user.id);
 
         const notifCache = sessionStorage.getItem("hems:notif-loaded");
 
@@ -467,15 +471,9 @@ if (!notifCache) {
       setNotifOpen(false);
 
       if (session?.user?.id) {
-  const cachedRole = localStorage.getItem("hems:profile:role");
-  const cachedDepartment = localStorage.getItem("hems:profile:department");
-
-  if (!cachedRole || !cachedDepartment) {
-    void loadProfile(session.user.id);
-  }
-
-  void loadNotifications();
-}
+        void loadProfile(session.user.id);
+        void loadNotifications();
+      }
     });
 
     return () => {

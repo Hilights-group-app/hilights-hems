@@ -4,7 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { canEditInventory } from "@/lib/authStore";
+import {
+  canEditInventory,
+  canReorderInventory,
+} from "@/lib/authStore";
 import { Trash2, ChevronDown } from "lucide-react";
 import EquipmentListMatrixQuantityAction from "@/components/EquipmentListMatrixQuantityAction";
 import OnlineImageSearchPanel from "@/components/OnlineImageSearchPanel";
@@ -606,6 +609,7 @@ export default function SubcategoryClientMatrix({
 }) {
   const supabase = createClient();
   const editable = canEditInventory();
+  const reorderable = canReorderInventory();
 
   const fileRef = useRef<HTMLInputElement | null>(null);
   const listPhotoFileRef = useRef<HTMLInputElement | null>(null);
@@ -845,21 +849,21 @@ export default function SubcategoryClientMatrix({
   }
 
   function onBlockDragStart(name: string) {
-    if (!editable) return;
+    if (!reorderable) return;
     setDragBlockName(name);
     setDragItemId(null);
     setDragItemBlock(null);
   }
 
   function onItemDragStart(itemId: string, sourceBlock: string) {
-    if (!editable) return;
+    if (!reorderable) return;
     setDragItemId(itemId);
     setDragItemBlock(sourceBlock);
     setDragBlockName(null);
   }
 
   function dropBlockOnBlock(targetBlock: string) {
-    if (!editable || !dragBlockName || dragBlockName === targetBlock) return;
+    if (!reorderable || !dragBlockName || dragBlockName === targetBlock) return;
 
     const currentBlocks = brandGroups.map((group) => group.brand);
     const base = blockOrder.length > 0 ? blockOrder : currentBlocks;
@@ -884,7 +888,7 @@ export default function SubcategoryClientMatrix({
   }
 
   async function dropItemOnBlock(targetBlock: string) {
-    if (!editable || !dragItemId) return;
+    if (!reorderable || !dragItemId) return;
 
     const sourceBlock = dragItemBlock || "";
     const dragged = items.find((item) => item.id === dragItemId);
@@ -923,7 +927,7 @@ export default function SubcategoryClientMatrix({
   }
 
   async function dropItemOnItem(targetItemId: string, targetBlock: string) {
-    if (!editable || !dragItemId || dragItemId === targetItemId) return;
+    if (!reorderable || !dragItemId || dragItemId === targetItemId) return;
 
     const sourceBlock = dragItemBlock || "";
     const targetItems = items
@@ -2151,15 +2155,16 @@ export default function SubcategoryClientMatrix({
       return (
         <div
           key={it.id}
-          data-matrix-select="true"
+          data-matrix-select={editable ? "true" : undefined}
           onClick={() => {
+            if (!editable) return;
             setSelectedItemId(it.id);
             setSelectedBlockName(null);
             setSelectedCableRow(null);
           }}
-          draggable={editable}
+          draggable={reorderable}
           onDragStart={() => onItemDragStart(it.id, itemBlockName(it))}
-          onDragOver={(e) => editable && e.preventDefault()}
+          onDragOver={(e) => reorderable && e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
             void dropItemOnItem(it.id, itemBlockName(it));
@@ -2167,7 +2172,7 @@ export default function SubcategoryClientMatrix({
           className={`relative rounded-xl p-2 transition ${
             selectedItemId === it.id ? "ring-2 ring-black" : ""
           } ${!isLast ? "border-b border-gray-100 pb-6 mb-6" : ""} ${
-            editable ? "cursor-grab active:cursor-grabbing" : ""
+            reorderable ? "cursor-grab active:cursor-grabbing" : ""
           }`}
         >
           {editable ? (
@@ -2299,17 +2304,20 @@ export default function SubcategoryClientMatrix({
               sortCableRows(cableRowsByItem[it.id] || []).map((row) => (
                 <div
                   key={row.id}
-                  data-matrix-select="true"
+                  data-matrix-select={editable ? "true" : undefined}
                   onClick={(event) => {
+                    if (!editable) return;
                     event.stopPropagation();
                     setSelectedCableRow({ itemId: it.id, rowId: row.id });
                     setSelectedItemId(null);
                     setSelectedBlockName(null);
                   }}
-                  className={`grid cursor-pointer grid-cols-[1fr_64px] items-center gap-2 border-t border-gray-100 px-4 py-2 text-[6px] first:border-t-0 sm:text-[8px] ${
+                  className={`grid grid-cols-[1fr_64px] items-center gap-2 border-t border-gray-100 px-4 py-2 text-[6px] first:border-t-0 sm:text-[8px] ${
                     selectedCableRow?.rowId === row.id
                       ? "ring-2 ring-inset ring-black"
-                      : "hover:bg-gray-50"
+                      : editable
+                        ? "cursor-pointer hover:bg-gray-50"
+                        : ""
                   }`}
                 >
                   <div
@@ -2342,15 +2350,16 @@ export default function SubcategoryClientMatrix({
       return (
         <div
           key={it.id}
-          data-matrix-select="true"
+          data-matrix-select={editable ? "true" : undefined}
           onClick={() => {
+            if (!editable) return;
             setSelectedItemId(it.id);
             setSelectedBlockName(null);
             setSelectedCableRow(null);
           }}
-          draggable={editable}
+          draggable={reorderable}
           onDragStart={() => onItemDragStart(it.id, itemBlockName(it))}
-          onDragOver={(e) => editable && e.preventDefault()}
+          onDragOver={(e) => reorderable && e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault();
             void dropItemOnItem(it.id, itemBlockName(it));
@@ -2358,7 +2367,7 @@ export default function SubcategoryClientMatrix({
           className={`relative rounded-xl p-2 transition ${
             selectedItemId === it.id ? "ring-2 ring-black" : ""
           } ${!isLast ? "border-b border-gray-100 pb-8 mb-8" : ""} ${
-            editable ? "cursor-grab active:cursor-grabbing" : ""
+            reorderable ? "cursor-grab active:cursor-grabbing" : ""
           }`}
         >
           {editable ? (
@@ -2429,21 +2438,24 @@ export default function SubcategoryClientMatrix({
                   return (
                     <div
                       key={row.id}
-                      data-matrix-select="true"
+                      data-matrix-select={editable ? "true" : undefined}
                       onClick={(event) => {
+                        if (!editable) return;
                         event.stopPropagation();
                         setSelectedCableRow({ itemId: it.id, rowId: row.id });
                         setSelectedItemId(null);
                         setSelectedBlockName(null);
                       }}
-                      className={`grid cursor-pointer items-center gap-[1px] border-t border-gray-100 px-2 py-[1px] text-[7px] text-gray-900 lg:px-6 lg:py-[2px] lg:text-[9px] ${
+                      className={`grid items-center gap-[1px] border-t border-gray-100 px-2 py-[1px] text-[7px] text-gray-900 lg:px-6 lg:py-[2px] lg:text-[9px] ${
                         showCableMaintenance
                           ? "grid-cols-[74px_45px_45px_45px_76px] md:grid-cols-[160px_130px_130px_130px_76px]"
                           : "grid-cols-[74px_45px_45px_76px] md:grid-cols-[160px_130px_130px_76px]"
                       } ${
                         selectedCableRow?.rowId === row.id
                           ? "ring-2 ring-inset ring-black"
-                          : "hover:bg-gray-50"
+                          : editable
+                            ? "cursor-pointer hover:bg-gray-50"
+                            : ""
                       }`}
                     >
                       <div className="min-w-0 text-left">
@@ -2508,15 +2520,16 @@ export default function SubcategoryClientMatrix({
     return (
       <div
         key={it.id}
-        data-matrix-select="true"
+        data-matrix-select={editable ? "true" : undefined}
         onClick={() => {
+          if (!editable) return;
           setSelectedItemId(it.id);
           setSelectedBlockName(null);
           setSelectedCableRow(null);
         }}
-        draggable={editable}
+        draggable={reorderable}
         onDragStart={() => onItemDragStart(it.id, itemBlockName(it))}
-        onDragOver={(e) => editable && e.preventDefault()}
+        onDragOver={(e) => reorderable && e.preventDefault()}
         onDrop={(e) => {
           e.preventDefault();
           void dropItemOnItem(it.id, itemBlockName(it));
@@ -2524,7 +2537,7 @@ export default function SubcategoryClientMatrix({
         className={`relative rounded-xl p-2 transition ${
           selectedItemId === it.id ? "ring-2 ring-black" : ""
         } ${!isLast ? "border-b border-gray-100 pb-4 mb-4" : ""} ${
-          editable ? "cursor-grab active:cursor-grabbing" : ""
+          reorderable ? "cursor-grab active:cursor-grabbing" : ""
         }`}
       >
         {editable ? (
@@ -3119,7 +3132,7 @@ export default function SubcategoryClientMatrix({
         brandGroups.map((group) => (
           <div
             key={group.brand}
-            onDragOver={(e) => editable && e.preventDefault()}
+            onDragOver={(e) => reorderable && e.preventDefault()}
             onDrop={(e) => {
               e.preventDefault();
               if (dragItemId) {
@@ -3137,32 +3150,34 @@ export default function SubcategoryClientMatrix({
             }`}
           >
             <div className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
-              <button
-                type="button"
-                draggable={editable}
-                onDragStart={() => onBlockDragStart(group.brand)}
-                className={`h-5 w-5 rounded-full border border-gray-200 bg-white text-[10px] text-gray-500 ${
-                  editable
-                    ? "cursor-grab hover:text-red-500 active:cursor-grabbing"
-                    : "cursor-default"
-                }`}
-                title="Drag block"
-              >
-                ⋮⋮
-              </button>
+              {reorderable ? (
+                <button
+                  type="button"
+                  draggable
+                  onDragStart={() => onBlockDragStart(group.brand)}
+                  className="h-5 w-5 cursor-grab rounded-full border border-gray-200 bg-white text-[10px] text-gray-500 hover:text-red-500 active:cursor-grabbing"
+                  title="Drag block"
+                >
+                  ⋮⋮
+                </button>
+              ) : null}
 
               <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
 
               <button
                 type="button"
-                data-matrix-select="true"
+                data-matrix-select={editable ? "true" : undefined}
+                disabled={!editable}
                 onClick={() => {
+                  if (!editable) return;
                   setSelectedBlockName(group.brand);
                   setSelectedItemId(null);
                   setSelectedCableRow(null);
                 }}
-                className="text-left text-[8px] font-semibold uppercase tracking-wide text-gray-500 hover:text-red-500"
-                title="Select block"
+                className={`text-left text-[8px] font-semibold uppercase tracking-wide text-gray-500 ${
+                  editable ? "hover:text-red-500" : "cursor-default"
+                }`}
+                title={editable ? "Select block" : undefined}
               >
                 {group.brand}
               </button>

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, FileSpreadsheet, Upload, X } from "lucide-react";
 import * as XLSX from "xlsx-js-style";
 import { createClient } from "@/lib/supabase/client";
-import { canEditInventory } from "@/lib/authStore";
+import { canImportInventory } from "@/lib/authStore";
 
 type Category = {
   id: string;
@@ -139,7 +139,7 @@ export default function InventoryImportClient({
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState("");
   const [result, setResult] = useState<Result | null>(null);
-  const editable = canEditInventory();
+  const editable = canImportInventory();
 
   useEffect(() => {
     const show = () => setOpen(true);

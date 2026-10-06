@@ -18,7 +18,11 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { canEditInventory, getUserName } from "@/lib/authStore";
+import {
+  canCreateEquipmentLists,
+  canManageEquipmentLists,
+  getUserName,
+} from "@/lib/authStore";
 import { createClient } from "@/lib/supabase/client";
 import {
   ACTIVE_EQUIPMENT_LIST_EVENT,
@@ -89,6 +93,7 @@ const LIST_SELECT = `
   loading_date,
   receiving_date,
   notes,
+  created_by,
   created_by_name,
   created_at,
   updated_at
@@ -189,7 +194,9 @@ function listItemUnitLabel(item: EquipmentListItem) {
 export default function EquipmentListsSidebar() {
   const supabase = useMemo(() => createClient(), []);
   const [mounted, setMounted] = useState(false);
-  const [editable, setEditable] = useState(false);
+  const [canCreateLists, setCanCreateLists] = useState(false);
+  const [canManageLists, setCanManageLists] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -215,7 +222,12 @@ export default function EquipmentListsSidebar() {
     let cancelled = false;
 
     setMounted(true);
-    setEditable(canEditInventory());
+    setCanCreateLists(canCreateEquipmentLists());
+    setCanManageLists(canManageEquipmentLists());
+
+    void supabase.auth.getUser().then(({ data }) => {
+      if (!cancelled) setCurrentUserId(data.user?.id ?? null);
+    });
 
     try {
       setActiveListId(localStorage.getItem(ACTIVE_EQUIPMENT_LIST_KEY));
@@ -270,10 +282,52 @@ export default function EquipmentListsSidebar() {
     };
   }, [supabase]);
 
-  const activeList = useMemo(
-    () => lists.find((list) => list.id === activeListId) ?? null,
-    [activeListId, lists],
+  const accessibleLists = useMemo(
+    () =>
+      lists.filter((list) => {
+        const isOwner = Boolean(
+          currentUserId && list.created_by === currentUserId,
+        );
+
+        if (list.list_type === "internal_use") return true;
+        if (list.status === "draft") return isOwner;
+        if (list.status === "pending") return isOwner || canManageLists;
+        if (list.status === "cancelled") return isOwner || canManageLists;
+        return true;
+      }),
+    [canManageLists, currentUserId, lists],
   );
+
+  const activeList = useMemo(
+    () =>
+      accessibleLists.find((list) => {
+        if (list.id !== activeListId) return false;
+        if (list.status === "pending") return canManageLists;
+        if (list.status !== "draft") return false;
+        if (list.list_type === "internal_use") return canManageLists;
+        return Boolean(currentUserId && list.created_by === currentUserId);
+      }) ?? null,
+    [accessibleLists, activeListId, canManageLists, currentUserId],
+  );
+
+  useEffect(() => {
+    if (loading || !currentUserId || !activeListId || activeList) return;
+
+    setActiveListId(null);
+    setActiveListItems([]);
+
+    try {
+      localStorage.removeItem(ACTIVE_EQUIPMENT_LIST_KEY);
+    } catch {
+      // The stale selection is still cleared for the current page.
+    }
+
+    window.dispatchEvent(
+      new CustomEvent(ACTIVE_EQUIPMENT_LIST_EVENT, {
+        detail: { listId: null },
+      }),
+    );
+  }, [activeList, activeListId, currentUserId, loading]);
 
   const activeListItemGroups = useMemo(() => {
     const groups = new Map<
@@ -358,19 +412,19 @@ export default function EquipmentListsSidebar() {
 
   const visibleLists = useMemo(
     () =>
-      lists.filter(
+      accessibleLists.filter(
         (list) => list.status !== "closed" && list.status !== "cancelled",
       ),
-    [lists],
+    [accessibleLists],
   );
 
   const internalUseLists = useMemo(
     () =>
-      lists.filter(
+      accessibleLists.filter(
         (list) =>
           list.list_type === "internal_use" && list.status !== "cancelled",
       ),
-    [lists],
+    [accessibleLists],
   );
 
   const workflowLists = useMemo(
@@ -380,12 +434,12 @@ export default function EquipmentListsSidebar() {
 
   const historyLists = useMemo(
     () =>
-      lists.filter(
+      accessibleLists.filter(
         (list) =>
           list.list_type !== "internal_use" &&
           (list.status === "closed" || list.status === "cancelled"),
       ),
-    [lists],
+    [accessibleLists],
   );
 
   const sections = useMemo(
@@ -425,12 +479,26 @@ export default function EquipmentListsSidebar() {
   }
 
   function selectType(type: EquipmentListType) {
+    if (type === "internal_use" && !canManageLists) return;
     setSelectedType(type);
     setForm(EMPTY_FORM);
     setError("");
   }
 
+  function canEditWorkingList(list: EquipmentList | null) {
+    if (!list) return false;
+    if (list.status === "pending") return canManageLists;
+    if (list.status !== "draft") return false;
+    if (list.list_type === "internal_use") return canManageLists;
+    return Boolean(currentUserId && list.created_by === currentUserId);
+  }
+
   function chooseActiveList(list: EquipmentList) {
+    if (!canEditWorkingList(list)) {
+      window.location.href = `/inventory/lists/${encodeURIComponent(list.id)}`;
+      return;
+    }
+
     const nextId = activeListId === list.id ? null : list.id;
     setActiveListId(nextId);
 
@@ -449,7 +517,9 @@ export default function EquipmentListsSidebar() {
   }
 
   async function removeListItem(itemId: string) {
-    if (!editable || activeList?.status !== "draft" || removingListItemId) {
+    const list = activeList;
+
+    if (!list || !canEditWorkingList(list) || removingListItemId) {
       return;
     }
 
@@ -459,7 +529,7 @@ export default function EquipmentListsSidebar() {
       .from("equipment_list_items")
       .delete()
       .eq("id", itemId)
-      .eq("list_id", activeList.id);
+      .eq("list_id", list.id);
 
     if (deleteError) {
       console.error("remove equipment list item error", deleteError);
@@ -475,7 +545,7 @@ export default function EquipmentListsSidebar() {
 
     window.dispatchEvent(
       new CustomEvent(EQUIPMENT_LIST_ITEMS_EVENT, {
-        detail: { listId: activeList.id },
+        detail: { listId: list.id },
       }),
     );
   }
@@ -527,7 +597,14 @@ export default function EquipmentListsSidebar() {
   }
 
   async function createList() {
-    if (!selectedType || !editable || saving) return;
+    if (
+      !selectedType ||
+      !canCreateLists ||
+      (selectedType === "internal_use" && !canManageLists) ||
+      saving
+    ) {
+      return;
+    }
 
     const validationError = validateForm(selectedType);
     if (validationError) {
@@ -655,7 +732,7 @@ export default function EquipmentListsSidebar() {
         ) : null}
       </div>
 
-      {editable && !createOpen ? (
+      {canCreateLists && !createOpen ? (
         <button
           type="button"
           onClick={() => {
@@ -678,7 +755,10 @@ export default function EquipmentListsSidebar() {
                 Choose list type
               </div>
 
-              {EQUIPMENT_LIST_TYPE_OPTIONS.map((option) => (
+              {EQUIPMENT_LIST_TYPE_OPTIONS.filter(
+                (option) =>
+                  option.value !== "internal_use" || canManageLists,
+              ).map((option) => (
                 <button
                   key={option.value}
                   type="button"
@@ -875,7 +955,7 @@ export default function EquipmentListsSidebar() {
 
                           <div className="mt-1 flex flex-wrap gap-1">
                             {group.items.map((item) =>
-                              editable && activeList.status === "draft" ? (
+                              canEditWorkingList(activeList) ? (
                                 <button
                                   key={item.id}
                                   type="button"
@@ -932,7 +1012,7 @@ export default function EquipmentListsSidebar() {
             <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-[10px] leading-4 text-amber-800">
               {error}
             </div>
-          ) : lists.length === 0 ? (
+          ) : accessibleLists.length === 0 ? (
             <div className="rounded-xl border border-dashed border-gray-300 px-3 py-5 text-center">
               <ClipboardList className="mx-auto text-gray-300" size={22} />
               <div className="mt-2 text-[10px] font-medium text-gray-500">
@@ -1010,7 +1090,7 @@ export default function EquipmentListsSidebar() {
                               <CircleUserRound size={10} />
                               {list.list_type === "internal_use"
                                 ? "Selected internal list"
-                                : "Active list"}
+                                : "Selected list"}
                             </span>
                           ) : null}
                         </button>

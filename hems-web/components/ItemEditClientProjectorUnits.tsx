@@ -3,7 +3,10 @@
 import Link from "next/link";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { canEditInventory } from "@/lib/authStore";
+import {
+  canEditInventory,
+  canEditReportForRoute,
+} from "@/lib/authStore";
 import { logActivity } from "@/lib/activityStore";
 import {
   ProjectorRowsBlock,
@@ -36,7 +39,8 @@ export default function ItemEditClientProjectorUnits({
 }) {
   const supabase = createClient();
   const itemPhotoRef = useRef<HTMLInputElement | null>(null);
-  const editable = canEditInventory();
+  const inventoryEditable = canEditInventory();
+  const reportEditable = canEditReportForRoute(category, subcategory);
 
   const backHref = useMemo(() => {
     return `/inventory/${encodeURIComponent(category)}/${encodeURIComponent(
@@ -95,7 +99,7 @@ export default function ItemEditClientProjectorUnits({
   }, [itemId, supabase]);
 
   async function updateItem(patch: Partial<DbItem>) {
-    if (!editable || !item) return;
+    if (!inventoryEditable || !item) return;
 
     const previousItem = item;
 
@@ -134,7 +138,7 @@ export default function ItemEditClientProjectorUnits({
   }
 
   async function onPickPhoto(e: React.ChangeEvent<HTMLInputElement>) {
-    if (!editable) return;
+    if (!inventoryEditable) return;
 
     const f = e.target.files?.[0];
     if (!f) return;
@@ -153,7 +157,7 @@ export default function ItemEditClientProjectorUnits({
   }
 
   async function onEditName() {
-    if (!editable || !item) return;
+    if (!inventoryEditable || !item) return;
 
     const next = prompt("Projector name:", item.name);
     if (!next) return;
@@ -230,7 +234,7 @@ export default function ItemEditClientProjectorUnits({
                     </div>
                   )}
 
-                  {editable ? (
+                  {inventoryEditable ? (
                     <button
                       type="button"
                       onClick={() => itemPhotoRef.current?.click()}
@@ -249,7 +253,7 @@ export default function ItemEditClientProjectorUnits({
                     {item.name}
                   </h1>
 
-                  {editable ? (
+                  {inventoryEditable ? (
                     <button
                       type="button"
                       onClick={onEditName}
@@ -298,7 +302,7 @@ export default function ItemEditClientProjectorUnits({
           itemId={itemId}
           itemName={item.name}
           activityLink={activityLink}
-          editable={editable}
+          editable={reportEditable}
           showTestingDate={true}
           onStatsChange={setStats}
           onSaveMessageChange={setSaveMsg}

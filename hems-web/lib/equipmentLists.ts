@@ -38,6 +38,7 @@ export type EquipmentList = {
   loading_date: string | null;
   receiving_date: string | null;
   notes: string | null;
+  created_by: string | null;
   created_by_name: string | null;
   created_at: string;
   updated_at: string;

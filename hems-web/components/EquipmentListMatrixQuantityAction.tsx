@@ -2,7 +2,10 @@
 
 import { Loader2, PackagePlus, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { canEditInventory } from "@/lib/authStore";
+import {
+  canCreateEquipmentLists,
+  canManageEquipmentLists,
+} from "@/lib/authStore";
 import { createClient } from "@/lib/supabase/client";
 import {
   ACTIVE_EQUIPMENT_LIST_EVENT,
@@ -54,7 +57,7 @@ const ACTIVE_LIST_SELECT = `
   id, reference, list_type, status, client_company, event_name, venue,
   purpose, assigned_to, from_location_name, destination_name, pickup_date,
   return_date, setup_date, dismantling_date, loading_date, receiving_date,
-  notes, created_by_name, created_at, updated_at
+  notes, created_by, created_by_name, created_at, updated_at
 `;
 
 function qty(value: unknown) {
@@ -90,8 +93,19 @@ async function loadActiveListShared(
 
     if (error) throw error;
 
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    const manager = canManageEquipmentLists();
     const nextList =
-      data && data.status === "draft" ? (data as EquipmentList) : null;
+      data &&
+      ((data.status === "pending" && manager) ||
+        (data.status === "draft" &&
+          (data.list_type === "internal_use"
+            ? manager
+            : data.created_by === user?.id)))
+        ? (data as EquipmentList)
+        : null;
     activeListCache.set(listId, nextList);
     return nextList;
   })().finally(() => {
@@ -175,7 +189,7 @@ export default function EquipmentListMatrixQuantityAction({
   compact?: boolean;
 }) {
   const supabase = useMemo(() => createClient(), []);
-  const editable = canEditInventory();
+  const canBuildLists = canCreateEquipmentLists();
   const [activeList, setActiveList] = useState<EquipmentList | null>(null);
   const [open, setOpen] = useState(false);
   const [existingLine, setExistingLine] = useState<ExistingLine | null>(null);
@@ -315,7 +329,16 @@ export default function EquipmentListMatrixQuantityAction({
   }, [activeList, available, compact, open, supabase, target.id, target.recordType]);
 
   async function saveQuantity(requestedOverride?: number) {
-    if (!activeList || saving || activeList.status !== "draft") return;
+    if (
+      !activeList ||
+      saving ||
+      !(
+        activeList.status === "draft" ||
+        (activeList.status === "pending" && canManageEquipmentLists())
+      )
+    ) {
+      return;
+    }
 
     const nextQuantity = qty(requestedOverride ?? requested);
     if (nextQuantity < 1) {
@@ -438,7 +461,7 @@ export default function EquipmentListMatrixQuantityAction({
     setSaving(false);
   }
 
-  if (!editable) return null;
+  if (!canBuildLists) return null;
 
   if (!activeList) {
     if (compact) return null;
