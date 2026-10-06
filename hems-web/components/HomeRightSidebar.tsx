@@ -103,10 +103,15 @@ export default function HomeRightSidebar() {
   const showLedScreenAction = pathSegments.some((segment) =>
     segment.includes("led-screen"),
   );
-  const showInventoryTools =
+  const showLedReportTools =
     pathSegments[0] === "inventory" &&
-    pathSegments[1] !== "lists" &&
-    pathSegments.length === 3;
+    pathSegments[3] === "led-report" &&
+    pathSegments.length >= 5;
+  const showInventoryTools =
+    showLedReportTools ||
+    (pathSegments[0] === "inventory" &&
+      pathSegments[1] !== "lists" &&
+      pathSegments.length === 3);
 
   useEffect(() => {
     let cancelled = false;
@@ -332,7 +337,9 @@ export default function HomeRightSidebar() {
   }, [supabase]);
 
   if (showInventoryTools) {
-    const toolsTitle = showChainHoistAction
+    const toolsTitle = showLedReportTools
+      ? "LED Report Tools"
+      : showChainHoistAction
       ? "Chain Hoist Tools"
       : showProjectorAction
         ? "Projector Tools"
@@ -341,7 +348,9 @@ export default function HomeRightSidebar() {
           : showLedScreenAction
             ? "LED Screen Tools"
             : "Inventory Tools";
-    const toolsDescription = showChainHoistAction
+    const toolsDescription = showLedReportTools
+      ? "Select a report issue to edit it, or add a new issue."
+      : showChainHoistAction
       ? "Select a chain hoist to edit it, or add a new one."
       : showProjectorAction
         ? "Select a projector to edit it, or add a new one."
