@@ -2,25 +2,16 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import {
-  getUserName,
-  canAccessSettings,
-} from "@/lib/authStore";
+import { getUserName } from "@/lib/authStore";
 
 export default function HomePage() {
   const [mounted, setMounted] = useState(false);
   const [name, setName] = useState<string | null>(null);
-  const [canSettings, setCanSettings] = useState(false);
 
   useEffect(() => {
     setMounted(true);
     setName(getUserName());
-    setCanSettings(canAccessSettings());
   }, []);
-
-  function onSoon(label: string) {
-    alert(`${label} page coming soon`);
-  }
 
   return (
     <div className="min-h-screen bg-gray-50 p-3">
@@ -52,54 +43,6 @@ export default function HomePage() {
               Go to Inventory
             </Link>
 
-            <button
-              type="button"
-              onClick={() => onSoon("Shipment")}
-              className="
-                rounded-full border border-gray-300 bg-white px-4 py-3
-                text-center text-sm font-medium text-gray-700
-                transition-all
-                hover:border-red-200
-                hover:bg-red-50
-                hover:text-red-700
-                active:scale-[0.98]
-              "
-            >
-              Shipment
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onSoon("Maintenance")}
-              className="
-                rounded-full border border-gray-300 bg-white px-4 py-3
-                text-center text-sm font-medium text-gray-700
-                transition-all
-                hover:border-red-200
-                hover:bg-red-50
-                hover:text-red-700
-                active:scale-[0.98]
-              "
-            >
-              Maintenance
-            </button>
-
-            {mounted && canSettings && (
-              <Link
-                href="/settings"
-                className="
-                  rounded-full border border-gray-300 px-4 py-3
-                  text-center text-sm font-medium text-gray-700
-                  transition-all
-                  hover:border-red-200
-                  hover:bg-red-50
-                  hover:text-red-700
-                  active:scale-[0.98]
-                "
-              >
-                Settings
-              </Link>
-            )}
           </div>
         </div>
       </div>

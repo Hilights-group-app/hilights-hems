@@ -329,12 +329,14 @@ export default function EquipmentListMatrixQuantityAction({
   }, [activeList, available, compact, open, supabase, target.id, target.recordType]);
 
   async function saveQuantity(requestedOverride?: number) {
+    const list = activeList;
+
     if (
-      !activeList ||
+      !list ||
       saving ||
       !(
-        activeList.status === "draft" ||
-        (activeList.status === "pending" && canManageEquipmentLists())
+        list.status === "draft" ||
+        (list.status === "pending" && canManageEquipmentLists())
       )
     ) {
       return;
@@ -374,11 +376,11 @@ export default function EquipmentListMatrixQuantityAction({
             metadata,
           })
           .eq("id", existingLine.id)
-          .eq("list_id", activeList.id)
+          .eq("list_id", list.id)
           .select("id,requested_quantity")
           .single()
       : await supabase.from("equipment_list_items").insert({
-          list_id: activeList.id,
+          list_id: list.id,
           inventory_record_type: target.recordType,
           inventory_record_id: target.id,
           parent_record_id: target.parentId,
@@ -401,18 +403,18 @@ export default function EquipmentListMatrixQuantityAction({
     setExistingLine(savedLine);
     setRequested(nextQuantity);
     writeMatrixLineCache(
-      activeList.id,
+      list.id,
       target.recordType,
       target.id,
       savedLine,
     );
     window.dispatchEvent(
       new CustomEvent(EQUIPMENT_LIST_ITEMS_EVENT, {
-        detail: { listId: activeList.id, matrixLinesCached: true },
+        detail: { listId: list.id, matrixLinesCached: true },
       }),
     );
 
-    const nextMessage = `${nextQuantity} unit${nextQuantity === 1 ? "" : "s"} added to ${activeList.reference}`;
+    const nextMessage = `${nextQuantity} unit${nextQuantity === 1 ? "" : "s"} added to ${list.reference}`;
     setMessage(nextMessage);
     setTimeout(() => {
       setMessage((current) => (current === nextMessage ? "" : current));
@@ -422,7 +424,8 @@ export default function EquipmentListMatrixQuantityAction({
   }
 
   async function decreaseQuantity() {
-    if (!activeList || !existingLine || saving) return;
+    const list = activeList;
+    if (!list || !existingLine || saving) return;
     const currentQuantity = qty(requested);
     if (currentQuantity > 1) {
       await saveQuantity(currentQuantity - 1);
@@ -436,7 +439,7 @@ export default function EquipmentListMatrixQuantityAction({
       .from("equipment_list_items")
       .delete()
       .eq("id", existingLine.id)
-      .eq("list_id", activeList.id);
+      .eq("list_id", list.id);
 
     if (deleteError) {
       console.error("remove matrix list quantity error", deleteError);
@@ -448,14 +451,14 @@ export default function EquipmentListMatrixQuantityAction({
     setExistingLine(null);
     setRequested(0);
     writeMatrixLineCache(
-      activeList.id,
+      list.id,
       target.recordType,
       target.id,
       null,
     );
     window.dispatchEvent(
       new CustomEvent(EQUIPMENT_LIST_ITEMS_EVENT, {
-        detail: { listId: activeList.id, matrixLinesCached: true },
+        detail: { listId: list.id, matrixLinesCached: true },
       }),
     );
     setSaving(false);
@@ -478,63 +481,234 @@ export default function EquipmentListMatrixQuantityAction({
     );
   }
 
+  const quantityDialog = open ? (
+    <div
+      className="fixed inset-0 z-[10020] flex items-end justify-center sm:items-center sm:p-5"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Add ${target.displayName} to ${activeList.reference}`}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <button
+        type="button"
+        aria-label="Close quantity picker"
+        onClick={() => {
+          if (!saving) setOpen(false);
+        }}
+        className="absolute inset-0 bg-black/50"
+      />
+
+      <div className="relative w-full rounded-t-3xl bg-white shadow-2xl sm:max-w-md sm:rounded-3xl">
+        <div className="flex items-start gap-3 border-b border-gray-200 px-4 py-4 sm:px-5">
+          {target.photoUrl ? (
+            <img
+              src={target.photoUrl}
+              alt={target.displayName}
+              className="h-12 w-12 shrink-0 rounded-xl border border-gray-100 bg-white object-cover"
+            />
+          ) : (
+            <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-gray-100 text-gray-400">
+              <PackagePlus size={20} />
+            </div>
+          )}
+
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-bold text-gray-900">
+              {target.displayName}
+            </div>
+            {target.rowLabel ? (
+              <div className="mt-0.5 text-[10px] font-semibold text-gray-600">
+                {target.rowLabel}
+              </div>
+            ) : null}
+            <div className="mt-0.5 text-[10px] text-gray-500">
+              Add to{" "}
+              <span className="font-bold text-gray-800">
+                {activeList.reference}
+              </span>
+              {equipmentListSummary(activeList)
+                ? ` · ${equipmentListSummary(activeList)}`
+                : ""}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            aria-label="Close"
+            disabled={saving}
+            onClick={() => setOpen(false)}
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50"
+          >
+            <X size={15} />
+          </button>
+        </div>
+
+        <div className="space-y-4 px-4 py-5 sm:px-5">
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="rounded-xl bg-gray-100 px-2 py-2.5">
+              <div className="text-[8px] font-bold uppercase text-gray-400">
+                Total
+              </div>
+              <div className="mt-1 text-sm font-bold text-gray-900">
+                {qty(target.total)}
+              </div>
+            </div>
+            <div className="rounded-xl bg-yellow-100 px-2 py-2.5">
+              <div className="text-[8px] font-bold uppercase text-yellow-700">
+                Maintenance
+              </div>
+              <div className="mt-1 text-sm font-bold text-yellow-800">
+                {qty(target.maintenance)}
+              </div>
+            </div>
+            <div className="rounded-xl bg-green-100 px-2 py-2.5">
+              <div className="text-[8px] font-bold uppercase text-green-700">
+                Available
+              </div>
+              <div className="mt-1 text-sm font-bold text-green-800">
+                {available}
+              </div>
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 py-5 text-xs text-gray-500">
+              <Loader2 size={15} className="animate-spin" /> Loading quantity...
+            </div>
+          ) : (
+            <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-500">
+              Quantity
+              <input
+                type="number"
+                min={1}
+                max={available || undefined}
+                value={requested}
+                autoFocus
+                disabled={saving || available === 0}
+                onFocus={(event) => event.currentTarget.select()}
+                onChange={(event) => setRequested(qty(event.target.value))}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void saveQuantity();
+                }}
+                className="mt-2 h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold text-gray-900 outline-none focus:border-black disabled:bg-gray-100"
+              />
+            </label>
+          )}
+
+          {error ? (
+            <div className="rounded-xl bg-red-50 px-3 py-2 text-[10px] font-medium text-red-700">
+              {error}
+            </div>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={() => void saveQuantity()}
+            disabled={loading || saving || requested < 1 || requested > available}
+            className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-black px-4 text-[11px] font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {saving ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <PackagePlus size={14} />
+            )}
+            {saving
+              ? "Saving..."
+              : existingLine
+                ? "Update List Quantity"
+                : "Add to List"}
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   if (compact) {
     const currentQuantity = existingLine ? qty(requested) : 0;
 
     if (currentQuantity > 0) {
       return (
-        <div
-          onClick={(event) => event.stopPropagation()}
-          className="inline-flex h-6 items-center overflow-hidden rounded-full border border-gray-200 bg-gray-50 text-gray-800"
-          title={`Quantity in ${activeList.reference}`}
-        >
-          <button
-            type="button"
-            disabled={saving}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              void decreaseQuantity();
-            }}
-            aria-label={currentQuantity === 1 ? "Remove item from list" : "Decrease quantity"}
-            className="grid h-full w-6 place-items-center text-[14px] font-medium hover:bg-gray-100 disabled:opacity-50"
+        <>
+          <div
+            onClick={(event) => event.stopPropagation()}
+            className="inline-flex h-6 items-center overflow-hidden rounded-full border border-gray-200 bg-gray-50 text-gray-800"
+            title={`Quantity in ${activeList.reference}`}
           >
-            −
-          </button>
-          <span className="min-w-6 border-x border-gray-200 px-1 text-center text-[9px] font-semibold">
-            {saving ? <Loader2 size={12} className="mx-auto animate-spin" /> : currentQuantity}
-          </span>
-          <button
-            type="button"
-            disabled={saving || currentQuantity >= available}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              void saveQuantity(currentQuantity + 1);
-            }}
-            aria-label="Increase quantity"
-            className="grid h-full w-6 place-items-center text-[14px] font-medium leading-none hover:bg-gray-100 disabled:opacity-30"
-          >
-            +
-          </button>
-        </div>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                void decreaseQuantity();
+              }}
+              aria-label={currentQuantity === 1 ? "Remove item from list" : "Decrease quantity"}
+              className="grid h-full w-6 place-items-center text-[14px] font-medium hover:bg-gray-100 disabled:opacity-50"
+            >
+              −
+            </button>
+            <button
+              type="button"
+              disabled={saving}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setError("");
+                setOpen(true);
+              }}
+              aria-label="Enter quantity"
+              className="min-w-7 border-x border-gray-200 px-1 text-center text-[9px] font-semibold hover:bg-white disabled:opacity-50"
+              title="Click to enter a quantity"
+            >
+              {saving ? (
+                <Loader2 size={12} className="mx-auto animate-spin" />
+              ) : (
+                currentQuantity
+              )}
+            </button>
+            <button
+              type="button"
+              disabled={saving || currentQuantity >= available}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                void saveQuantity(currentQuantity + 1);
+              }}
+              aria-label="Increase quantity"
+              className="grid h-full w-6 place-items-center text-[14px] font-medium leading-none hover:bg-gray-100 disabled:opacity-30"
+            >
+              +
+            </button>
+          </div>
+          {quantityDialog}
+        </>
       );
     }
 
     return (
-      <button
-        type="button"
-        disabled={saving || loading || available < 1}
-        onClick={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          void saveQuantity(1);
-        }}
-        title={`Add unit to ${activeList.reference}`}
-        className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-300 bg-white text-[14px] font-medium leading-none text-gray-700 transition hover:border-gray-400 hover:bg-gray-50 disabled:opacity-40"
-      >
-        {saving || loading ? <Loader2 size={12} className="animate-spin" /> : "+"}
-      </button>
+      <>
+        <button
+          type="button"
+          disabled={saving || loading || available < 1}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setRequested(available > 0 ? 1 : 0);
+            setError("");
+            setOpen(true);
+          }}
+          title={`Enter quantity for ${activeList.reference}`}
+          className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-300 bg-white text-[14px] font-medium leading-none text-gray-700 transition hover:border-gray-400 hover:bg-gray-50 disabled:opacity-40"
+          aria-label="Enter quantity"
+        >
+          {saving || loading ? (
+            <Loader2 size={12} className="animate-spin" />
+          ) : (
+            "+"
+          )}
+        </button>
+        {quantityDialog}
+      </>
     );
   }
 
@@ -558,118 +732,7 @@ export default function EquipmentListMatrixQuantityAction({
         </div>
       ) : null}
 
-      {open ? (
-        <div
-          className="fixed inset-0 z-[10020] flex items-end justify-center sm:items-center sm:p-5"
-          role="dialog"
-          aria-modal="true"
-          aria-label={`Add ${target.displayName} to ${activeList.reference}`}
-        >
-          <button
-            type="button"
-            aria-label="Close quantity picker"
-            onClick={() => {
-              if (!saving) setOpen(false);
-            }}
-            className="absolute inset-0 bg-black/50"
-          />
-
-          <div className="relative w-full rounded-t-3xl bg-white shadow-2xl sm:max-w-md sm:rounded-3xl">
-            <div className="flex items-start gap-3 border-b border-gray-200 px-4 py-4 sm:px-5">
-              {target.photoUrl ? (
-                <img
-                  src={target.photoUrl}
-                  alt={target.displayName}
-                  className="h-12 w-12 shrink-0 rounded-xl border border-gray-100 bg-white object-cover"
-                />
-              ) : (
-                <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-gray-100 text-gray-400">
-                  <PackagePlus size={20} />
-                </div>
-              )}
-
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-bold text-gray-900">
-                  {target.displayName}
-                </div>
-                {target.rowLabel ? (
-                  <div className="mt-0.5 text-[10px] font-semibold text-gray-600">
-                    {target.rowLabel}
-                  </div>
-                ) : null}
-                <div className="mt-0.5 text-[10px] text-gray-500">
-                  Add to <span className="font-bold text-gray-800">{activeList.reference}</span>
-                  {equipmentListSummary(activeList)
-                    ? ` · ${equipmentListSummary(activeList)}`
-                    : ""}
-                </div>
-              </div>
-
-              <button
-                type="button"
-                aria-label="Close"
-                disabled={saving}
-                onClick={() => setOpen(false)}
-                className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 disabled:opacity-50"
-              >
-                <X size={15} />
-              </button>
-            </div>
-
-            <div className="space-y-4 px-4 py-5 sm:px-5">
-              <div className="grid grid-cols-3 gap-2 text-center">
-                <div className="rounded-xl bg-gray-100 px-2 py-2.5">
-                  <div className="text-[8px] font-bold uppercase text-gray-400">Total</div>
-                  <div className="mt-1 text-sm font-bold text-gray-900">{qty(target.total)}</div>
-                </div>
-                <div className="rounded-xl bg-yellow-100 px-2 py-2.5">
-                  <div className="text-[8px] font-bold uppercase text-yellow-700">Maintenance</div>
-                  <div className="mt-1 text-sm font-bold text-yellow-800">{qty(target.maintenance)}</div>
-                </div>
-                <div className="rounded-xl bg-green-100 px-2 py-2.5">
-                  <div className="text-[8px] font-bold uppercase text-green-700">Available</div>
-                  <div className="mt-1 text-sm font-bold text-green-800">{available}</div>
-                </div>
-              </div>
-
-              {loading ? (
-                <div className="flex items-center justify-center gap-2 py-5 text-xs text-gray-500">
-                  <Loader2 size={15} className="animate-spin" /> Loading quantity...
-                </div>
-              ) : (
-                <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-500">
-                  Quantity
-                  <input
-                    type="number"
-                    min={1}
-                    max={available || undefined}
-                    value={requested}
-                    disabled={saving || available === 0}
-                    onChange={(event) => setRequested(qty(event.target.value))}
-                    className="mt-2 h-11 w-full rounded-xl border border-gray-300 bg-white px-3 text-sm font-bold text-gray-900 outline-none focus:border-black disabled:bg-gray-100"
-                  />
-                </label>
-              )}
-
-              {error ? (
-                <div className="rounded-xl bg-red-50 px-3 py-2 text-[10px] font-medium text-red-700">
-                  {error}
-                </div>
-              ) : null}
-
-              <button
-                type="button"
-                onClick={() => void saveQuantity()}
-                disabled={loading || saving || requested < 1 || requested > available}
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-black px-4 text-[11px] font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                {saving ? <Loader2 size={14} className="animate-spin" /> : <PackagePlus size={14} />}
-                {saving ? "Adding..." : existingLine ? "Update List Quantity" : "Add to List"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {quantityDialog}
     </>
   );
 }

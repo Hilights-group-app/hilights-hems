@@ -32,6 +32,21 @@ export type Catalog = {
   categories: CatalogCategory[];
 };
 
+export const CATALOG_CACHE_KEY = "hems:catalog:v4";
+export const CATALOG_CHANGED_EVENT = "hems:catalog-change";
+
+function notifyCatalogChanged() {
+  if (typeof window === "undefined") return;
+
+  try {
+    sessionStorage.removeItem(CATALOG_CACHE_KEY);
+  } catch {
+    // The live database refresh still works if storage is unavailable.
+  }
+
+  window.dispatchEvent(new Event(CATALOG_CHANGED_EVENT));
+}
+
 /* -------------------------
 READ CATALOG (DB)
 --------------------------*/
@@ -96,6 +111,7 @@ export async function addCategory(name: string, slug: string) {
     .single();
 
   if (error) throw error;
+  notifyCatalogChanged();
   return data as Category;
 }
 
@@ -109,6 +125,7 @@ export async function renameCategory(id: string, name: string, slug: string) {
     .single();
 
   if (error) throw error;
+  notifyCatalogChanged();
   return data as Category;
 }
 
@@ -117,6 +134,7 @@ export async function deleteCategory(id: string) {
   const { error } = await supabase.from("categories").delete().eq("id", id);
 
   if (error) throw error;
+  notifyCatalogChanged();
   return true;
 }
 
@@ -137,6 +155,7 @@ export async function addSubcategory(
     .single();
 
   if (error) throw error;
+  notifyCatalogChanged();
   return data as Subcategory;
 }
 
@@ -154,6 +173,7 @@ export async function renameSubcategory(
     .single();
 
   if (error) throw error;
+  notifyCatalogChanged();
   return data as Subcategory;
 }
 
@@ -162,6 +182,7 @@ export async function deleteSubcategory(id: string) {
   const { error } = await supabase.from("subcategories").delete().eq("id", id);
 
   if (error) throw error;
+  notifyCatalogChanged();
   return true;
 }
 
@@ -178,5 +199,6 @@ export async function setSubcategoryType(
     .single();
 
   if (error) throw error;
+  notifyCatalogChanged();
   return data as Subcategory;
 }

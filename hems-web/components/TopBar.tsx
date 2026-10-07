@@ -3,10 +3,13 @@
 import Link from "next/link";
 import {
   Bell,
+  Boxes,
   ChevronDown,
+  House,
   Loader2,
   Menu,
   Search,
+  Settings as SettingsIcon,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -20,6 +23,9 @@ import {
   setUserName,
   setUserRole,
 } from "@/lib/authStore";
+import EquipmentListsSidebar from "@/components/EquipmentListsSidebar";
+import { ACTIVE_EQUIPMENT_LIST_EVENT } from "@/lib/equipmentLists";
+import { CATALOG_CHANGED_EVENT } from "@/lib/catalogStore";
 
 type NotificationRow = {
   id: string;
@@ -150,6 +156,44 @@ export default function TopBar() {
     setSearchQuery("");
     setSearchFocused(false);
   }, [pathname]);
+
+  useEffect(() => {
+    const desktop = window.matchMedia("(min-width: 1280px)");
+    const closeDesktopDrawer = () => {
+      if (desktop.matches) setSidebarOpen(false);
+    };
+    const closeAfterListSelection = () => setSidebarOpen(false);
+
+    closeDesktopDrawer();
+    desktop.addEventListener("change", closeDesktopDrawer);
+    window.addEventListener(
+      ACTIVE_EQUIPMENT_LIST_EVENT,
+      closeAfterListSelection,
+    );
+
+    return () => {
+      desktop.removeEventListener("change", closeDesktopDrawer);
+      window.removeEventListener(
+        ACTIVE_EQUIPMENT_LIST_EVENT,
+        closeAfterListSelection,
+      );
+    };
+  }, []);
+
+  useEffect(() => {
+    function invalidateSearchCatalog() {
+      setSearchIndex(null);
+      searchLoadRef.current = null;
+    }
+
+    window.addEventListener(CATALOG_CHANGED_EVENT, invalidateSearchCatalog);
+    return () => {
+      window.removeEventListener(
+        CATALOG_CHANGED_EVENT,
+        invalidateSearchCatalog,
+      );
+    };
+  }, []);
 
   async function loadNotifications() {
     const { data, error } = await supabase
@@ -577,9 +621,11 @@ if (!notifCache) {
   }
 
   const navItems = [
-    { label: "Home", href: "/" },
-    { label: "Inventory", href: "/inventory" },
-    { label: "Setting", href: "/settings" },
+    { label: "Home", href: "/", icon: House },
+    { label: "Inventory", href: "/inventory", icon: Boxes },
+    ...(profile.role === "admin"
+      ? [{ label: "Settings", href: "/settings", icon: SettingsIcon }]
+      : []),
   ];
 
   return (
@@ -591,7 +637,7 @@ if (!notifCache) {
               <button
                 type="button"
                 onClick={() => setSidebarOpen(true)}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-700 transition hover:bg-gray-100 active:scale-95"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-700 transition hover:bg-gray-100 active:scale-95 xl:hidden"
                 title="Menu"
               >
                 <Menu size={22} strokeWidth={2.4} />
@@ -724,6 +770,34 @@ if (!notifCache) {
               <div className="flex items-center gap-2 px-1 py-0.5">
                 {pathname !== "/login" ? (
                   <>
+                    <Link
+                      href="/"
+                      className={`flex h-6 w-6 items-center justify-center rounded-full transition ${
+                        pathname === "/"
+                          ? "bg-gray-900 text-white"
+                          : "text-gray-700 hover:bg-gray-100"
+                      }`}
+                      title="Home"
+                      aria-label="Home"
+                    >
+                      <House size={14} strokeWidth={2.1} />
+                    </Link>
+
+                    {profile.role === "admin" ? (
+                      <Link
+                        href="/settings"
+                        className={`flex h-6 w-6 items-center justify-center rounded-full transition ${
+                          pathname.startsWith("/settings")
+                            ? "bg-gray-900 text-white"
+                            : "text-gray-700 hover:bg-gray-100"
+                        }`}
+                        title="Settings"
+                        aria-label="Settings"
+                      >
+                        <SettingsIcon size={14} strokeWidth={2.1} />
+                      </Link>
+                    ) : null}
+
                     <div ref={notifRef} className="relative">
                       <button
                         type="button"
@@ -889,14 +963,14 @@ if (!notifCache) {
       {showPrivateNav ? (
         <>
           <div
-            className={`fixed inset-0 z-[9998] bg-black/30 transition-opacity duration-200 ${
+            className={`fixed inset-0 z-[9998] bg-black/30 transition-opacity duration-200 xl:hidden ${
               sidebarOpen ? "opacity-100" : "pointer-events-none opacity-0"
             }`}
             onClick={() => setSidebarOpen(false)}
           />
 
           <aside
-            className={`fixed left-0 top-0 z-[9999] h-full w-[260px] bg-white shadow-2xl transition-transform duration-300 ease-out ${
+            className={`fixed left-0 top-0 z-[9999] flex h-full w-[min(88vw,360px)] flex-col bg-white shadow-2xl transition-transform duration-300 ease-out xl:hidden ${
               sidebarOpen ? "translate-x-0" : "-translate-x-full"
             }`}
           >
@@ -915,24 +989,36 @@ if (!notifCache) {
               </button>
             </div>
 
-            <nav className="p-3">
-              {navItems.map((item) => {
-                const active =
-                  item.href === "/" ? pathname === "/" : pathname?.startsWith(item.href);
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <nav className="p-3 pb-2">
+                {navItems.map((item) => {
+                  const active =
+                    item.href === "/"
+                      ? pathname === "/"
+                      : pathname?.startsWith(item.href);
+                  const NavIcon = item.icon;
 
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    className={`mb-1 flex items-center rounded-xl px-3 py-3 text-sm font-medium transition ${
-                      active ? "bg-gray-900 text-white" : "text-gray-700 hover:bg-gray-100"
-                    }`}
-                  >
-                    {item.label}
-                  </Link>
-                );
-              })}
-            </nav>
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      className={`mb-1 flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium transition ${
+                        active
+                          ? "bg-gray-900 text-white"
+                          : "text-gray-700 hover:bg-gray-100"
+                      }`}
+                    >
+                      <NavIcon size={16} strokeWidth={2.1} />
+                      {item.label}
+                    </Link>
+                  );
+                })}
+              </nav>
+
+              <div className="border-t border-gray-200">
+                {sidebarOpen ? <EquipmentListsSidebar /> : null}
+              </div>
+            </div>
           </aside>
         </>
       ) : null}

@@ -2,7 +2,11 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { readCatalog } from "@/lib/catalogStore";
+import {
+  CATALOG_CACHE_KEY,
+  CATALOG_CHANGED_EVENT,
+  readCatalog,
+} from "@/lib/catalogStore";
 import InventoryImportClient from "@/components/InventoryImportClient";
 
 type Category = {
@@ -12,13 +16,11 @@ type Category = {
   subcategories: { id: string; name: string; slug: string }[];
 };
 
-const CACHE_KEY = "hems:catalog:v4";
-
 function getCachedCatalog(): Category[] {
   if (typeof window === "undefined") return [];
 
   try {
-    const cached = sessionStorage.getItem(CACHE_KEY);
+    const cached = sessionStorage.getItem(CATALOG_CACHE_KEY);
     return cached ? JSON.parse(cached) : [];
   } catch {
     return [];
@@ -65,10 +67,18 @@ export default function InventoryClient() {
     if (cached.length > 0) {
       setCategories(cached);
       setLoading(false);
-      return;
     }
 
     void loadCatalog();
+
+    function handleCatalogChange() {
+      void loadCatalog();
+    }
+
+    window.addEventListener(CATALOG_CHANGED_EVENT, handleCatalogChange);
+    return () => {
+      window.removeEventListener(CATALOG_CHANGED_EVENT, handleCatalogChange);
+    };
   }, []);
 
   async function loadCatalog() {
@@ -79,7 +89,7 @@ export default function InventoryClient() {
       setCategories(cats);
 
       if (typeof window !== "undefined") {
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify(cats));
+        sessionStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(cats));
       }
     } catch (e) {
       console.error("Inventory load error:", e);
