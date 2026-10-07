@@ -6,7 +6,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { canEditReportForRoute, getUserName } from "@/lib/authStore";
 import { logActivity } from "@/lib/activityStore";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Download, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   EQUIPMENT_LIST_ITEMS_EVENT,
   EQUIPMENT_LISTS_EVENT,
@@ -286,6 +286,108 @@ function normalizePhotoList(input: unknown, fallback?: string | null): string[] 
   return [];
 }
 
+type PdfImageAsset = {
+  dataUrl: string;
+  width: number;
+  height: number;
+};
+
+async function loadPdfImageAsset(
+  source: string | null | undefined,
+  maxSide = 1200,
+): Promise<PdfImageAsset | null> {
+  if (!source?.trim()) return null;
+
+  try {
+    let dataUrl = source;
+
+    if (!source.startsWith("data:image/")) {
+      const response = await fetch(source, { cache: "force-cache" });
+      if (!response.ok) return null;
+
+      const blob = await response.blob();
+      dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("Failed to read PDF image."));
+        reader.onload = () => resolve(String(reader.result || ""));
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const nextImage = new Image();
+      nextImage.onerror = () => reject(new Error("Failed to load PDF image."));
+      nextImage.onload = () => resolve(nextImage);
+      nextImage.src = dataUrl;
+    });
+
+    const originalWidth = image.naturalWidth || image.width;
+    const originalHeight = image.naturalHeight || image.height;
+    if (!originalWidth || !originalHeight) return null;
+
+    const scale = Math.min(
+      1,
+      maxSide / Math.max(originalWidth, originalHeight),
+    );
+    const width = Math.max(1, Math.round(originalWidth * scale));
+    const height = Math.max(1, Math.round(originalHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+
+    return {
+      dataUrl: canvas.toDataURL("image/jpeg", 0.9),
+      width,
+      height,
+    };
+  } catch (error) {
+    console.warn("LED report PDF image could not be loaded", error);
+    return null;
+  }
+}
+
+function pdfImageSize(
+  image: PdfImageAsset,
+  maxWidth: number,
+  maxHeight: number,
+) {
+  const scale = Math.min(maxWidth / image.width, maxHeight / image.height);
+  return {
+    width: image.width * scale,
+    height: image.height * scale,
+  };
+}
+
+function cleanPdfFileName(value: string) {
+  return (
+    value
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim() || "LED Report"
+  );
+}
+
+function fitPdfText(pdf: any, value: string, maxWidth: number) {
+  const clean = value.trim();
+  if (!clean || pdf.getTextWidth(clean) <= maxWidth) return clean;
+
+  let shortened = clean;
+  while (
+    shortened.length > 1 &&
+    pdf.getTextWidth(`${shortened}...`) > maxWidth
+  ) {
+    shortened = shortened.slice(0, -1);
+  }
+  return `${shortened.trimEnd()}...`;
+}
+
 export default function LedScreenReportClient({
   category,
   subcategory,
@@ -342,6 +444,7 @@ export default function LedScreenReportClient({
   const [uploadingEditPhotos, setUploadingEditPhotos] = useState(false);
   const [sidebarTarget, setSidebarTarget] = useState<HTMLElement | null>(null);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+  const [pdfExporting, setPdfExporting] = useState(false);
 
   const activeAllocatedQuantity = useMemo(
     () =>
@@ -1092,6 +1195,626 @@ export default function LedScreenReportClient({
     ? issues.find((issue) => issue.id === editIssueId) || null
     : null;
 
+  async function downloadReportPdf() {
+    if (!row || pdfExporting) return;
+
+    setPdfExporting(true);
+
+    try {
+      const [{ jsPDF }, logo, photoEntries] = await Promise.all([
+        import("jspdf"),
+        loadPdfImageAsset("/logo.png", 1600),
+        Promise.all(
+          Array.from(
+            new Set(
+              [
+                row.photo_data,
+                ...issues.flatMap((issue) =>
+                  normalizePhotoList(issue.photo_data_list, issue.photo_data),
+                ),
+              ].filter((source): source is string => Boolean(source?.trim())),
+            ),
+          ).map(async (source) => [
+            source,
+            await loadPdfImageAsset(source),
+          ] as const),
+        ),
+      ]);
+
+      const imageBySource = new Map<string, PdfImageAsset>();
+      for (const [source, image] of photoEntries) {
+        if (image) imageBySource.set(source, image);
+      }
+
+      const pdf = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+        compress: true,
+      });
+
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 12;
+      const contentWidth = pageWidth - margin * 2;
+      const contentTop = 28;
+      const contentBottom = pageHeight - 15;
+      let cursorY = contentTop;
+
+      function drawPageHeader() {
+        pdf.setFillColor(255, 255, 255);
+        pdf.rect(0, 0, pageWidth, 25, "F");
+
+        if (logo) {
+          const logoSize = pdfImageSize(logo, 43, 9);
+          pdf.addImage(
+            logo.dataUrl,
+            "JPEG",
+            margin,
+            7,
+            logoSize.width,
+            logoSize.height,
+          );
+        } else {
+          pdf.setFont("helvetica", "bold");
+          pdf.setFontSize(12);
+          pdf.setTextColor(20, 20, 20);
+          pdf.text("HILIGHTS GROUP", margin, 13);
+        }
+
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(10);
+        pdf.setTextColor(25, 25, 25);
+        pdf.text("LED SCREEN REPORT", pageWidth - margin, 11, {
+          align: "right",
+        });
+
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(7);
+        pdf.setTextColor(110, 110, 110);
+        pdf.text(
+          fitPdfText(
+            pdf,
+            [parsedName.brand, parsedName.model].filter(Boolean).join(" ") ||
+              "LED Screen",
+            76,
+          ),
+          pageWidth - margin,
+          17,
+          { align: "right" },
+        );
+
+        pdf.setDrawColor(225, 225, 225);
+        pdf.line(margin, 23, pageWidth - margin, 23);
+        cursorY = contentTop;
+      }
+
+      function addPage() {
+        pdf.addPage();
+        drawPageHeader();
+      }
+
+      function ensureSpace(height: number) {
+        if (cursorY + height > contentBottom) addPage();
+      }
+
+      drawPageHeader();
+
+      // Equipment header card -------------------------------------------------
+      const equipmentCardHeight = 37;
+      ensureSpace(equipmentCardHeight);
+      pdf.setFillColor(255, 255, 255);
+      pdf.setDrawColor(224, 224, 224);
+      pdf.roundedRect(
+        margin,
+        cursorY,
+        contentWidth,
+        equipmentCardHeight,
+        3,
+        3,
+        "FD",
+      );
+
+      const equipmentImageX = margin + 5;
+      const equipmentImageY = cursorY + 4.5;
+      const equipmentImageBox = 28;
+      pdf.setFillColor(249, 250, 251);
+      pdf.setDrawColor(225, 225, 225);
+      pdf.roundedRect(
+        equipmentImageX,
+        equipmentImageY,
+        equipmentImageBox,
+        equipmentImageBox,
+        2,
+        2,
+        "FD",
+      );
+
+      const equipmentImage = row.photo_data
+        ? imageBySource.get(row.photo_data)
+        : null;
+      if (equipmentImage) {
+        const imageSize = pdfImageSize(
+          equipmentImage,
+          equipmentImageBox - 3,
+          equipmentImageBox - 3,
+        );
+        pdf.addImage(
+          equipmentImage.dataUrl,
+          "JPEG",
+          equipmentImageX + (equipmentImageBox - imageSize.width) / 2,
+          equipmentImageY + (equipmentImageBox - imageSize.height) / 2,
+          imageSize.width,
+          imageSize.height,
+        );
+      } else {
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(6.5);
+        pdf.setTextColor(165, 165, 165);
+        pdf.text(
+          "No photo",
+          equipmentImageX + equipmentImageBox / 2,
+          equipmentImageY + equipmentImageBox / 2 + 1,
+          { align: "center" },
+        );
+      }
+
+      const equipmentTextX = equipmentImageX + equipmentImageBox + 6;
+      pdf.setFillColor(239, 68, 68);
+      pdf.circle(equipmentTextX, cursorY + 8, 0.9, "F");
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(12);
+      pdf.setTextColor(25, 25, 25);
+      pdf.text("LED Report", equipmentTextX + 3, cursorY + 9.2);
+
+      const detailRows = [
+        ["Brand", parsedName.brand || "-"],
+        ["Model", parsedName.model || "-"],
+        ...(row.cabinet_model
+          ? [["Cabinet", row.cabinet_model] as [string, string]]
+          : []),
+        ["Cabinet size", row.size || "-"],
+      ] as [string, string][];
+
+      let detailY = cursorY + 16;
+      for (const [label, value] of detailRows) {
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(7.2);
+        pdf.setTextColor(55, 55, 55);
+        pdf.text(`${label}:`, equipmentTextX, detailY);
+        const labelWidth = pdf.getTextWidth(`${label}: `);
+        pdf.setFont("helvetica", "normal");
+        pdf.text(
+          fitPdfText(
+            pdf,
+            value,
+            pageWidth - margin - equipmentTextX - labelWidth - 5,
+          ),
+          equipmentTextX + labelWidth,
+          detailY,
+        );
+        detailY += 4.3;
+      }
+      cursorY += equipmentCardHeight + 3;
+
+      // Quantity card ---------------------------------------------------------
+      type PdfChip = {
+        text: string;
+        fill: [number, number, number];
+        color: [number, number, number];
+      };
+
+      const quantityChips: PdfChip[] = [
+        {
+          text: `Total: ${formatQty(totalDisplay, viewMode)} ${unitSuffix(viewMode)}`,
+          fill: [243, 244, 246],
+          color: [31, 41, 55],
+        },
+        {
+          text: `Available: ${formatQty(availableDisplay, viewMode)} ${unitSuffix(viewMode)}`,
+          fill: [220, 252, 231],
+          color: [21, 128, 61],
+        },
+      ];
+
+      if (maintenanceDisplay > 0) {
+        quantityChips.push({
+          text: `Maintenance: ${formatQty(maintenanceDisplay, viewMode)} ${unitSuffix(viewMode)}`,
+          fill: [254, 249, 195],
+          color: [161, 98, 7],
+        });
+      }
+
+      for (const allocation of activeAllocations) {
+        quantityChips.push({
+          text: `${formatQty(
+            toDisplayQty(allocation.quantity, row.size, viewMode),
+            viewMode,
+          )} ${unitSuffix(viewMode)} - ${allocation.label}`,
+          fill:
+            allocation.status === "partially_returned"
+              ? [243, 232, 255]
+              : [219, 234, 254],
+          color:
+            allocation.status === "partially_returned"
+              ? [107, 33, 168]
+              : [30, 64, 175],
+        });
+      }
+
+      if (existingMovementQty > 0) {
+        quantityChips.push({
+          text: `${formatQty(
+            toDisplayQty(existingMovementQty, row.size, viewMode),
+            viewMode,
+          )} ${unitSuffix(viewMode)} - Existing movement`,
+          fill: [243, 244, 246],
+          color: [75, 85, 99],
+        });
+      }
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(7.2);
+      const chipLayouts: Array<PdfChip & { x: number; row: number; width: number }> = [];
+      const chipsLeft = margin + 5;
+      const chipsRight = pageWidth - margin - 5;
+      let chipX = chipsLeft;
+      let chipRow = 0;
+
+      for (const chip of quantityChips) {
+        const displayText = fitPdfText(pdf, chip.text, 82);
+        const width = Math.min(86, pdf.getTextWidth(displayText) + 7);
+        if (chipX + width > chipsRight && chipX > chipsLeft) {
+          chipRow += 1;
+          chipX = chipsLeft;
+        }
+        chipLayouts.push({ ...chip, text: displayText, x: chipX, row: chipRow, width });
+        chipX += width + 2;
+      }
+
+      const quantityCardHeight = 15 + (chipRow + 1) * 8;
+      ensureSpace(quantityCardHeight);
+      pdf.setFillColor(255, 255, 255);
+      pdf.setDrawColor(224, 224, 224);
+      pdf.roundedRect(
+        margin,
+        cursorY,
+        contentWidth,
+        quantityCardHeight,
+        3,
+        3,
+        "FD",
+      );
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(8);
+      pdf.setTextColor(55, 65, 81);
+      pdf.text("Qty", margin + 5, cursorY + 7.5);
+
+      for (const chip of chipLayouts) {
+        const chipY = cursorY + 11 + chip.row * 8;
+        pdf.setFillColor(chip.fill[0], chip.fill[1], chip.fill[2]);
+        pdf.roundedRect(chip.x, chipY, chip.width, 5.5, 1.4, 1.4, "F");
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(7.2);
+        pdf.setTextColor(chip.color[0], chip.color[1], chip.color[2]);
+        pdf.text(chip.text, chip.x + 3.5, chipY + 3.75);
+      }
+      cursorY += quantityCardHeight + 3;
+
+      // Manufacturing defects ------------------------------------------------
+      const technicalColumns = 3;
+      const technicalGap = 3;
+      const technicalInnerWidth = contentWidth - 10;
+      const technicalCardWidth =
+        (technicalInnerWidth - technicalGap * (technicalColumns - 1)) /
+        technicalColumns;
+      const technicalCardHeight = 21;
+      const technicalRows = Math.max(
+        1,
+        Math.ceil(technicalIssues.length / technicalColumns),
+      );
+      const technicalSectionHeight =
+        16 +
+        (technicalIssues.length > 0
+          ? technicalRows * technicalCardHeight +
+            (technicalRows - 1) * technicalGap
+          : 8) +
+        5;
+
+      ensureSpace(technicalSectionHeight);
+      pdf.setFillColor(255, 255, 255);
+      pdf.setDrawColor(224, 224, 224);
+      pdf.roundedRect(
+        margin,
+        cursorY,
+        contentWidth,
+        technicalSectionHeight,
+        3,
+        3,
+        "FD",
+      );
+      pdf.setFillColor(20, 20, 20);
+      pdf.circle(margin + 5.5, cursorY + 7, 0.9, "F");
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(9);
+      pdf.setTextColor(185, 28, 28);
+      pdf.text("Manufacturing Defect", margin + 9, cursorY + 8);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(6.8);
+      pdf.setTextColor(110, 110, 110);
+      pdf.text(
+        "Issues related to factory or product defects",
+        margin + 49,
+        cursorY + 8,
+      );
+
+      if (technicalIssues.length === 0) {
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(8);
+        pdf.setTextColor(160, 160, 160);
+        pdf.text("No technical issues.", margin + 5, cursorY + 19);
+      } else {
+        technicalIssues.forEach((issue, index) => {
+          const column = index % technicalColumns;
+          const itemRow = Math.floor(index / technicalColumns);
+          const x =
+            margin + 5 + column * (technicalCardWidth + technicalGap);
+          const y =
+            cursorY + 14 + itemRow * (technicalCardHeight + technicalGap);
+
+          pdf.setFillColor(249, 250, 251);
+          pdf.setDrawColor(226, 228, 232);
+          pdf.roundedRect(
+            x,
+            y,
+            technicalCardWidth,
+            technicalCardHeight,
+            2,
+            2,
+            "FD",
+          );
+          pdf.setFont("helvetica", "bold");
+          pdf.setFontSize(8.2);
+          pdf.setTextColor(30, 30, 30);
+          pdf.text(
+            fitPdfText(
+              pdf,
+              `${getIssueLabel(issue.problem_type)}: ${issue.qty} Cabinet`,
+              technicalCardWidth - 6,
+            ),
+            x + 3,
+            y + 6.5,
+          );
+
+          pdf.setFont("helvetica", "normal");
+          pdf.setFontSize(6.2);
+          pdf.setTextColor(115, 115, 115);
+          const savedLines = pdf
+            .splitTextToSize(
+              `Saved: ${new Date(issue.created_at).toLocaleString()} - added by ${
+                issue.created_by || "-"
+              }`,
+              technicalCardWidth - 6,
+            )
+            .slice(0, 2);
+          pdf.text(savedLines, x + 3, y + 12);
+        });
+      }
+      cursorY += technicalSectionHeight + 3;
+
+      // Handling damage -------------------------------------------------------
+      ensureSpace(20);
+      pdf.setFillColor(255, 255, 255);
+      pdf.setDrawColor(224, 224, 224);
+      pdf.roundedRect(margin, cursorY, contentWidth, 18, 3, 3, "FD");
+      pdf.setFillColor(20, 20, 20);
+      pdf.circle(margin + 5.5, cursorY + 6.2, 0.9, "F");
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(9.5);
+      pdf.setTextColor(185, 28, 28);
+      pdf.text("Handling Damage", margin + 9, cursorY + 7.2);
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(7.5);
+      pdf.setTextColor(75, 75, 75);
+      pdf.text(
+        `All Damage Qty: ${crewIssues.reduce(
+          (sum, issue) => sum + clampQty(issue.qty),
+          0,
+        )} Cabinets`,
+        margin + 5,
+        cursorY + 13,
+      );
+      cursorY += 21;
+
+      if (crewIssues.length === 0) {
+        ensureSpace(16);
+        pdf.setFillColor(249, 250, 251);
+        pdf.setDrawColor(226, 228, 232);
+        pdf.roundedRect(margin, cursorY, contentWidth, 14, 3, 3, "FD");
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(8);
+        pdf.setTextColor(160, 160, 160);
+        pdf.text("No crew-caused damage.", margin + 5, cursorY + 8.5);
+        cursorY += 17;
+      } else {
+        for (const issue of crewIssues) {
+          const sourcePhotos = normalizePhotoList(
+            issue.photo_data_list,
+            issue.photo_data,
+          );
+          const issuePhotos = sourcePhotos
+            .map((source) => imageBySource.get(source))
+            .filter((image): image is PdfImageAsset => Boolean(image));
+
+          pdf.setFont("helvetica", "normal");
+          pdf.setFontSize(7.2);
+          const noteLines = issue.note
+            ? (pdf.splitTextToSize(`Note: ${issue.note}`, 71) as string[])
+            : [];
+          const visibleNoteLines = noteLines.slice(0, 18);
+          if (noteLines.length > visibleNoteLines.length) {
+            const last = visibleNoteLines.length - 1;
+            visibleNoteLines[last] = fitPdfText(
+              pdf,
+              `${visibleNoteLines[last]}...`,
+              71,
+            );
+          }
+
+          pdf.setFontSize(6.4);
+          const savedLines = (
+            pdf.splitTextToSize(
+              `Saved: ${new Date(issue.created_at).toLocaleString()} - added by ${
+                issue.created_by || "-"
+              }`,
+              71,
+            ) as string[]
+          ).slice(0, 2);
+
+          const detailsHeight =
+            11 + 4 * 4 + visibleNoteLines.length * 3.5 + savedLines.length * 3.2 + 4;
+          const photoAreaWidth = 98;
+          const photoGap = 3;
+          const maxPhotoWidth = issuePhotos.length
+            ? Math.min(
+                46,
+                (photoAreaWidth - photoGap * (issuePhotos.length - 1)) /
+                  issuePhotos.length,
+              )
+            : 0;
+          const photoSizes = issuePhotos.map((image) =>
+            pdfImageSize(image, maxPhotoWidth, 36),
+          );
+          const photoHeight = photoSizes.reduce(
+            (maximum, size) => Math.max(maximum, size.height),
+            0,
+          );
+          const damageCardHeight = Math.max(
+            34,
+            detailsHeight,
+            photoHeight > 0 ? photoHeight + 12 : 0,
+          );
+
+          ensureSpace(damageCardHeight + 3);
+          const damageCardY = cursorY;
+          pdf.setFillColor(249, 250, 251);
+          pdf.setDrawColor(226, 228, 232);
+          pdf.roundedRect(
+            margin,
+            damageCardY,
+            contentWidth,
+            damageCardHeight,
+            3,
+            3,
+            "FD",
+          );
+
+          const textX = margin + 5;
+          pdf.setFont("helvetica", "bold");
+          pdf.setFontSize(9);
+          pdf.setTextColor(30, 30, 30);
+          pdf.text(getIssueLabel(issue.problem_type), textX, damageCardY + 7);
+
+          pdf.setFont("helvetica", "normal");
+          pdf.setFontSize(7.2);
+          pdf.setTextColor(65, 65, 65);
+          let lineY = damageCardY + 13;
+          const damageDetails = [
+            `Qty by Cabinet: ${issue.qty}`,
+            `Team: ${issue.team_name || "-"}`,
+            `Event: ${issue.event_name || "-"}`,
+            `Date: ${issue.event_date || "-"}`,
+          ];
+          for (const detail of damageDetails) {
+            pdf.text(fitPdfText(pdf, detail, 71), textX, lineY);
+            lineY += 4;
+          }
+
+          if (visibleNoteLines.length > 0) {
+            pdf.text(visibleNoteLines, textX, lineY);
+            lineY += visibleNoteLines.length * 3.5 + 1;
+          }
+
+          pdf.setFontSize(6.4);
+          pdf.setTextColor(120, 120, 120);
+          pdf.text(savedLines, textX, lineY);
+
+          if (issuePhotos.length > 0) {
+            const totalPhotoWidth =
+              photoSizes.reduce((sum, size) => sum + size.width, 0) +
+              photoGap * (photoSizes.length - 1);
+            let photoX = pageWidth - margin - 5 - totalPhotoWidth;
+
+            issuePhotos.forEach((image, index) => {
+              const size = photoSizes[index];
+              const photoY = damageCardY + 6;
+
+              // The border follows the real photo ratio. A 16:9 photo therefore
+              // stays 16:9 instead of being cropped into a square.
+              pdf.setFillColor(255, 255, 255);
+              pdf.setDrawColor(210, 210, 210);
+              pdf.roundedRect(
+                photoX - 0.7,
+                photoY - 0.7,
+                size.width + 1.4,
+                size.height + 1.4,
+                1.2,
+                1.2,
+                "FD",
+              );
+              pdf.addImage(
+                image.dataUrl,
+                "JPEG",
+                photoX,
+                photoY,
+                size.width,
+                size.height,
+              );
+              photoX += size.width + photoGap;
+            });
+          }
+
+          cursorY += damageCardHeight + 3;
+        }
+      }
+
+      const pageCount = pdf.getNumberOfPages();
+      for (let page = 1; page <= pageCount; page += 1) {
+        pdf.setPage(page);
+        pdf.setDrawColor(225, 225, 225);
+        pdf.line(margin, pageHeight - 10.5, pageWidth - margin, pageHeight - 10.5);
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(6.5);
+        pdf.setTextColor(120, 120, 120);
+        pdf.text(
+          "Hilights Group - Equipment Management System",
+          margin,
+          pageHeight - 6.5,
+        );
+        pdf.text(`Page ${page} of ${pageCount}`, pageWidth - margin, pageHeight - 6.5, {
+          align: "right",
+        });
+      }
+
+      const fileLabel = cleanPdfFileName(
+        [
+          "LED Report",
+          parsedName.brand,
+          parsedName.model,
+          row.cabinet_model || row.size,
+        ]
+          .filter(Boolean)
+          .join(" - "),
+      );
+      pdf.save(`${fileLabel}.pdf`);
+    } catch (error) {
+      console.error("download LED report PDF error", error);
+      alert("Failed to create the LED report PDF.");
+    } finally {
+      setPdfExporting(false);
+    }
+  }
+
   const reportToolsPanel = editable ? (
     <div
       data-led-report-tools="true"
@@ -1183,7 +1906,7 @@ export default function LedScreenReportClient({
                         <img
                           src={src}
                           alt={`Issue photo ${index + 1}`}
-                          className="aspect-square w-full rounded-lg border border-gray-200 bg-gray-50 object-cover"
+                          className="aspect-video w-full rounded-lg border border-gray-200 bg-white object-contain"
                         />
                         <button
                           type="button"
@@ -1367,7 +2090,7 @@ export default function LedScreenReportClient({
                         key={`${src}-${index}`}
                         src={src}
                         alt={`Selected issue photo ${index + 1}`}
-                        className="aspect-square w-full rounded-lg border border-gray-200 bg-gray-50 object-cover"
+                        className="aspect-video w-full rounded-lg border border-gray-200 bg-white object-contain"
                       />
                     ))}
                   </div>
@@ -1502,7 +2225,20 @@ export default function LedScreenReportClient({
               </div>
             </div>
 
-            <div className="flex flex-col items-end gap-2 shrink-0 pt-1 pb-1">
+            <div
+              data-pdf-ignore="true"
+              className="flex flex-col items-end gap-2 shrink-0 pt-1 pb-1"
+            >
+              <button
+                type="button"
+                onClick={() => void downloadReportPdf()}
+                disabled={pdfExporting}
+                className="flex items-center gap-1.5 rounded-full border border-gray-300 bg-white px-2.5 py-1 text-[10px] font-medium text-gray-700 transition-all duration-150 ease-out hover:border-red-200 hover:bg-red-50 hover:text-red-700 hover:shadow-sm active:scale-[0.98] disabled:cursor-wait disabled:opacity-50"
+              >
+                <Download size={11} />
+                {pdfExporting ? "Preparing..." : "Download PDF"}
+              </button>
+
               <Link
                 href={backHref}
                 className="px-2.5 py-1 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
@@ -1721,18 +2457,18 @@ export default function LedScreenReportClient({
 
                       <div className="flex w-full shrink-0 items-start gap-2 sm:w-auto">
                         {photos.length > 0 ? (
-                          <div className="grid w-full grid-cols-3 gap-1 sm:flex sm:w-auto sm:items-center">
+                          <div className="flex w-full flex-wrap items-start gap-2 sm:w-auto sm:justify-end">
                             {photos.map((src, index) => (
                               <div
                                 key={`${log.id}-${index}`}
-                                className="aspect-square w-full overflow-hidden rounded-md border border-gray-300 bg-white sm:h-[120px] sm:w-[120px] sm:min-w-[120px]"
+                                className="w-full max-w-full overflow-hidden rounded-md border border-gray-300 bg-white sm:w-auto sm:max-w-[240px]"
                               >
                                 <img
                                   src={src}
                                   alt={`Issue ${index + 1}`}
                                   loading="lazy"
                                   decoding="async"
-                                  className="block h-full w-full object-cover"
+                                  className="block h-auto max-h-[180px] w-full object-contain sm:w-auto sm:max-w-[240px]"
                                 />
                               </div>
                             ))}

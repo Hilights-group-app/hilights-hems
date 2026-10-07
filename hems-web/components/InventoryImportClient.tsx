@@ -711,12 +711,14 @@ export default function InventoryImportClient({
   const invalidCount = rows.filter((row) => row.errors.length > 0).length;
   const previewRows = rows.slice(0, 100);
 
+  if (!editable) return null;
+
   return (
     <>
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="mb-3 flex w-full items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-xs font-semibold text-gray-800 shadow-sm hover:border-red-200 hover:bg-red-50 hover:text-red-700 lg:hidden"
+        className="flex w-full items-center justify-center gap-2 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-xs font-semibold text-gray-800 shadow-sm hover:border-red-200 hover:bg-red-50 hover:text-red-700"
       >
         <FileSpreadsheet size={15} /> Import Excel
       </button>

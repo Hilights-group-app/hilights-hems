@@ -5,6 +5,18 @@ import { usePathname } from "next/navigation";
 import { AlertTriangle, Clock3, Wrench } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import InventoryImportClient from "@/components/InventoryImportClient";
+import {
+  CATALOG_CACHE_KEY,
+  CATALOG_CHANGED_EVENT,
+  readCatalog,
+  type CatalogCategory,
+} from "@/lib/catalogStore";
+import {
+  canImportInventory,
+  getUserDepartment,
+  getUserRole,
+} from "@/lib/authStore";
 
 type Activity = {
   id: string;
@@ -89,7 +101,11 @@ export default function HomeRightSidebar() {
   const supabase = useMemo(() => createClient(), []);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [activity, setActivity] = useState<Activity[]>([]);
+  const [inventoryCategories, setInventoryCategories] = useState<
+    CatalogCategory[]
+  >([]);
   const pathSegments = pathname.toLowerCase().split("/").filter(Boolean);
+  const showInventoryImport = pathname === "/inventory";
   const showLightingAction = pathSegments.some((segment) =>
     segment.includes("lighting"),
   );
@@ -114,6 +130,49 @@ export default function HomeRightSidebar() {
       pathSegments.length === 3);
 
   useEffect(() => {
+    if (!showInventoryImport) return;
+
+    let cancelled = false;
+
+    try {
+      const cached = sessionStorage.getItem(CATALOG_CACHE_KEY);
+      if (cached) {
+        setInventoryCategories(JSON.parse(cached) as CatalogCategory[]);
+      }
+    } catch {
+      // Continue with the live catalog when browser storage is unavailable.
+    }
+
+    async function loadInventoryCategories() {
+      const catalog = await readCatalog();
+      if (cancelled) return;
+
+      setInventoryCategories(catalog.categories);
+
+      try {
+        sessionStorage.setItem(
+          CATALOG_CACHE_KEY,
+          JSON.stringify(catalog.categories),
+        );
+      } catch {
+        // The live catalog still works if browser storage is unavailable.
+      }
+    }
+
+    void loadInventoryCategories();
+
+    function refreshCatalog() {
+      void loadInventoryCategories();
+    }
+
+    window.addEventListener(CATALOG_CHANGED_EVENT, refreshCatalog);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(CATALOG_CHANGED_EVENT, refreshCatalog);
+    };
+  }, [showInventoryImport]);
+
+  useEffect(() => {
     let cancelled = false;
 
     const cachedAlerts = readCache<Alert[]>(ALERTS_CACHE_KEY);
@@ -123,23 +182,8 @@ export default function HomeRightSidebar() {
     if (cachedActivity !== null) setActivity(cachedActivity);
 
     async function load() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      let role = "";
-      let department = "";
-
-      if (user?.id) {
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("role,department")
-          .eq("id", user.id)
-          .single();
-
-        role = String(profile?.role || "");
-        department = String(profile?.department || "");
-      }
+      const role = getUserRole() ?? "";
+      const department = getUserDepartment() ?? "";
 
       let maintenanceQuery: any = null;
       if (role === "admin" || role === "warehouse_manager" || role === "head") {
@@ -376,6 +420,23 @@ export default function HomeRightSidebar() {
 
   return (
     <div className="space-y-5 p-4">
+      {showInventoryImport && canImportInventory() ? (
+        <>
+          <section>
+            <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
+              Inventory tools
+            </h2>
+            <p className="mb-3 mt-1 text-[10px] leading-4 text-gray-400">
+              Download the Excel template or import inventory in bulk.
+            </p>
+
+            <InventoryImportClient categories={inventoryCategories} />
+          </section>
+
+          <div className="h-px bg-gray-200" />
+        </>
+      ) : null}
+
       <section>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
