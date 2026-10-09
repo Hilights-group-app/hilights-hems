@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { ImagePlus, Trash2 } from "lucide-react";
 import { logActivity } from "@/lib/activityStore";
@@ -12,6 +12,12 @@ import {
   equipmentListTypeLabel,
   type EquipmentList,
 } from "@/lib/equipmentLists";
+import UnitReportFilterBar from "@/components/UnitReportFilterBar";
+import {
+  buildSerialPastePlan,
+  isMultiLineSerialPaste,
+  type UnitReportStatusFilter,
+} from "@/lib/unitReportTools";
 
 type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
@@ -59,6 +65,8 @@ const ACTIVE_LIST_SELECT = `
   dismantling_date,
   loading_date,
   receiving_date,
+  repair_company,
+  maintenance_sent_date,
   notes,
   created_by_name,
   created_at,
@@ -90,6 +98,12 @@ function getStatusTextColor(status: string | null) {
 function formatDisplayDate(value: string | null) {
   if (!value) return "-";
   return value;
+}
+
+function resizeNoteField(element: HTMLTextAreaElement | null) {
+  if (!element) return;
+  element.style.height = "auto";
+  element.style.height = `${element.scrollHeight}px`;
 }
 
 function statusLabel(value: string | null | undefined) {
@@ -147,6 +161,10 @@ export function SerializedRowsBlock({
     Record<string, UnitMovement>
   >({});
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+  const [filterQuery, setFilterQuery] = useState("");
+  const [statusFilter, setStatusFilter] =
+    useState<UnitReportStatusFilter>("all");
+  const [bulkPasting, setBulkPasting] = useState(false);
 
   useEffect(() => {
     void loadUnits();
@@ -272,6 +290,29 @@ export function SerializedRowsBlock({
     });
   }, [units, onStatsChange]);
 
+  const filteredUnits = useMemo(() => {
+    const query = filterQuery.trim().toLocaleLowerCase();
+
+    return units.filter((unit) => {
+      const assigned =
+        Boolean(movementByUnit[unit.id]) || isMovementStatus(unit.status);
+      const statusMatches =
+        statusFilter === "all" ||
+        (statusFilter === "available" && toStatus(unit.status) === "available") ||
+        (statusFilter === "maintenance" &&
+          toStatus(unit.status) === "maintenance") ||
+        (statusFilter === "assigned" && assigned);
+
+      if (!statusMatches) return false;
+      if (!query) return true;
+
+      return [unit.unit_no, unit.serial, unit.notes]
+        .some((value) =>
+          String(value ?? "").toLocaleLowerCase().includes(query),
+        );
+    });
+  }, [filterQuery, movementByUnit, statusFilter, units]);
+
   async function updateUnit(id: string, patch: UnitPatch) {
     if (!editable) return;
 
@@ -371,6 +412,101 @@ export function SerializedRowsBlock({
     });
   }
 
+  async function pasteSerialColumn(unitId: string, clipboardText: string) {
+    if (!editable || bulkPasting) return;
+
+    const plan = buildSerialPastePlan(
+      unitsRef.current,
+      unitId,
+      clipboardText,
+    );
+
+    if (plan.assignments.length === 0) {
+      alert("No new serial numbers were found in the pasted column.");
+      return;
+    }
+
+    if (
+      plan.overwriteCount > 0 &&
+      !confirm(
+        `${plan.overwriteCount} existing serial number${
+          plan.overwriteCount === 1 ? "" : "s"
+        } will be overwritten. Continue?`,
+      )
+    ) {
+      return;
+    }
+
+    setBulkPasting(true);
+
+    try {
+      const existingAssignments = plan.assignments.filter(
+        (assignment) => assignment.target,
+      );
+      const updateResults = await Promise.all(
+        existingAssignments.map((assignment) =>
+          supabase
+            .from("units")
+            .update({ serial: assignment.serial })
+            .eq("id", assignment.target!.id),
+        ),
+      );
+      const updateError = updateResults.find((result) => result.error)?.error;
+      if (updateError) throw updateError;
+
+      const newAssignments = plan.assignments.filter(
+        (assignment) => !assignment.target,
+      );
+
+      if (newAssignments.length > 0) {
+        const firstNumber =
+          unitsRef.current.length > 0
+            ? Math.max(
+                ...unitsRef.current.map((unit) => Number(unit.unit_no) || 0),
+              ) + 1
+            : 1;
+        const { error: insertError } = await supabase.from("units").insert(
+          newAssignments.map((assignment, index) => ({
+            item_id: itemId,
+            unit_no: firstNumber + index,
+            serial: assignment.serial,
+            status: "available",
+            notes: "",
+            testing_date: null,
+            damage_photos: [],
+          })),
+        );
+        if (insertError) throw insertError;
+      }
+
+      await loadUnits();
+      await logActivity({
+        title: `imported serials for ${itemName || "equipment"}`,
+        message: `${plan.assignments.length} serial number${
+          plan.assignments.length === 1 ? "" : "s"
+        } pasted from Excel`,
+        link: activityLink,
+      });
+
+      const skipped = plan.duplicateCount;
+      alert(
+        `${plan.assignments.length} serial number${
+          plan.assignments.length === 1 ? "" : "s"
+        } saved${
+          skipped > 0
+            ? `. ${skipped} duplicate${skipped === 1 ? " was" : "s were"} skipped.`
+            : "."
+        }`,
+      );
+    } catch (pasteError: any) {
+      console.error("bulk serial paste error", pasteError);
+      alert(pasteError?.message || "The serial numbers could not be saved.");
+      await loadUnits();
+    } finally {
+      setBulkPasting(false);
+    }
+  }
+
   async function deleteRow(id: string) {
     if (!editable) return;
 
@@ -460,32 +596,38 @@ export function SerializedRowsBlock({
         </div>
       ) : null}
 
-      <div className="bg-white border border-gray-200 rounded-xl px-[2px] lg:px-5 pt-4 lg:pt-5 pb-5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
-        <div className="hidden lg:flex items-center gap-2 text-[11px] font-semibold text-gray-600 pt-2 pb-4">
-          <div className="w-[32px] min-w-[32px] text-center">ID</div>
-          <div className="w-[120px] min-w-[120px]">Serial</div>
-          <div
-            className={
-              workflowControlledStatus
-                ? "w-[190px] min-w-[190px]"
-                : "w-[95px] min-w-[95px]"
-            }
-          >
-            Status
-          </div>
-          <div className="w-[230px] min-w-[230px]">Note</div>
-          <div className="w-[130px] min-w-[130px]">Test Date</div>
-          <div className="flex-1 min-w-[200px]">Damage</div>
+      <div className="min-w-0 overflow-hidden rounded-xl border border-gray-200 bg-white px-[2px] pb-5 pt-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)] lg:px-5 lg:pt-5">
+        <UnitReportFilterBar
+          query={filterQuery}
+          status={statusFilter}
+          resultCount={filteredUnits.length}
+          totalCount={units.length}
+          onQueryChange={setFilterQuery}
+          onStatusChange={setStatusFilter}
+        />
+
+        <div className="hidden min-w-0 grid-cols-[32px_minmax(0,0.9fr)_minmax(0,1.05fr)_minmax(0,1.45fr)_minmax(0,0.95fr)_minmax(0,1.45fr)_24px] items-center gap-1 pb-4 pt-2 text-[10px] font-semibold text-gray-600 lg:grid">
+          <div className="min-w-0 text-center">ID</div>
+          <div className="min-w-0 truncate">Serial</div>
+          <div className="min-w-0 truncate">Status</div>
+          <div className="min-w-0 truncate">Note</div>
+          <div className="min-w-0 truncate">Test Date</div>
+          <div className="min-w-0 truncate">Damage</div>
+          <div aria-hidden="true" />
         </div>
 
         {units.length === 0 ? (
           <div className="text-sm text-gray-500">No units found.</div>
+        ) : filteredUnits.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-gray-300 px-4 py-8 text-center text-sm text-gray-500">
+            No units match these filters.
+          </div>
         ) : (
-          units.map((unit, idx) => (
+          filteredUnits.map((unit) => (
             <SerializedUnitRow
               key={unit.id}
               unit={unit}
-              index={idx}
+              index={units.findIndex((current) => current.id === unit.id)}
               editable={editable}
               workflowControlledStatus={workflowControlledStatus}
               movement={movementByUnit[unit.id]}
@@ -494,6 +636,7 @@ export function SerializedRowsBlock({
               onDeleteDamagePhoto={deleteDamagePhoto}
               onOpenPhoto={openPhoto}
               onDeleteRow={deleteRow}
+              onBulkSerialPaste={pasteSerialColumn}
             />
           ))
         )}
@@ -609,11 +752,7 @@ function UnitStatusField({
 }) {
   const lockedByMovement =
     workflowControlledStatus && isMovementStatus(status);
-  const widthClass = wide
-    ? workflowControlledStatus
-      ? "w-[190px] min-w-[190px]"
-      : "w-[95px] min-w-[95px]"
-    : "w-full";
+  const widthClass = wide ? "w-full min-w-0" : "w-full";
 
   if (lockedByMovement) {
     if (movement) {
@@ -679,6 +818,7 @@ function SerializedUnitRow({
   onDeleteDamagePhoto,
   onOpenPhoto,
   onDeleteRow,
+  onBulkSerialPaste,
 }: {
   unit: Unit;
   index: number;
@@ -690,6 +830,7 @@ function SerializedUnitRow({
   onDeleteDamagePhoto: (unitId: string, photoIndex: number) => Promise<void>;
   onOpenPhoto: (url: string) => void;
   onDeleteRow: (id: string) => Promise<void>;
+  onBulkSerialPaste: (unitId: string, text: string) => Promise<void>;
 }) {
   const [unitNo, setUnitNo] = useState(String(unit.unit_no ?? ""));
   const [serial, setSerial] = useState(unit.serial || "");
@@ -795,6 +936,12 @@ function SerializedUnitRow({
               value={serial}
               readOnly={!editable}
               placeholder="Serial"
+              onPaste={(event) => {
+                const text = event.clipboardData.getData("text");
+                if (!editable || !isMultiLineSerialPaste(text)) return;
+                event.preventDefault();
+                void onBulkSerialPaste(unit.id, text);
+              }}
               onChange={(e) => {
                 if (!editable) return;
                 const v = e.target.value;
@@ -854,6 +1001,7 @@ function SerializedUnitRow({
         <label className="mt-2 block rounded-xl bg-gray-50 p-2">
           <div className="text-[10px] font-semibold text-gray-400">Note</div>
           <textarea
+            ref={resizeNoteField}
             value={notes}
             readOnly={!editable}
             placeholder="Write note..."
@@ -869,8 +1017,9 @@ function SerializedUnitRow({
               if (!editable) return;
               void onChange(unit.id, { notes });
             }}
+            onInput={(event) => resizeNoteField(event.currentTarget)}
             rows={2}
-            className="mt-1 w-full resize-none border-none bg-transparent p-0 text-[12px] text-gray-800 outline-none"
+            className="mt-1 w-full resize-none overflow-hidden whitespace-pre-wrap break-words border-none bg-transparent p-0 text-[12px] text-gray-800 outline-none [field-sizing:content]"
           />
         </label>
 
@@ -919,7 +1068,7 @@ function SerializedUnitRow({
       </div>
 
       {/* DESKTOP TABLE STYLE */}
-      <div className="hidden lg:flex items-center gap-2 flex-nowrap overflow-visible">
+      <div className="hidden min-w-0 grid-cols-[32px_minmax(0,0.9fr)_minmax(0,1.05fr)_minmax(0,1.45fr)_minmax(0,0.95fr)_minmax(0,1.45fr)_24px] items-center gap-1 lg:grid">
         <input
           value={unitNo}
           readOnly={!editable}
@@ -935,13 +1084,19 @@ function SerializedUnitRow({
             if (!editable) return;
             void onChange(unit.id, { unit_no: Number(unitNo) || 0 });
           }}
-          className="w-[32px] min-w-[32px] rounded-lg border-none bg-white px-0 py-1 text-center text-[11px] outline-none read-only:text-gray-700"
+          className="w-full min-w-0 rounded-lg border-none bg-white px-0 py-1 text-center text-[10px] outline-none read-only:text-gray-700"
         />
 
         <input
           value={serial}
           readOnly={!editable}
           placeholder={editable ? "Serial" : ""}
+          onPaste={(event) => {
+            const text = event.clipboardData.getData("text");
+            if (!editable || !isMultiLineSerialPaste(text)) return;
+            event.preventDefault();
+            void onBulkSerialPaste(unit.id, text);
+          }}
           onChange={(e) => {
             if (!editable) return;
             const v = e.target.value;
@@ -954,7 +1109,7 @@ function SerializedUnitRow({
             if (!editable) return;
             void onChange(unit.id, { serial });
           }}
-          className="w-[120px] min-w-[120px] truncate rounded-lg border-none bg-white px-2 py-1 text-[12px] outline-none read-only:text-gray-700"
+          className="w-full min-w-0 truncate rounded-lg border-none bg-white px-1 py-1 text-[11px] outline-none read-only:text-gray-700"
         />
 
         <UnitStatusField
@@ -970,6 +1125,7 @@ function SerializedUnitRow({
         />
 
         <textarea
+          ref={resizeNoteField}
           value={notes}
           readOnly={!editable}
           placeholder={editable ? "Note..." : ""}
@@ -985,8 +1141,9 @@ function SerializedUnitRow({
             if (!editable) return;
             void onChange(unit.id, { notes });
           }}
+          onInput={(event) => resizeNoteField(event.currentTarget)}
           rows={1}
-          className="w-[230px] min-w-[230px] resize-none overflow-hidden rounded-lg border-none bg-white px-2 py-1 text-[12px] outline-none read-only:text-gray-700"
+          className="w-full min-w-0 resize-none overflow-hidden rounded-lg border-none bg-white px-1 py-1 text-[10px] outline-none read-only:text-gray-700 [field-sizing:content]"
           style={{
             whiteSpace: "pre-wrap",
             overflowWrap: "anywhere",
@@ -1008,15 +1165,15 @@ function SerializedUnitRow({
             onBlur={() => {
               void onChange(unit.id, { testing_date: testingDate || null });
             }}
-            className="w-[130px] min-w-[130px] rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none"
+            className="w-full min-w-0 rounded-lg border-none bg-white px-0.5 py-1 text-[10px] outline-none"
           />
         ) : (
-          <div className="w-[130px] min-w-[130px] rounded-lg bg-white px-1 py-1 text-[12px] font-medium text-gray-700">
+          <div className="w-full min-w-0 truncate rounded-lg bg-white px-1 py-1 text-[10px] font-medium text-gray-700">
             {formatDisplayDate(testingDate)}
           </div>
         )}
 
-        <div className="flex min-w-[200px] items-center gap-2 overflow-visible">
+        <div className="flex min-w-0 items-center gap-1 overflow-hidden">
           {editable ? (
             <ImagePlus
               size={20}
@@ -1035,7 +1192,7 @@ function SerializedUnitRow({
           ) : null}
 
           {photos.length > 0 ? (
-            <div className="flex items-center gap-2 overflow-visible">
+            <div className="flex min-w-0 items-center gap-1 overflow-hidden">
               {photos.slice(0, 3).map((photo, idx) => (
                 <DamagePhotoThumb
                   key={`${unit.id}-${idx}`}
@@ -1052,7 +1209,7 @@ function SerializedUnitRow({
           ) : null}
         </div>
 
-        <div className="w-[28px] min-w-[28px] flex justify-center">
+        <div className="flex min-w-0 justify-center">
           {editable && !lockedByMovement ? (
             <Trash2
               size={16}

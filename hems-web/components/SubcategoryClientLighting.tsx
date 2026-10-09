@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import {
   canEditInventory,
   canManageEquipmentLists,
+  getUserId,
 } from "@/lib/authStore";
 import { Trash2, ChevronDown } from "lucide-react";
 import EquipmentListUnitPicker from "@/components/EquipmentListUnitPicker";
@@ -57,6 +58,7 @@ type ActiveAllocation = {
   reference: string;
   label: string;
   quantity: number;
+  listType: EquipmentList["list_type"];
   status: "active" | "partially_returned";
 };
 
@@ -92,6 +94,8 @@ const ACTIVE_LIST_SELECT = `
   dismantling_date,
   loading_date,
   receiving_date,
+  repair_company,
+  maintenance_sent_date,
   notes,
   created_by,
   created_by_name,
@@ -693,6 +697,7 @@ export default function SubcategoryClientLighting({
                   reference: activeList.reference,
                   label: allocationLabel(activeList),
                   quantity,
+                  listType: activeList.list_type,
                   status:
                     activeList.status === "partially_returned"
                       ? "partially_returned"
@@ -798,17 +803,14 @@ export default function SubcategoryClientLighting({
         return;
       }
 
-      const [listResult, userResult] = await Promise.all([
-        supabase
-          .from("equipment_lists")
-          .select(ACTIVE_LIST_SELECT)
-          .eq("id", nextListId)
-          .maybeSingle(),
-        supabase.auth.getUser(),
-      ]);
+      const listResult = await supabase
+        .from("equipment_lists")
+        .select(ACTIVE_LIST_SELECT)
+        .eq("id", nextListId)
+        .maybeSingle();
 
       const { data, error } = listResult;
-      const user = userResult.data.user;
+      const userId = getUserId();
 
       if (cancelled || version !== loadVersion) return;
 
@@ -819,7 +821,7 @@ export default function SubcategoryClientLighting({
             (data.status === "draft" &&
               (data.list_type === "internal_use"
                 ? manager
-                : data.created_by === user?.id))),
+                : data.created_by === userId))),
       );
 
       if (error || !data || !canUseList) {
@@ -1427,7 +1429,10 @@ export default function SubcategoryClientLighting({
     };
     const allocations = allocationsByItem[it.id] || [];
     const allocatedQuantity = allocations.reduce(
-      (total, allocation) => total + allocation.quantity,
+      (total, allocation) =>
+        allocation.listType === "maintenance"
+          ? total
+          : total + allocation.quantity,
       0,
     );
     const existingMovementQuantity = Math.max(
@@ -1553,7 +1558,7 @@ export default function SubcategoryClientLighting({
               }`}
             >
               <div className="mb-1 text-[8px] font-bold uppercase tracking-wider text-gray-400">
-                Active Movements
+                Active Movements / Repair
               </div>
 
               <div className="flex flex-wrap gap-1.5">
@@ -1564,7 +1569,9 @@ export default function SubcategoryClientLighting({
                     onClick={(event) => event.stopPropagation()}
                     title={`${allocation.reference} · ${allocation.label}`}
                     className={`max-w-full truncate rounded-lg px-2 py-1 text-[9px] font-semibold transition hover:opacity-80 ${
-                      allocation.status === "partially_returned"
+                      allocation.listType === "maintenance"
+                        ? "bg-amber-100 text-amber-800"
+                        : allocation.status === "partially_returned"
                         ? "bg-purple-100 text-purple-800"
                         : "bg-blue-100 text-blue-800"
                     }`}
@@ -1580,6 +1587,23 @@ export default function SubcategoryClientLighting({
                 ) : null}
               </div>
             </div>
+          ) : null}
+
+          {activeDraftList ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setListPickerItem(it);
+              }}
+              title={`Add units to ${activeDraftList.reference}`}
+              className={`absolute top-2 z-20 rounded-full bg-black px-2.5 py-1 text-[9px] font-semibold text-white shadow-sm sm:hidden ${
+                editable ? "right-10" : "right-2"
+              }`}
+            >
+              + List
+            </button>
           ) : null}
 
           <div className="absolute right-2 top-2 hidden items-center gap-1.5 sm:flex">

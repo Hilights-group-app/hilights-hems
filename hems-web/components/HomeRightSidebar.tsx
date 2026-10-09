@@ -46,6 +46,8 @@ type MaintenanceRequest = {
   source_reference: string;
   source_summary: string | null;
   report_href: string | null;
+  source_type: string;
+  status: string;
   created_at: string;
 };
 
@@ -190,9 +192,9 @@ export default function HomeRightSidebar() {
         maintenanceQuery = supabase
           .from("maintenance_requests")
           .select(
-            "id,display_name,serial_number,quantity,department,source_reference,source_summary,report_href,created_at",
+            "id,display_name,serial_number,quantity,department,source_reference,source_type,source_summary,report_href,status,created_at",
           )
-          .eq("status", "pending_report")
+          .in("status", ["pending_report", "sent", "received"])
           .order("created_at", { ascending: false })
           .limit(20);
 
@@ -240,13 +242,20 @@ export default function HomeRightSidebar() {
               return {
                 id: `maintenance:${request.id}`,
                 title: `${request.display_name}${serial}`,
-                description: `Returned to Maintenance from ${request.source_reference}${
-                  request.source_summary ? ` · ${request.source_summary}` : ""
-                }`,
+                description:
+                  request.source_type === "maintenance"
+                    ? request.status === "received"
+                      ? `Received from repair · Awaiting Test · ${request.source_reference}`
+                      : `${request.source_summary || "At external repair"} · ${request.source_reference}`
+                    : `Returned to Maintenance from ${request.source_reference}${
+                        request.source_summary ? ` · ${request.source_summary}` : ""
+                      }`,
                 href: `${reportHref}${separator}maintenanceRequest=${encodeURIComponent(
                   request.id,
                 )}`,
-                expired: true,
+                expired:
+                  request.status === "pending_report" ||
+                  request.status === "received",
                 time: new Date(request.created_at).getTime(),
                 kind: "maintenance",
               };

@@ -4,7 +4,9 @@ import { Loader2, PackagePlus, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   canCreateEquipmentLists,
+  canEditReportForRoute,
   canManageEquipmentLists,
+  getUserId,
 } from "@/lib/authStore";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -27,6 +29,7 @@ export type MatrixListTarget = {
   total: number;
   inUse: number;
   maintenance: number;
+  activeMaintenance?: number;
   inKsa: number;
 };
 
@@ -57,6 +60,7 @@ const ACTIVE_LIST_SELECT = `
   id, reference, list_type, status, client_company, event_name, venue,
   purpose, assigned_to, from_location_name, destination_name, pickup_date,
   return_date, setup_date, dismantling_date, loading_date, receiving_date,
+  repair_company, maintenance_sent_date,
   notes, created_by, created_by_name, created_at, updated_at
 `;
 
@@ -93,9 +97,7 @@ async function loadActiveListShared(
 
     if (error) throw error;
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const userId = getUserId();
     const manager = canManageEquipmentLists();
     const nextList =
       data &&
@@ -103,7 +105,7 @@ async function loadActiveListShared(
         (data.status === "draft" &&
           (data.list_type === "internal_use"
             ? manager
-            : data.created_by === user?.id)))
+            : data.created_by === userId)))
         ? (data as EquipmentList)
         : null;
     activeListCache.set(listId, nextList);
@@ -199,13 +201,20 @@ export default function EquipmentListMatrixQuantityAction({
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
-  const available = Math.max(
-    0,
-    qty(target.total) -
-      qty(target.inUse) -
-      qty(target.maintenance) -
-      qty(target.inKsa),
-  );
+  const maintenanceList = activeList?.list_type === "maintenance";
+  const available = maintenanceList
+    ? Math.max(0, qty(target.maintenance) - qty(target.activeMaintenance))
+    : Math.max(
+        0,
+        qty(target.total) -
+          qty(target.inUse) -
+          qty(target.maintenance) -
+          qty(target.inKsa),
+      );
+  const canUseMaintenanceList =
+    !maintenanceList ||
+    canManageEquipmentLists() ||
+    canEditReportForRoute(category, subcategory);
 
   useEffect(() => {
     let cancelled = false;
@@ -348,7 +357,11 @@ export default function EquipmentListMatrixQuantityAction({
       return;
     }
     if (nextQuantity > available) {
-      setError(`Only ${available} unit${available === 1 ? " is" : "s are"} available.`);
+      setError(
+        maintenanceList
+          ? `Only ${available} Maintenance unit${available === 1 ? " is" : "s are"} available for repair.`
+          : `Only ${available} unit${available === 1 ? " is" : "s are"} available.`,
+      );
       return;
     }
 
@@ -466,7 +479,7 @@ export default function EquipmentListMatrixQuantityAction({
 
   if (!canBuildLists) return null;
 
-  if (!activeList) {
+  if (!activeList || !canUseMaintenanceList) {
     if (compact) return null;
 
     return (
@@ -563,7 +576,7 @@ export default function EquipmentListMatrixQuantityAction({
             </div>
             <div className="rounded-xl bg-green-100 px-2 py-2.5">
               <div className="text-[8px] font-bold uppercase text-green-700">
-                Available
+                {maintenanceList ? "Can Send" : "Available"}
               </div>
               <div className="mt-1 text-sm font-bold text-green-800">
                 {available}

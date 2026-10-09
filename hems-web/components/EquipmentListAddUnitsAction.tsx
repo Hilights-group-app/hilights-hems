@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   canCreateEquipmentLists,
+  canEditReportForRoute,
   canManageEquipmentLists,
+  getUserId,
 } from "@/lib/authStore";
 import { createClient } from "@/lib/supabase/client";
 import EquipmentListUnitPicker from "@/components/EquipmentListUnitPicker";
@@ -38,6 +40,8 @@ const ACTIVE_LIST_SELECT = `
   dismantling_date,
   loading_date,
   receiving_date,
+  repair_company,
+  maintenance_sent_date,
   notes,
   created_by,
   created_by_name,
@@ -94,9 +98,7 @@ export default function EquipmentListAddUnitsAction({
 
       if (cancelled || version !== loadVersion) return;
 
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const userId = getUserId();
       const manager = canManageEquipmentLists();
       const canEditList = Boolean(
         data &&
@@ -104,7 +106,7 @@ export default function EquipmentListAddUnitsAction({
             (data.status === "draft" &&
               (data.list_type === "internal_use"
                 ? manager
-                : data.created_by === user?.id))),
+                : data.created_by === userId))),
       );
 
       if (error || !data || !canEditList) {
@@ -147,7 +149,12 @@ export default function EquipmentListAddUnitsAction({
 
   if (!canBuildLists) return null;
 
-  if (!activeList) {
+  const canUseMaintenanceList =
+    activeList?.list_type !== "maintenance" ||
+    canManageEquipmentLists() ||
+    canEditReportForRoute(category, subcategory);
+
+  if (!activeList || !canUseMaintenanceList) {
     if (compact) return null;
 
     return (

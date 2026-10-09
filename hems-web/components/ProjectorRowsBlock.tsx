@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { ImagePlus, Trash2 } from "lucide-react";
 import { getUserName } from "@/lib/authStore";
@@ -13,6 +13,12 @@ import {
   equipmentListTypeLabel,
   type EquipmentList,
 } from "@/lib/equipmentLists";
+import UnitReportFilterBar from "@/components/UnitReportFilterBar";
+import {
+  buildSerialPastePlan,
+  isMultiLineSerialPaste,
+  type UnitReportStatusFilter,
+} from "@/lib/unitReportTools";
 
 export type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
@@ -81,6 +87,8 @@ const ACTIVE_LIST_SELECT = `
   dismantling_date,
   loading_date,
   receiving_date,
+  repair_company,
+  maintenance_sent_date,
   notes,
   created_by_name,
   created_at,
@@ -120,6 +128,12 @@ function statusLabel(status: string | null) {
   if (status === "in_ksa") return "In KSA";
   if (status === "maintenance") return "Maintenance";
   return "Available";
+}
+
+function resizeNoteField(element: HTMLTextAreaElement | null) {
+  if (!element) return;
+  element.style.height = "auto";
+  element.style.height = `${element.scrollHeight}px`;
 }
 
 function isMovementStatus(status: string | null | undefined) {
@@ -182,6 +196,10 @@ export function ProjectorRowsBlock({
     Record<string, UnitMovement>
   >({});
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+  const [filterQuery, setFilterQuery] = useState("");
+  const [statusFilter, setStatusFilter] =
+    useState<UnitReportStatusFilter>("all");
+  const [bulkPasting, setBulkPasting] = useState(false);
   const saveMsgTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -346,6 +364,28 @@ export function ProjectorRowsBlock({
     onStatsChange?.(nextStats);
   }, [units, onStatsChange]);
 
+  const filteredUnits = useMemo(() => {
+    const query = filterQuery.trim().toLocaleLowerCase();
+
+    return units.filter((unit) => {
+      const assigned =
+        Boolean(movementByUnit[unit.id]) || isMovementStatus(unit.status);
+      const statusMatches =
+        statusFilter === "all" ||
+        (statusFilter === "available" && toStatus(unit.status) === "available") ||
+        (statusFilter === "maintenance" &&
+          toStatus(unit.status) === "maintenance") ||
+        (statusFilter === "assigned" && assigned);
+
+      if (!statusMatches) return false;
+      if (!query) return true;
+
+      return [unit.unit_no, unit.serial, unit.notes].some((value) =>
+        String(value ?? "").toLocaleLowerCase().includes(query),
+      );
+    });
+  }, [filterQuery, movementByUnit, statusFilter, units]);
+
   async function updateUnit(id: string, patch: UnitPatch) {
     if (!editable) return;
 
@@ -497,6 +537,115 @@ export function ProjectorRowsBlock({
     });
   }
 
+  async function pasteSerialColumn(unitId: string, clipboardText: string) {
+    if (!editable || bulkPasting) return;
+
+    const plan = buildSerialPastePlan(
+      unitsRef.current,
+      unitId,
+      clipboardText,
+    );
+
+    if (plan.assignments.length === 0) {
+      alert("No new serial numbers were found in the pasted column.");
+      return;
+    }
+
+    if (
+      plan.overwriteCount > 0 &&
+      !confirm(
+        `${plan.overwriteCount} existing serial number${
+          plan.overwriteCount === 1 ? "" : "s"
+        } will be overwritten. Continue?`,
+      )
+    ) {
+      return;
+    }
+
+    setBulkPasting(true);
+    setTransientMessage("Saving pasted serials...", 0);
+
+    try {
+      const editorName = getUserName?.() || "Unknown User";
+      const updatedAt = new Date().toISOString();
+      const existingAssignments = plan.assignments.filter(
+        (assignment) => assignment.target,
+      );
+      const updateResults = await Promise.all(
+        existingAssignments.map((assignment) =>
+          supabase
+            .from("units")
+            .update({
+              serial: assignment.serial,
+              updated_by: editorName,
+              updated_at: updatedAt,
+            })
+            .eq("id", assignment.target!.id),
+        ),
+      );
+      const updateError = updateResults.find((result) => result.error)?.error;
+      if (updateError) throw updateError;
+
+      const newAssignments = plan.assignments.filter(
+        (assignment) => !assignment.target,
+      );
+
+      if (newAssignments.length > 0) {
+        const firstNumber =
+          unitsRef.current.length > 0
+            ? Math.max(
+                ...unitsRef.current.map((unit) => clampInt(unit.unit_no, 0)),
+              ) + 1
+            : 1;
+        const payload = newAssignments.map((assignment, index) => {
+          const row: Record<string, unknown> = {
+            item_id: itemId,
+            unit_no: firstNumber + index,
+            serial: assignment.serial,
+            status: "available",
+            notes: "",
+            lamp_hours: 0,
+            damage_photos: [],
+            updated_by: editorName,
+            updated_at: updatedAt,
+          };
+          if (showTestingDate) row.testing_date = null;
+          return row;
+        });
+        const { error: insertError } = await supabase
+          .from("units")
+          .insert(payload);
+        if (insertError) throw insertError;
+      }
+
+      await loadUnits();
+      const skipped = plan.duplicateCount;
+      const savedMessage = `${plan.assignments.length} serial number${
+        plan.assignments.length === 1 ? "" : "s"
+      } saved${
+        skipped > 0
+          ? ` · ${skipped} duplicate${skipped === 1 ? "" : "s"} skipped`
+          : ""
+      }`;
+      setTransientMessage(savedMessage, 3000);
+      await logActivity({
+        title: `imported serials for ${itemName || "projector"}`,
+        message: `${plan.assignments.length} serial number${
+          plan.assignments.length === 1 ? "" : "s"
+        } pasted from Excel`,
+        link: activityLink,
+      });
+    } catch (pasteError: any) {
+      console.error("bulk projector serial paste error", pasteError);
+      onSaveMessageChange?.(
+        pasteError?.message || "The serial numbers could not be saved.",
+      );
+      await loadUnits();
+    } finally {
+      setBulkPasting(false);
+    }
+  }
+
   async function deleteRow(id: string) {
     if (!editable) return;
 
@@ -613,27 +762,47 @@ export function ProjectorRowsBlock({
         </div>
       ) : null}
 
-      <div className="bg-white border border-gray-200 rounded-xl px-[2px] lg:px-5 pt-4 lg:pt-5 pb-5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
-        <div className="hidden lg:flex items-center gap-2 text-[11px] font-semibold text-gray-600 pt-2 pb-4">
-          <div className="w-[32px] min-w-[32px] text-center">ID</div>
-          <div className="w-[120px] min-w-[120px]">Serial</div>
-          <div className="w-[95px] min-w-[95px]">Status</div>
-          <div className="w-[56px] min-w-[56px]">Lamp</div>
-          <div className="w-[230px] min-w-[230px]">Note</div>
+      <div className="min-w-0 overflow-hidden rounded-xl border border-gray-200 bg-white px-[2px] pb-5 pt-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)] lg:px-5 lg:pt-5">
+        <UnitReportFilterBar
+          query={filterQuery}
+          status={statusFilter}
+          resultCount={filteredUnits.length}
+          totalCount={units.length}
+          onQueryChange={setFilterQuery}
+          onStatusChange={setStatusFilter}
+        />
+
+        <div
+          className={`hidden min-w-0 items-center gap-1 pb-4 pt-2 text-[10px] font-semibold text-gray-600 lg:grid ${
+            showTestingDate
+              ? "grid-cols-[32px_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.55fr)_minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,1.4fr)_24px]"
+              : "grid-cols-[32px_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.55fr)_minmax(0,1.5fr)_minmax(0,1.5fr)_24px]"
+          }`}
+        >
+          <div className="min-w-0 text-center">ID</div>
+          <div className="min-w-0 truncate">Serial</div>
+          <div className="min-w-0 truncate">Status</div>
+          <div className="min-w-0 truncate">Lamp</div>
+          <div className="min-w-0 truncate">Note</div>
           {showTestingDate ? (
-            <div className="w-[90px] min-w-[90px]">Test Date</div>
+            <div className="min-w-0 truncate">Test Date</div>
           ) : null}
-          <div className="flex-1 min-w-[200px]">Damage</div>
+          <div className="min-w-0 truncate">Damage</div>
+          <div aria-hidden="true" />
         </div>
 
         {units.length === 0 ? (
           <div className="text-sm text-gray-500">No units found.</div>
+        ) : filteredUnits.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-gray-300 px-4 py-8 text-center text-sm text-gray-500">
+            No units match these filters.
+          </div>
         ) : (
-          units.map((unit, idx) => (
+          filteredUnits.map((unit) => (
             <ProjectorUnitRow
               key={unit.id}
               unit={unit}
-              index={idx}
+              index={units.findIndex((current) => current.id === unit.id)}
               editable={editable}
               workflowControlledStatus={workflowControlledStatus}
               movement={movementByUnit[unit.id]}
@@ -643,6 +812,7 @@ export function ProjectorRowsBlock({
               onDeleteDamagePhoto={deleteDamagePhoto}
               onOpenPhoto={openPhoto}
               onDeleteRow={deleteRow}
+              onBulkSerialPaste={pasteSerialColumn}
             />
           ))
         )}
@@ -763,7 +933,7 @@ function ProjectorStatusField({
   const lockedByMovement =
     workflowControlledStatus &&
     (isMovementStatus(status) || Boolean(movement));
-  const widthClass = wide ? "w-[95px] min-w-[95px]" : "w-full";
+  const widthClass = wide ? "w-full min-w-0" : "w-full";
 
   if (lockedByMovement) {
     if (movement) {
@@ -826,6 +996,7 @@ function ProjectorUnitRow({
   onDeleteDamagePhoto,
   onOpenPhoto,
   onDeleteRow,
+  onBulkSerialPaste,
 }: {
   unit: Unit;
   index: number;
@@ -838,6 +1009,7 @@ function ProjectorUnitRow({
   onDeleteDamagePhoto: (unitId: string, photoIndex: number) => void;
   onOpenPhoto: (url: string) => void;
   onDeleteRow: (id: string) => Promise<void>;
+  onBulkSerialPaste: (unitId: string, text: string) => Promise<void>;
 }) {
   const [unitNo, setUnitNo] = useState(String(unit.unit_no ?? ""));
   const [serial, setSerial] = useState(unit.serial || "");
@@ -953,6 +1125,12 @@ function ProjectorUnitRow({
               value={serial}
               readOnly={!editable}
               placeholder="Serial"
+              onPaste={(event) => {
+                const text = event.clipboardData.getData("text");
+                if (!editable || !isMultiLineSerialPaste(text)) return;
+                event.preventDefault();
+                void onBulkSerialPaste(unit.id, text);
+              }}
               onChange={(e) => {
                 if (!editable) return;
                 const v = e.target.value;
@@ -1040,6 +1218,7 @@ function ProjectorUnitRow({
         <label className="mt-2 block rounded-xl bg-gray-50 p-2">
           <div className="text-[10px] font-semibold text-gray-400">Note</div>
           <textarea
+            ref={resizeNoteField}
             value={notes}
             readOnly={!editable}
             placeholder="Write note..."
@@ -1057,8 +1236,9 @@ function ProjectorUnitRow({
                 void onChange(unit.id, { notes });
               });
             }}
+            onInput={(event) => resizeNoteField(event.currentTarget)}
             rows={2}
-            className="mt-1 w-full resize-none border-none bg-transparent p-0 text-[12px] text-gray-800 outline-none"
+            className="mt-1 w-full resize-none overflow-hidden whitespace-pre-wrap break-words border-none bg-transparent p-0 text-[12px] text-gray-800 outline-none [field-sizing:content]"
           />
         </label>
 
@@ -1107,7 +1287,13 @@ function ProjectorUnitRow({
       </div>
 
       {/* DESKTOP TABLE STYLE */}
-      <div className="hidden lg:flex items-center gap-2 flex-nowrap overflow-visible">
+      <div
+        className={`hidden min-w-0 items-center gap-1 lg:grid ${
+          showTestingDate
+            ? "grid-cols-[32px_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.55fr)_minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,1.4fr)_24px]"
+            : "grid-cols-[32px_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.55fr)_minmax(0,1.5fr)_minmax(0,1.5fr)_24px]"
+        }`}
+      >
         <input
           value={unitNo}
           readOnly={!editable}
@@ -1121,12 +1307,18 @@ function ProjectorUnitRow({
             if (!editable) return;
             flushSave("unit_no", () => void onChange(unit.id, { unit_no: unitNo.trim() }));
           }}
-          className="w-[32px] min-w-[32px] rounded-lg border-none bg-white px-0 py-1 text-center text-[11px] outline-none read-only:text-gray-700"
+          className="w-full min-w-0 rounded-lg border-none bg-white px-0 py-1 text-center text-[10px] outline-none read-only:text-gray-700"
         />
 
         <input
           value={serial}
           readOnly={!editable}
+          onPaste={(event) => {
+            const text = event.clipboardData.getData("text");
+            if (!editable || !isMultiLineSerialPaste(text)) return;
+            event.preventDefault();
+            void onBulkSerialPaste(unit.id, text);
+          }}
           onChange={(e) => {
             if (!editable) return;
             const v = e.target.value;
@@ -1137,7 +1329,7 @@ function ProjectorUnitRow({
             if (!editable) return;
             flushSave("serial", () => void onChange(unit.id, { serial }));
           }}
-          className="w-[120px] min-w-[120px] truncate rounded-lg border-none bg-white px-2 py-1 text-[12px] outline-none read-only:text-gray-700"
+          className="w-full min-w-0 truncate rounded-lg border-none bg-white px-1 py-1 text-[11px] outline-none read-only:text-gray-700"
         />
 
         <ProjectorStatusField
@@ -1169,10 +1361,11 @@ function ProjectorUnitRow({
               void onChange(unit.id, { lamp_hours: clampInt(lampHours, 0) })
             );
           }}
-          className="w-[56px] min-w-[56px] rounded-lg border-none bg-white px-0 py-1 text-center text-[12px] outline-none read-only:text-gray-700"
+          className="w-full min-w-0 rounded-lg border-none bg-white px-0 py-1 text-center text-[10px] outline-none read-only:text-gray-700"
         />
 
         <textarea
+          ref={resizeNoteField}
           value={notes}
           readOnly={!editable}
           onChange={(e) => {
@@ -1185,8 +1378,9 @@ function ProjectorUnitRow({
             if (!editable) return;
             flushSave("notes", () => void onChange(unit.id, { notes }));
           }}
+          onInput={(event) => resizeNoteField(event.currentTarget)}
           rows={1}
-          className="w-[230px] min-w-[230px] resize-none overflow-hidden rounded-lg border-none bg-white px-2 py-1 text-[12px] outline-none read-only:text-gray-700"
+          className="w-full min-w-0 resize-none overflow-hidden rounded-lg border-none bg-white px-1 py-1 text-[10px] outline-none read-only:text-gray-700 [field-sizing:content]"
           style={{
             whiteSpace: "pre-wrap",
             overflowWrap: "anywhere",
@@ -1214,11 +1408,11 @@ function ProjectorUnitRow({
                 void onChange(unit.id, { testing_date: testingDate || null })
               );
             }}
-            className="w-[90px] min-w-[90px] rounded-lg border-none bg-white px-1 py-1 text-[12px] outline-none read-only:text-gray-700"
+            className="w-full min-w-0 rounded-lg border-none bg-white px-0.5 py-1 text-[10px] outline-none read-only:text-gray-700"
           />
         ) : null}
 
-        <div className="flex min-w-[200px] items-center gap-2 overflow-visible">
+        <div className="flex min-w-0 items-center gap-1 overflow-hidden">
           <input
             ref={fileRef}
             type="file"
@@ -1249,7 +1443,7 @@ function ProjectorUnitRow({
           ) : null}
 
           {photos.length > 0 ? (
-            <div className="flex items-center gap-2 overflow-visible">
+            <div className="flex min-w-0 items-center gap-1 overflow-hidden">
               {photos.slice(0, 3).map((photo, idx) => (
                 <DamagePhotoThumb
                   key={`${unit.id}-${idx}`}
@@ -1266,7 +1460,7 @@ function ProjectorUnitRow({
           ) : null}
         </div>
 
-        <div className="w-[28px] min-w-[28px] flex justify-center">
+        <div className="flex min-w-0 justify-center">
           {editable && !lockedByMovement ? (
             <Trash2
               size={16}

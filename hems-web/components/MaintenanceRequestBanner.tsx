@@ -4,6 +4,7 @@ import { CheckCircle2, Loader2, Wrench } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { getUserDepartment, getUserRole } from "@/lib/authStore";
 
 type MaintenanceRequest = {
   id: string;
@@ -12,7 +13,11 @@ type MaintenanceRequest = {
   quantity: number;
   source_reference: string;
   source_summary: string | null;
-  status: "pending_report" | "reported" | "resolved";
+  department: string;
+  received_quantity: number;
+  tested_quantity: number;
+  source_type: string;
+  status: "pending_report" | "reported" | "sent" | "received" | "resolved";
   created_at: string;
 };
 
@@ -24,6 +29,13 @@ export default function MaintenanceRequestBanner() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [role, setRole] = useState("");
+  const [department, setDepartment] = useState("");
+
+  useEffect(() => {
+    setRole(getUserRole() || "");
+    setDepartment((getUserDepartment() || "").toLowerCase());
+  }, []);
 
   useEffect(() => {
     const nextRequestId = new URLSearchParams(window.location.search).get(
@@ -48,7 +60,7 @@ export default function MaintenanceRequestBanner() {
       const { data, error: requestError } = await supabase
         .from("maintenance_requests")
         .select(
-          "id,display_name,serial_number,quantity,source_reference,source_summary,status,created_at",
+          "id,display_name,serial_number,quantity,received_quantity,tested_quantity,department,source_reference,source_type,source_summary,status,created_at",
         )
         .eq("id", requestId)
         .single();
@@ -74,10 +86,21 @@ export default function MaintenanceRequestBanner() {
   }, [requestId, supabase]);
 
   async function markReportCompleted() {
-    if (!request || saving || request.status !== "pending_report") return;
+    if (
+      !request ||
+      saving ||
+      !["pending_report", "received"].includes(request.status)
+    ) {
+      return;
+    }
+
+    const repairWorkflow =
+      request.source_type === "maintenance" && request.status === "received";
 
     const confirmed = window.confirm(
-      "Mark this maintenance report as completed? The Head alert will be cleared.",
+      repairWorkflow
+        ? "Confirm this repaired equipment passed testing? It will become Available."
+        : "Mark this maintenance report as completed? The Head alert will be cleared.",
     );
     if (!confirmed) return;
 
@@ -85,7 +108,9 @@ export default function MaintenanceRequestBanner() {
     setError("");
 
     const { error: updateError } = await supabase.rpc(
-      "mark_maintenance_request_reported",
+      repairWorkflow
+        ? "test_maintenance_list_item"
+        : "mark_maintenance_request_reported",
       { p_request_id: request.id },
     );
 
@@ -97,7 +122,15 @@ export default function MaintenanceRequestBanner() {
     }
 
     setRequest((current) =>
-      current ? { ...current, status: "reported" } : current,
+      current
+        ? {
+            ...current,
+            status: repairWorkflow ? "resolved" : "reported",
+            tested_quantity: repairWorkflow
+              ? current.quantity
+              : current.tested_quantity,
+          }
+        : current,
     );
     window.dispatchEvent(new CustomEvent("hems:maintenance-requests-change"));
     setSaving(false);
@@ -127,11 +160,20 @@ export default function MaintenanceRequestBanner() {
   const unitDescription = request.serial_number?.trim()
     ? `Serial ${request.serial_number.trim()}`
     : `${request.quantity} pc${request.quantity === 1 ? "" : "s"}`;
+  const repairWorkflow = request.source_type === "maintenance";
+  const canComplete =
+    role === "admin" ||
+    (role === "head" && department === request.department.toLowerCase());
+  const pendingAction =
+    request.status === "pending_report" ||
+    (repairWorkflow && request.status === "received");
+  const actionRequired =
+    canComplete && pendingAction;
 
   return (
     <div
       className={`mb-2 rounded-2xl border px-4 py-3 ${
-        request.status === "pending_report"
+        pendingAction
           ? "border-amber-300 bg-amber-50"
           : "border-green-200 bg-green-50"
       }`}
@@ -140,12 +182,12 @@ export default function MaintenanceRequestBanner() {
         <div className="flex min-w-0 items-start gap-3">
           <div
             className={`mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-full ${
-              request.status === "pending_report"
+              pendingAction
                 ? "bg-amber-100 text-amber-700"
                 : "bg-green-100 text-green-700"
             }`}
           >
-            {request.status === "pending_report" ? (
+            {actionRequired ? (
               <Wrench size={15} />
             ) : (
               <CheckCircle2 size={15} />
@@ -156,7 +198,13 @@ export default function MaintenanceRequestBanner() {
             <div className="text-[11px] font-bold text-gray-900">
               {request.status === "pending_report"
                 ? "Returned to Maintenance — Head Report Required"
-                : "Maintenance Report Completed"}
+                : request.status === "received"
+                  ? "Received from Repair — Testing Required"
+                  : request.status === "sent"
+                    ? "At External Repair"
+                    : repairWorkflow
+                      ? "Repair Tested — Available"
+                      : "Maintenance Report Completed"}
             </div>
             <div className="mt-0.5 text-[10px] leading-4 text-gray-600">
               <span className="font-semibold">{request.display_name}</span>
@@ -166,7 +214,7 @@ export default function MaintenanceRequestBanner() {
           </div>
         </div>
 
-        {request.status === "pending_report" ? (
+        {actionRequired ? (
           <button
             type="button"
             onClick={() => void markReportCompleted()}
@@ -178,7 +226,11 @@ export default function MaintenanceRequestBanner() {
             ) : (
               <CheckCircle2 size={12} />
             )}
-            {saving ? "Saving..." : "Report Completed"}
+            {saving
+              ? "Saving..."
+              : request.status === "received"
+                ? "Tested — Available"
+                : "Report Completed"}
           </button>
         ) : null}
       </div>

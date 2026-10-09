@@ -58,6 +58,7 @@ export default function EquipmentListLedInlineAction({
   category,
   subcategory,
   activeAllocatedQuantity,
+  activeMaintenanceQuantity = 0,
 }: {
   list: EquipmentList | null;
   row: LedRow;
@@ -65,6 +66,7 @@ export default function EquipmentListLedInlineAction({
   category: string;
   subcategory: string;
   activeAllocatedQuantity: number;
+  activeMaintenanceQuantity?: number;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [line, setLine] = useState<ExistingLine | null>(null);
@@ -72,12 +74,18 @@ export default function EquipmentListLedInlineAction({
   const [saving, setSaving] = useState(false);
 
   const area = cabinetAreaFromSize(row.size);
-  const available = Math.max(
-    0,
-    clampQty(row.qty) -
-      clampQty(row.maintenance_qty) -
-      clampQty(activeAllocatedQuantity),
-  );
+  const available =
+    list?.list_type === "maintenance"
+      ? Math.max(
+          0,
+          clampQty(row.maintenance_qty) - clampQty(activeMaintenanceQuantity),
+        )
+      : Math.max(
+          0,
+          clampQty(row.qty) -
+            clampQty(row.maintenance_qty) -
+            clampQty(activeAllocatedQuantity),
+        );
   const quantity = line ? clampQty(line.requested_quantity) : 0;
 
   useEffect(() => {

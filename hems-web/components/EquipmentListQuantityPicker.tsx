@@ -77,6 +77,7 @@ export default function EquipmentListQuantityPicker({
   category,
   subcategory,
   activeAllocatedQuantity,
+  activeMaintenanceQuantity = 0,
   allowPendingReview = false,
   onClose,
   onAdded,
@@ -87,6 +88,7 @@ export default function EquipmentListQuantityPicker({
   category: string;
   subcategory: string;
   activeAllocatedQuantity: number;
+  activeMaintenanceQuantity?: number;
   allowPendingReview?: boolean;
   onClose: () => void;
   onAdded: (quantity: number) => void;
@@ -98,12 +100,18 @@ export default function EquipmentListQuantityPicker({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const availableQuantity = Math.max(
-    0,
-    clampQty(row.qty) -
-      clampQty(row.maintenance_qty) -
-      clampQty(activeAllocatedQuantity),
-  );
+  const maintenanceList = list.list_type === "maintenance";
+  const availableQuantity = maintenanceList
+    ? Math.max(
+        0,
+        clampQty(row.maintenance_qty) - clampQty(activeMaintenanceQuantity),
+      )
+    : Math.max(
+        0,
+        clampQty(row.qty) -
+          clampQty(row.maintenance_qty) -
+          clampQty(activeAllocatedQuantity),
+      );
   const cabinetArea = cabinetAreaFromSize(row.size);
   const requestedSquareMetres = Math.max(0, Number(squareMetres) || 0);
   const quantity =
@@ -208,7 +216,11 @@ export default function EquipmentListQuantityPicker({
     }
 
     if (nextQuantity > availableQuantity) {
-      setError(`Only ${availableQuantity} cabinets are currently available.`);
+      setError(
+        maintenanceList
+          ? `Only ${availableQuantity} Maintenance cabinets can be sent for repair.`
+          : `Only ${availableQuantity} cabinets are currently available.`,
+      );
       return;
     }
 
@@ -415,7 +427,9 @@ export default function EquipmentListQuantityPicker({
 
           {availableQuantity === 0 ? (
             <div className="rounded-xl bg-amber-50 px-3 py-2 text-[10px] font-medium text-amber-800">
-              No cabinets are currently available.
+              {maintenanceList
+                ? "No Maintenance cabinets are available for this repair list."
+                : "No cabinets are currently available."}
             </div>
           ) : null}
 

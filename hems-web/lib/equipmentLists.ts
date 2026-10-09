@@ -3,7 +3,8 @@ export type EquipmentListType =
   | "local_event"
   | "transfer_out"
   | "transfer_in"
-  | "internal_use";
+  | "internal_use"
+  | "maintenance";
 
 export type EquipmentListStatus =
   | "draft"
@@ -37,6 +38,8 @@ export type EquipmentList = {
   dismantling_date: string | null;
   loading_date: string | null;
   receiving_date: string | null;
+  repair_company: string | null;
+  maintenance_sent_date: string | null;
   notes: string | null;
   created_by: string | null;
   created_by_name: string | null;
@@ -77,6 +80,11 @@ export const EQUIPMENT_LIST_TYPE_OPTIONS: Array<{
   { value: "local_event", label: "Local Event", shortLabel: "EV" },
   { value: "transfer_out", label: "Transfer Out", shortLabel: "TO" },
   { value: "internal_use", label: "Internal Use", shortLabel: "IU" },
+  {
+    value: "maintenance",
+    label: "Send for Maintenance",
+    shortLabel: "MR",
+  },
 ];
 
 export function equipmentListTypeLabel(type: EquipmentListType) {
@@ -104,6 +112,12 @@ export function equipmentListSummary(list: EquipmentList) {
     return [list.from_location_name, list.destination_name]
       .filter(Boolean)
       .join(" → ");
+  }
+
+  if (list.list_type === "maintenance") {
+    return list.repair_company
+      ? `At ${list.repair_company} for Repair`
+      : "External Repair";
   }
 
   return [list.purpose, list.assigned_to].filter(Boolean).join(" · ") || "Internal Use";

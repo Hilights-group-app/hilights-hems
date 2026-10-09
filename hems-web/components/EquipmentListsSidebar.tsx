@@ -14,13 +14,16 @@ import {
   ClipboardList,
   Loader2,
   Plus,
+  Wrench,
   X,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import {
   canCreateEquipmentLists,
+  canCreateMaintenanceLists,
   canManageEquipmentLists,
+  getUserId,
   getUserName,
 } from "@/lib/authStore";
 import { createClient } from "@/lib/supabase/client";
@@ -54,6 +57,8 @@ type FormState = {
   dismantlingDate: string;
   loadingDate: string;
   receivingDate: string;
+  repairCompany: string;
+  maintenanceSendDate: string;
   notes: string;
 };
 
@@ -71,6 +76,8 @@ const EMPTY_FORM: FormState = {
   dismantlingDate: "",
   loadingDate: "",
   receivingDate: "",
+  repairCompany: "",
+  maintenanceSendDate: "",
   notes: "",
 };
 
@@ -92,6 +99,8 @@ const LIST_SELECT = `
   dismantling_date,
   loading_date,
   receiving_date,
+  repair_company,
+  maintenance_sent_date,
   notes,
   created_by,
   created_by_name,
@@ -121,6 +130,7 @@ function typeIcon(type: EquipmentListType, size = 14) {
   if (type === "local_event") return <CalendarDays size={size} />;
   if (type === "transfer_out") return <ArrowUpFromLine size={size} />;
   if (type === "transfer_in") return <ArrowDownToLine size={size} />;
+  if (type === "maintenance") return <Wrench size={size} />;
   return <BriefcaseBusiness size={size} />;
 }
 
@@ -147,6 +157,10 @@ function listDates(list: EquipmentList) {
       .join(" → ");
   }
 
+  if (list.list_type === "maintenance") {
+    return formatShortDate(list.maintenance_sent_date);
+  }
+
   return formatShortDate(
     list.list_type === "transfer_out"
       ? list.loading_date
@@ -169,7 +183,29 @@ function statusClass(status: EquipmentListStatus) {
 
 function sidebarStatusLabel(list: EquipmentList) {
   if (list.list_type === "internal_use") return "Internal";
+  if (list.list_type === "maintenance" && list.status === "active") {
+    return "Active Repair";
+  }
   return equipmentListStatusLabel(list.status);
+}
+
+function isEquipmentListsSetupError(error: {
+  code?: string;
+  message?: string;
+} | null) {
+  if (!error) return false;
+
+  if (["42P01", "42703", "PGRST204", "PGRST205"].includes(error.code || "")) {
+    return true;
+  }
+
+  const message = (error.message || "").toLowerCase();
+  return (
+    message.includes("equipment_lists") &&
+    (message.includes("does not exist") ||
+      message.includes("schema cache") ||
+      message.includes("could not find"))
+  );
 }
 
 function listItemUnitLabel(item: EquipmentListItem) {
@@ -195,6 +231,7 @@ export default function EquipmentListsSidebar() {
   const supabase = useMemo(() => createClient(), []);
   const [mounted, setMounted] = useState(false);
   const [canCreateLists, setCanCreateLists] = useState(false);
+  const [canCreateMaintenance, setCanCreateMaintenance] = useState(false);
   const [canManageLists, setCanManageLists] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -213,6 +250,7 @@ export default function EquipmentListsSidebar() {
   const [createOpen, setCreateOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [internalUseOpen, setInternalUseOpen] = useState(false);
+  const [maintenanceActiveOpen, setMaintenanceActiveOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<EquipmentListType | null>(
     null,
   );
@@ -223,11 +261,9 @@ export default function EquipmentListsSidebar() {
 
     setMounted(true);
     setCanCreateLists(canCreateEquipmentLists());
+    setCanCreateMaintenance(canCreateMaintenanceLists());
     setCanManageLists(canManageEquipmentLists());
-
-    void supabase.auth.getUser().then(({ data }) => {
-      if (!cancelled) setCurrentUserId(data.user?.id ?? null);
-    });
+    setCurrentUserId(getUserId());
 
     try {
       setActiveListId(localStorage.getItem(ACTIVE_EQUIPMENT_LIST_KEY));
@@ -239,12 +275,15 @@ export default function EquipmentListsSidebar() {
       if (showLoading) setLoading(true);
       setError("");
 
-      const [listResult, locationResult] = await Promise.all([
+      const queryLists = () =>
         supabase
           .from("equipment_lists")
           .select(LIST_SELECT)
           .order("created_at", { ascending: false })
-          .limit(100),
+          .limit(100);
+
+      let [listResult, locationResult] = await Promise.all([
+        queryLists(),
         supabase
           .from("inventory_locations")
           .select("id,code,name")
@@ -252,12 +291,27 @@ export default function EquipmentListsSidebar() {
           .order("name", { ascending: true }),
       ]);
 
+      if (
+        listResult.error &&
+        !isEquipmentListsSetupError(listResult.error)
+      ) {
+        // A browser can briefly abort a Supabase request while another tab
+        // refreshes the auth session. One quiet retry prevents a false SQL
+        // setup warning and keeps the last good list visible.
+        await new Promise((resolve) => window.setTimeout(resolve, 120));
+        listResult = await queryLists();
+      }
+
       if (cancelled) return;
 
       if (listResult.error) {
         console.error("equipment lists load error", listResult.error);
-        setError("Run the Equipment Lists SQL setup first.");
-        setLists([]);
+        if (isEquipmentListsSetupError(listResult.error)) {
+          setError("Run the Equipment Lists SQL setup first.");
+          setLists([]);
+        } else {
+          setError("Equipment lists could not load. Please refresh and try again.");
+        }
       } else {
         setLists((listResult.data ?? []) as EquipmentList[]);
       }
@@ -432,6 +486,16 @@ export default function EquipmentListsSidebar() {
     [visibleLists],
   );
 
+  const maintenanceActiveLists = useMemo(
+    () =>
+      accessibleLists.filter(
+        (list) =>
+          list.list_type === "maintenance" &&
+          (list.status === "active" || list.status === "partially_returned"),
+      ),
+    [accessibleLists],
+  );
+
   const historyLists = useMemo(
     () =>
       accessibleLists.filter(
@@ -459,7 +523,8 @@ export default function EquipmentListsSidebar() {
         title: "Active Lists",
         rows: workflowLists.filter(
           (list) =>
-            list.status === "active" || list.status === "partially_returned",
+            list.list_type !== "maintenance" &&
+            (list.status === "active" || list.status === "partially_returned"),
         ),
       },
     ],
@@ -480,6 +545,7 @@ export default function EquipmentListsSidebar() {
 
   function selectType(type: EquipmentListType) {
     if (type === "internal_use" && !canManageLists) return;
+    if (type === "maintenance" && !canCreateMaintenance) return;
     setSelectedType(type);
     setForm(EMPTY_FORM);
     setError("");
@@ -593,6 +659,11 @@ export default function EquipmentListsSidebar() {
       if (!form.assignedTo.trim()) return "Assigned To is required.";
     }
 
+    if (type === "maintenance") {
+      if (!form.repairCompany.trim()) return "Repair Company is required.";
+      if (!form.maintenanceSendDate) return "Send Date is required.";
+    }
+
     return "";
   }
 
@@ -601,6 +672,7 @@ export default function EquipmentListsSidebar() {
       !selectedType ||
       !canCreateLists ||
       (selectedType === "internal_use" && !canManageLists) ||
+      (selectedType === "maintenance" && !canCreateMaintenance) ||
       saving
     ) {
       return;
@@ -616,9 +688,8 @@ export default function EquipmentListsSidebar() {
     setError("");
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const userId = currentUserId || getUserId();
+      if (!userId) throw new Error("Please sign in again before creating a list.");
 
       const dubai = locations.find((location) => location.code === "DUBAI");
       const transferLocation = locations.find(
@@ -675,9 +746,13 @@ export default function EquipmentListsSidebar() {
           selectedType === "transfer_out" ? form.loadingDate : null,
         receiving_date:
           selectedType === "transfer_in" ? form.receivingDate : null,
+        repair_company:
+          selectedType === "maintenance" ? form.repairCompany.trim() : null,
+        maintenance_sent_date:
+          selectedType === "maintenance" ? form.maintenanceSendDate : null,
         notes: form.notes.trim() || null,
-        created_by: user?.id || null,
-        created_by_name: getUserName() || user?.email || "A team member",
+        created_by: userId,
+        created_by_name: getUserName() || "A team member",
       };
 
       const { data, error: insertError } = await supabase
@@ -757,7 +832,8 @@ export default function EquipmentListsSidebar() {
 
               {EQUIPMENT_LIST_TYPE_OPTIONS.filter(
                 (option) =>
-                  option.value !== "internal_use" || canManageLists,
+                  (option.value !== "internal_use" || canManageLists) &&
+                  (option.value !== "maintenance" || canCreateMaintenance),
               ).map((option) => (
                 <button
                   key={option.value}
@@ -1101,6 +1177,76 @@ export default function EquipmentListsSidebar() {
                 ) : null,
               )}
 
+              {maintenanceActiveLists.length > 0 ? (
+                <section>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setMaintenanceActiveOpen((current) => !current)
+                    }
+                    aria-expanded={maintenanceActiveOpen}
+                    className="flex w-full items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-left transition hover:border-amber-300 hover:bg-amber-100"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Wrench size={13} className="text-amber-700" />
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-amber-800">
+                        Maintenance Active
+                      </span>
+                    </span>
+
+                    <span className="flex items-center gap-2">
+                      <span className="rounded-full bg-white px-1.5 py-0.5 text-[9px] font-bold text-amber-700">
+                        {maintenanceActiveLists.length}
+                      </span>
+                      <ChevronDown
+                        size={13}
+                        className={`text-amber-700 transition-transform ${
+                          maintenanceActiveOpen ? "rotate-180" : ""
+                        }`}
+                      />
+                    </span>
+                  </button>
+
+                  {maintenanceActiveOpen ? (
+                    <div className="mt-2 space-y-2">
+                      {maintenanceActiveLists.map((list) => (
+                        <Link
+                          key={list.id}
+                          href={`/inventory/lists/${list.id}`}
+                          className="block w-full rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-left transition hover:border-amber-300 hover:shadow-sm"
+                        >
+                          <span className="flex items-start gap-2">
+                            <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-amber-100 text-amber-700">
+                              <Wrench size={13} />
+                            </span>
+
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center gap-1.5">
+                                <span className="truncate text-[11px] font-bold text-gray-900">
+                                  {list.reference}
+                                </span>
+                                <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[8px] font-bold text-amber-800">
+                                  Repair
+                                </span>
+                              </span>
+                              <span className="mt-1 block truncate text-[10px] text-gray-600">
+                                {equipmentListSummary(list)}
+                              </span>
+                              {listDates(list) ? (
+                                <span className="mt-1 flex items-center gap-1 text-[9px] text-gray-400">
+                                  <CalendarDays size={9} />
+                                  Sent {listDates(list)}
+                                </span>
+                              ) : null}
+                            </span>
+                          </span>
+                        </Link>
+                      ))}
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
+
               {historyLists.length > 0 ? (
                 <section>
                   <button
@@ -1393,6 +1539,24 @@ function ListFields({
           onChange={(value) =>
             updateForm(isOut ? "loadingDate" : "receivingDate", value)
           }
+        />
+      </div>
+    );
+  }
+
+  if (type === "maintenance") {
+    return (
+      <div className="space-y-2.5">
+        <TextField
+          label="Repair Company"
+          value={form.repairCompany}
+          placeholder="e.g. Procom"
+          onChange={(value) => updateForm("repairCompany", value)}
+        />
+        <DateField
+          label="Send Date"
+          value={form.maintenanceSendDate}
+          onChange={(value) => updateForm("maintenanceSendDate", value)}
         />
       </div>
     );

@@ -7,8 +7,10 @@ import { usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
   canEditInventory,
+  canEditReportForRoute,
   canManageEquipmentLists,
   canReorderInventory,
+  getUserId,
 } from "@/lib/authStore";
 import { logActivity } from "@/lib/activityStore";
 import { ChevronDown, Trash2 } from "lucide-react";
@@ -84,6 +86,7 @@ type ActiveAllocation = {
   label: string;
   quantity: number;
   status: "active" | "partially_returned";
+  listType: EquipmentList["list_type"];
 };
 
 type ListPickerTarget = {
@@ -109,6 +112,8 @@ const ACTIVE_LIST_SELECT = `
   dismantling_date,
   loading_date,
   receiving_date,
+  repair_company,
+  maintenance_sent_date,
   notes,
   created_by,
   created_by_name,
@@ -246,6 +251,26 @@ function allocationLabel(list: EquipmentList) {
   const type = equipmentListTypeLabel(list.list_type);
   const summary = equipmentListSummary(list);
   return summary ? `${type} · ${summary}` : type;
+}
+
+function movementAllocationQuantity(allocations: ActiveAllocation[]) {
+  return allocations.reduce(
+    (total, allocation) =>
+      allocation.listType === "maintenance"
+        ? total
+        : total + clampQty(allocation.quantity),
+    0,
+  );
+}
+
+function maintenanceAllocationQuantity(allocations: ActiveAllocation[]) {
+  return allocations.reduce(
+    (total, allocation) =>
+      allocation.listType === "maintenance"
+        ? total + clampQty(allocation.quantity)
+        : total,
+    0,
+  );
 }
 
 function parseCabinetArea(size: string): number {
@@ -566,10 +591,11 @@ export default function SubcategoryClientLedScreen({
   const activeDraftList = activeEquipmentList;
 
   function rowAllocatedQuantity(rowId: string) {
-    return (allocationsByRow[rowId] ?? []).reduce(
-      (total, allocation) => total + clampQty(allocation.quantity),
-      0,
-    );
+    return movementAllocationQuantity(allocationsByRow[rowId] ?? []);
+  }
+
+  function rowMaintenanceRepairQuantity(rowId: string) {
+    return maintenanceAllocationQuantity(allocationsByRow[rowId] ?? []);
   }
 
   useEffect(() => {
@@ -715,6 +741,7 @@ export default function SubcategoryClientLedScreen({
             activeList.status === "partially_returned"
               ? "partially_returned"
               : "active",
+          listType: activeList.list_type,
         });
       }
     }
@@ -869,17 +896,14 @@ export default function SubcategoryClientLedScreen({
         return;
       }
 
-      const [listResult, userResult] = await Promise.all([
-        supabase
-          .from("equipment_lists")
-          .select(ACTIVE_LIST_SELECT)
-          .eq("id", nextListId)
-          .maybeSingle(),
-        supabase.auth.getUser(),
-      ]);
+      const listResult = await supabase
+        .from("equipment_lists")
+        .select(ACTIVE_LIST_SELECT)
+        .eq("id", nextListId)
+        .maybeSingle();
 
       const { data, error } = listResult;
-      const user = userResult.data.user;
+      const userId = getUserId();
 
       if (cancelled || version !== loadVersion) return;
 
@@ -890,10 +914,17 @@ export default function SubcategoryClientLedScreen({
             (data.status === "draft" &&
               (data.list_type === "internal_use"
                 ? manager
-                : data.created_by === user?.id))),
+                : data.created_by === userId))),
       );
 
-      if (error || !data || !canUseList) {
+      const canUseDepartment = Boolean(
+        !data ||
+          data.list_type !== "maintenance" ||
+          manager ||
+          canEditReportForRoute(routeSlugs.category, routeSlugs.subcategory),
+      );
+
+      if (error || !data || !canUseList || !canUseDepartment) {
         if (error) console.error("load active equipment list error", error);
         setActiveEquipmentList(null);
         return;
@@ -1743,9 +1774,8 @@ export default function SubcategoryClientLedScreen({
   const selectedCabinetAllocations = selectedCabinetInfo
     ? allocationsByRow[selectedCabinetInfo.row.id] ?? []
     : [];
-  const selectedCabinetAllocatedQty = selectedCabinetAllocations.reduce(
-    (total, allocation) => total + clampQty(allocation.quantity),
-    0,
+  const selectedCabinetAllocatedQty = movementAllocationQuantity(
+    selectedCabinetAllocations,
   );
   const selectedCabinetExistingMovementQty = selectedCabinetInfo
     ? existingMovementQuantity(
@@ -1858,7 +1888,9 @@ export default function SubcategoryClientLedScreen({
                   href={`/inventory/lists/${allocation.listId}`}
                   title={`${allocation.reference} · ${allocation.label}`}
                   className={`max-w-full truncate rounded-lg px-2 py-1 text-[9px] font-semibold transition hover:opacity-80 ${
-                    allocation.status === "partially_returned"
+                    allocation.listType === "maintenance"
+                      ? "bg-amber-100 text-amber-800"
+                      : allocation.status === "partially_returned"
                       ? "bg-purple-100 text-purple-800"
                       : "bg-blue-100 text-blue-800"
                   }`}
@@ -2152,6 +2184,9 @@ export default function SubcategoryClientLedScreen({
           ) + existingMovementQuantity(
             listPickerTarget.row,
             rowAllocatedQuantity(listPickerTarget.row.id),
+          )}
+          activeMaintenanceQuantity={rowMaintenanceRepairQuantity(
+            listPickerTarget.row.id,
           )}
           allowPendingReview={
             activeDraftList.status === "pending" &&
@@ -2753,9 +2788,8 @@ function LedModelCard({
   );
   const availableDisplay = rows.reduce(
     (sum, row) => {
-      const activeAllocated = (allocationsByRow[row.id] ?? []).reduce(
-        (total, allocation) => total + clampQty(allocation.quantity),
-        0,
+      const activeAllocated = movementAllocationQuantity(
+        allocationsByRow[row.id] ?? [],
       );
       const allocated =
         activeAllocated + existingMovementQuantity(row, activeAllocated);
@@ -2787,9 +2821,8 @@ function LedModelCard({
   }
   const modelMovements = Array.from(modelMovementMap.values());
   const modelExistingMovement = rows.reduce((total, row) => {
-    const activeAllocated = (allocationsByRow[row.id] ?? []).reduce(
-      (sum, allocation) => sum + clampQty(allocation.quantity),
-      0,
+    const activeAllocated = movementAllocationQuantity(
+      allocationsByRow[row.id] ?? [],
     );
     return total + existingMovementQuantity(row, activeAllocated);
   }, 0);
@@ -2877,7 +2910,9 @@ function LedModelCard({
               onClick={(event) => event.stopPropagation()}
               title={`${allocation.reference} · ${allocation.label}`}
               className={`max-w-full truncate rounded-lg px-2 py-1 text-[9px] font-semibold transition hover:opacity-80 ${
-                allocation.status === "partially_returned"
+                allocation.listType === "maintenance"
+                  ? "bg-amber-100 text-amber-800"
+                  : allocation.status === "partially_returned"
                   ? "bg-purple-100 text-purple-800"
                   : "bg-blue-100 text-blue-800"
               }`}
@@ -2983,6 +3018,23 @@ function LedModelCard({
                         </button>
                       ) : null}
 
+                      {activeDraftList ? (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            onAddToList(r);
+                          }}
+                          title={`Add cabinets to ${activeDraftList.reference}`}
+                          className={`absolute top-2 z-20 inline-flex h-[26px] min-w-[26px] items-center justify-center rounded-full bg-black px-2 text-[9px] font-semibold text-white shadow-sm ${
+                            editable ? "right-10" : "right-2"
+                          }`}
+                        >
+                          + List
+                        </button>
+                      ) : null}
+
                       <div className="flex items-start gap-3">
                         <PhotoBox
                           photo={r.photo_data}
@@ -3030,18 +3082,13 @@ function LedModelCard({
                               value={toSqm(
                                 rowAvailableFromTotal(
                                   clampQty(r.qty),
-                                  (allocationsByRow[r.id] ?? []).reduce(
-                                    (total, allocation) =>
-                                      total + clampQty(allocation.quantity),
-                                    0,
+                                  movementAllocationQuantity(
+                                    allocationsByRow[r.id] ?? [],
                                   ) +
                                     existingMovementQuantity(
                                       r,
-                                      (allocationsByRow[r.id] ?? []).reduce(
-                                        (total, allocation) =>
-                                          total +
-                                          clampQty(allocation.quantity),
-                                        0,
+                                      movementAllocationQuantity(
+                                        allocationsByRow[r.id] ?? [],
                                       ),
                                     ),
                                   clampQty(r.maintenance_qty),
@@ -3067,7 +3114,9 @@ function LedModelCard({
                                   <span
                                     key={allocation.listId}
                                     className={`max-w-full truncate rounded-md px-1.5 py-1 text-[8px] font-semibold ${
-                                      allocation.status ===
+                                      allocation.listType === "maintenance"
+                                        ? "bg-amber-100 text-amber-800"
+                                        : allocation.status ===
                                       "partially_returned"
                                         ? "bg-purple-100 text-purple-800"
                                         : "bg-blue-100 text-blue-800"
@@ -3081,20 +3130,16 @@ function LedModelCard({
                           ) : null}
                           {existingMovementQuantity(
                             r,
-                            (allocationsByRow[r.id] ?? []).reduce(
-                              (total, allocation) =>
-                                total + clampQty(allocation.quantity),
-                              0,
+                            movementAllocationQuantity(
+                              allocationsByRow[r.id] ?? [],
                             ),
                           ) > 0 ? (
                             <div className="mt-1">
                               <span className="rounded-md bg-gray-100 px-1.5 py-1 text-[8px] font-semibold text-gray-600">
                                 {existingMovementQuantity(
                                   r,
-                                  (allocationsByRow[r.id] ?? []).reduce(
-                                    (total, allocation) =>
-                                      total + clampQty(allocation.quantity),
-                                    0,
+                                  movementAllocationQuantity(
+                                    allocationsByRow[r.id] ?? [],
                                   ),
                                 )}{" "}
                                 pcs · Existing movement
@@ -3187,10 +3232,7 @@ function DesktopEditableCabinetRow({
   activeDraftList: EquipmentList | null;
   onAddToList: () => void;
 }) {
-  const activeAllocated = allocations.reduce(
-    (total, allocation) => total + clampQty(allocation.quantity),
-    0,
-  );
+  const activeAllocated = movementAllocationQuantity(allocations);
   const legacyMovement = existingMovementQuantity(row, activeAllocated);
   const allocated = activeAllocated + legacyMovement;
   const available = rowAvailableFromTotal(
@@ -3255,7 +3297,9 @@ function DesktopEditableCabinetRow({
               onClick={(event) => event.stopPropagation()}
               title={`${allocation.reference} · ${allocation.label}`}
               className={`max-w-full truncate rounded-md px-1.5 py-1 text-[8px] font-semibold transition hover:opacity-80 ${
-                allocation.status === "partially_returned"
+                allocation.listType === "maintenance"
+                  ? "bg-amber-100 text-amber-800"
+                  : allocation.status === "partially_returned"
                   ? "bg-purple-100 text-purple-800"
                   : "bg-blue-100 text-blue-800"
               }`}

@@ -83,6 +83,8 @@ const ACTIVE_LIST_SELECT = `
   dismantling_date,
   loading_date,
   receiving_date,
+  repair_company,
+  maintenance_sent_date,
   notes,
   created_by_name,
   created_at,
@@ -386,6 +388,12 @@ function fitPdfText(pdf: any, value: string, maxWidth: number) {
     shortened = shortened.slice(0, -1);
   }
   return `${shortened.trimEnd()}...`;
+}
+
+function resizeNoteField(element: HTMLTextAreaElement | null) {
+  if (!element) return;
+  element.style.height = "auto";
+  element.style.height = `${element.scrollHeight}px`;
 }
 
 export default function LedScreenReportClient({
@@ -1885,9 +1893,11 @@ export default function LedScreenReportClient({
                   Note
                 </span>
                 <textarea
+                  ref={resizeNoteField}
                   value={editNote}
                   onChange={(event) => setEditNote(event.target.value)}
-                  className="min-h-[76px] w-full resize-y rounded-xl border border-gray-300 bg-white px-3 py-2 text-[12px] text-gray-900 outline-none focus:border-black"
+                  onInput={(event) => resizeNoteField(event.currentTarget)}
+                  className="min-h-[76px] w-full resize-none overflow-hidden whitespace-pre-wrap break-words rounded-xl border border-gray-300 bg-white px-3 py-2 text-[12px] text-gray-900 outline-none focus:border-black [field-sizing:content]"
                 />
               </label>
 
@@ -2059,9 +2069,11 @@ export default function LedScreenReportClient({
                   Note
                 </span>
                 <textarea
+                  ref={resizeNoteField}
                   value={note}
                   onChange={(event) => setNote(event.target.value)}
-                  className="min-h-[76px] w-full resize-y rounded-xl border border-gray-300 bg-white px-3 py-2 text-[12px] text-gray-900 outline-none focus:border-black"
+                  onInput={(event) => resizeNoteField(event.currentTarget)}
+                  className="min-h-[76px] w-full resize-none overflow-hidden whitespace-pre-wrap break-words rounded-xl border border-gray-300 bg-white px-3 py-2 text-[12px] text-gray-900 outline-none focus:border-black [field-sizing:content]"
                 />
               </label>
 
@@ -2143,7 +2155,7 @@ export default function LedScreenReportClient({
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 p-3">
+      <div className="min-h-screen min-w-0 overflow-x-hidden bg-gray-50 p-3">
         <div className="w-full mx-auto space-y-3">
           <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
             Loading...
@@ -2155,7 +2167,7 @@ export default function LedScreenReportClient({
 
   if (!rowId || !row) {
     return (
-      <div className="min-h-screen bg-gray-50 p-3">
+      <div className="min-h-screen min-w-0 overflow-x-hidden bg-gray-50 p-3">
         <div className="w-full mx-auto space-y-3">
           <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
             LED screen cabinet not found.
@@ -2166,7 +2178,7 @@ export default function LedScreenReportClient({
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-3">
+    <div className="min-h-screen min-w-0 overflow-x-hidden bg-gray-50 p-2 sm:p-3">
       <input
         ref={editPhotoInputRef}
         type="file"
@@ -2176,9 +2188,9 @@ export default function LedScreenReportClient({
         onChange={onPickEditPhotos}
       />
 
-      <div className="w-full mx-auto space-y-3">
-        <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
-          <div className="flex items-start justify-between gap-4">
+      <div className="mx-auto w-full min-w-0 space-y-3">
+        <div className="rounded-xl border border-gray-200 bg-white px-3 py-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)] sm:px-5 sm:py-6">
+          <div className="flex flex-col items-stretch gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex min-w-0 items-start gap-3 pb-1 pt-1">
               <div className="flex h-20 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-gray-50">
                 {row.photo_data ? (
@@ -2227,7 +2239,7 @@ export default function LedScreenReportClient({
 
             <div
               data-pdf-ignore="true"
-              className="flex flex-col items-end gap-2 shrink-0 pt-1 pb-1"
+              className="flex w-full shrink-0 flex-row flex-wrap items-center justify-end gap-2 pb-1 pt-1 sm:w-auto sm:flex-col sm:items-end"
             >
               <button
                 type="button"
@@ -2443,7 +2455,7 @@ export default function LedScreenReportClient({
                           <div>Date : {log.event_date || "-"}</div>
 
                           {log.note ? (
-                            <div className="text-[12px] text-gray-700">
+                            <div className="whitespace-pre-wrap break-words text-[12px] text-gray-700">
                               Note : {log.note}
                             </div>
                           ) : null}

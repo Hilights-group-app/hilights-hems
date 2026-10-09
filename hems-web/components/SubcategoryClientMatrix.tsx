@@ -11,6 +11,10 @@ import {
 import { Trash2, ChevronDown } from "lucide-react";
 import EquipmentListMatrixQuantityAction from "@/components/EquipmentListMatrixQuantityAction";
 import OnlineImageSearchPanel from "@/components/OnlineImageSearchPanel";
+import {
+  EQUIPMENT_LIST_ITEMS_EVENT,
+  EQUIPMENT_LISTS_EVENT,
+} from "@/lib/equipmentLists";
 
 type MatrixItemRow = {
   id: string;
@@ -49,6 +53,7 @@ type ActiveAllocation = {
   reference: string;
   label: string;
   quantity: number;
+  listType: string;
   status: "draft" | "active" | "partially_returned";
 };
 
@@ -63,6 +68,7 @@ type ActiveMovementList = {
   purpose?: string | null;
   assigned_to?: string | null;
   destination_name?: string | null;
+  repair_company?: string | null;
 };
 
 type OnlineImage = {
@@ -211,6 +217,11 @@ function activeMovementLabel(list: ActiveMovementList) {
   }
   if (list.list_type === "transfer_out") {
     return `Transfer${list.destination_name ? ` · ${list.destination_name}` : ""}`;
+  }
+  if (list.list_type === "maintenance") {
+    return list.repair_company
+      ? `At ${list.repair_company} for Repair`
+      : "External Repair";
   }
   return list.reference;
 }
@@ -494,7 +505,9 @@ function AllocationBadges({
           onClick={(event) => event.stopPropagation()}
           title={`${allocation.reference} · ${allocation.label}`}
           className={`max-w-full truncate rounded-md px-1.5 py-0.5 text-[7px] font-semibold transition hover:opacity-80 lg:text-[8px] ${
-            allocation.status === "partially_returned"
+            allocation.listType === "maintenance"
+              ? "bg-amber-100 text-amber-800"
+              : allocation.status === "partially_returned"
               ? "bg-purple-100 text-purple-800"
               : "bg-blue-100 text-blue-800"
           }`}
@@ -1071,7 +1084,7 @@ export default function SubcategoryClientMatrix({
       const activeListsResult = await supabase
         .from("equipment_lists")
         .select(
-          "id,reference,list_type,status,client_company,event_name,venue,purpose,assigned_to,destination_name",
+          "id,reference,list_type,status,client_company,event_name,venue,purpose,assigned_to,destination_name,repair_company",
         )
         .in("status", ["draft", "active", "partially_returned"])
         .order("created_at", { ascending: false })
@@ -1175,6 +1188,7 @@ export default function SubcategoryClientMatrix({
                 reference: activeList.reference,
                 label: activeMovementLabel(activeList),
                 quantity,
+                listType: activeList.list_type,
                 status: activeList.status,
               });
             }
@@ -1237,6 +1251,38 @@ export default function SubcategoryClientMatrix({
 
   useEffect(() => {
     void load(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [category, subcategory]);
+
+  useEffect(() => {
+    function refreshEquipmentMovements() {
+      void load(true);
+    }
+
+    window.addEventListener(EQUIPMENT_LISTS_EVENT, refreshEquipmentMovements);
+    window.addEventListener(
+      EQUIPMENT_LIST_ITEMS_EVENT,
+      refreshEquipmentMovements,
+    );
+    window.addEventListener(
+      "hems:maintenance-requests-change",
+      refreshEquipmentMovements,
+    );
+
+    return () => {
+      window.removeEventListener(
+        EQUIPMENT_LISTS_EVENT,
+        refreshEquipmentMovements,
+      );
+      window.removeEventListener(
+        EQUIPMENT_LIST_ITEMS_EVENT,
+        refreshEquipmentMovements,
+      );
+      window.removeEventListener(
+        "hems:maintenance-requests-change",
+        refreshEquipmentMovements,
+      );
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category, subcategory]);
 
@@ -2150,6 +2196,15 @@ export default function SubcategoryClientMatrix({
 
   function renderItemRow(it: MatrixItemRow, isLast: boolean) {
     const stats = statsByItem[it.id] || statsFromItem(it);
+    const modelAllocations =
+      allocationsByRecordKey[`matrix_model:${it.id}`] || [];
+    const modelMaintenanceAllocation = modelAllocations.reduce(
+      (total, allocation) =>
+        allocation.listType === "maintenance"
+          ? total + allocation.quantity
+          : total,
+      0,
+    );
 
     if (it.item_type === "rack") {
       return (
@@ -2205,6 +2260,7 @@ export default function SubcategoryClientMatrix({
                 total: it.total_qty ?? 0,
                 inUse: it.in_use_qty ?? 0,
                 maintenance: it.maintenance_qty ?? 0,
+                activeMaintenance: modelMaintenanceAllocation,
                 inKsa: it.in_ksa_qty ?? 0,
               }}
               category={category}
@@ -2499,6 +2555,13 @@ export default function SubcategoryClientMatrix({
                             total: row.total_qty ?? 0,
                             inUse: row.in_use_qty ?? 0,
                             maintenance: row.maintenance_qty ?? 0,
+                            activeMaintenance: rowAllocations.reduce(
+                              (total, allocation) =>
+                                allocation.listType === "maintenance"
+                                  ? total + allocation.quantity
+                                  : total,
+                              0,
+                            ),
                             inKsa: row.in_ksa_qty ?? 0,
                           }}
                           category={category}
@@ -2557,7 +2620,7 @@ export default function SubcategoryClientMatrix({
           </button>
         ) : null}
 
-        <div className="absolute right-2 top-2 hidden sm:block">
+        <div className="absolute right-10 top-2 z-20 sm:right-2">
           <EquipmentListMatrixQuantityAction
             target={{
               id: it.id,
@@ -2570,6 +2633,7 @@ export default function SubcategoryClientMatrix({
               total: it.total_qty ?? 0,
               inUse: it.in_use_qty ?? 0,
               maintenance: it.maintenance_qty ?? 0,
+              activeMaintenance: modelMaintenanceAllocation,
               inKsa: it.in_ksa_qty ?? 0,
             }}
             category={category}

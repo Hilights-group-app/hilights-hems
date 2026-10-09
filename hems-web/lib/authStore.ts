@@ -122,6 +122,11 @@ export function canCreateEquipmentLists(): boolean {
   return getUserRole() !== null;
 }
 
+export function canCreateMaintenanceLists(): boolean {
+  const role = getUserRole();
+  return role === "admin" || role === "warehouse_manager" || role === "head";
+}
+
 export function canManageEquipmentLists(): boolean {
   const role = getUserRole();
   return role === "admin" || role === "warehouse_manager";

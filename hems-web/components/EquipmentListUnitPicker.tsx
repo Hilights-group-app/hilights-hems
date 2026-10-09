@@ -49,6 +49,9 @@ export default function EquipmentListUnitPicker({
   const supabase = useMemo(() => createClient(), []);
   const [units, setUnits] = useState<UnitRow[]>([]);
   const [existingIds, setExistingIds] = useState<Set<string>>(new Set());
+  const [activeRepairIds, setActiveRepairIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [autoQuantity, setAutoQuantity] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -71,19 +74,33 @@ export default function EquipmentListUnitPicker({
       setLoading(true);
       setError("");
 
-      const [unitsResult, existingResult] = await Promise.all([
-        supabase
-          .from("units")
-          .select("id,unit_no,serial,status")
-          .eq("item_id", item.id)
-          .or("status.eq.available,status.is.null")
-          .order("unit_no", { ascending: true }),
+      let unitsQuery = supabase
+        .from("units")
+        .select("id,unit_no,serial,status")
+        .eq("item_id", item.id);
+
+      unitsQuery =
+        list.list_type === "maintenance"
+          ? unitsQuery.eq("status", "maintenance")
+          : unitsQuery.or("status.eq.available,status.is.null");
+
+      const [unitsResult, existingResult, activeRepairResult] = await Promise.all([
+        unitsQuery.order("unit_no", { ascending: true }),
         supabase
           .from("equipment_list_items")
           .select("inventory_record_id")
           .eq("list_id", list.id)
           .eq("inventory_record_type", "unit")
           .eq("parent_record_id", item.id),
+        list.list_type === "maintenance"
+          ? supabase
+              .from("maintenance_requests")
+              .select("inventory_record_id")
+              .eq("source_type", "maintenance")
+              .eq("inventory_record_type", "unit")
+              .eq("parent_record_id", item.id)
+              .in("status", ["sent", "received"])
+          : Promise.resolve({ data: [], error: null }),
       ]);
 
       if (cancelled) return;
@@ -110,6 +127,22 @@ export default function EquipmentListUnitPicker({
         );
       }
 
+      if (activeRepairResult.error) {
+        console.error(
+          "load active maintenance assignments error",
+          activeRepairResult.error,
+        );
+        setActiveRepairIds(new Set());
+      } else {
+        setActiveRepairIds(
+          new Set(
+            (activeRepairResult.data ?? []).map((row) =>
+              String(row.inventory_record_id),
+            ),
+          ),
+        );
+      }
+
       setLoading(false);
     }
 
@@ -118,11 +151,17 @@ export default function EquipmentListUnitPicker({
     return () => {
       cancelled = true;
     };
-  }, [item.id, list.id, supabase]);
+  }, [item.id, list.id, list.list_type, supabase]);
 
   const selectableIds = useMemo(
-    () => units.filter((unit) => !existingIds.has(unit.id)).map((unit) => unit.id),
-    [existingIds, units],
+    () =>
+      units
+        .filter(
+          (unit) =>
+            !existingIds.has(unit.id) && !activeRepairIds.has(unit.id),
+        )
+        .map((unit) => unit.id),
+    [activeRepairIds, existingIds, units],
   );
 
   const allSelected =
@@ -133,7 +172,7 @@ export default function EquipmentListUnitPicker({
     (allowPendingReview && list.status === "pending");
 
   function toggleUnit(unitId: string) {
-    if (existingIds.has(unitId) || saving) return;
+    if (existingIds.has(unitId) || activeRepairIds.has(unitId) || saving) return;
 
     setSelectedIds((current) => {
       const next = new Set(current);
@@ -274,10 +313,14 @@ export default function EquipmentListUnitPicker({
         <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 sm:px-5">
           <div>
             <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
-              Available Units
+              {list.list_type === "maintenance"
+                ? "Maintenance Units"
+                : "Available Units"}
             </div>
             <div className="mt-0.5 text-[9px] text-gray-400">
-              Choose the exact serial numbers for this list.
+              {list.list_type === "maintenance"
+                ? "Only units already marked Maintenance can be sent for repair."
+                : "Choose the exact serial numbers for this list."}
             </div>
           </div>
 
@@ -329,12 +372,15 @@ export default function EquipmentListUnitPicker({
             </div>
           ) : units.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-gray-300 px-4 py-10 text-center text-[11px] text-gray-500">
-              No available units for this fixture.
+              {list.list_type === "maintenance"
+                ? "No Maintenance units for this item."
+                : "No available units for this fixture."}
             </div>
           ) : (
             <div className="space-y-2">
               {units.map((unit) => {
                 const alreadyAdded = existingIds.has(unit.id);
+                const alreadyAtRepair = activeRepairIds.has(unit.id);
                 const selected = selectedIds.has(unit.id);
 
                 return (
@@ -342,9 +388,9 @@ export default function EquipmentListUnitPicker({
                     key={unit.id}
                     type="button"
                     onClick={() => toggleUnit(unit.id)}
-                    disabled={alreadyAdded || saving}
+                    disabled={alreadyAdded || alreadyAtRepair || saving}
                     className={`flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition ${
-                      alreadyAdded
+                      alreadyAdded || alreadyAtRepair
                         ? "cursor-default border-gray-100 bg-gray-50 opacity-60"
                         : selected
                           ? "border-black bg-gray-50"
@@ -353,12 +399,14 @@ export default function EquipmentListUnitPicker({
                   >
                     <span
                       className={`grid h-5 w-5 shrink-0 place-items-center rounded-md border ${
-                        selected || alreadyAdded
+                        selected || alreadyAdded || alreadyAtRepair
                           ? "border-black bg-black text-white"
                           : "border-gray-300 bg-white"
                       }`}
                     >
-                      {selected || alreadyAdded ? <Check size={12} /> : null}
+                      {selected || alreadyAdded || alreadyAtRepair ? (
+                        <Check size={12} />
+                      ) : null}
                     </span>
 
                     <span className="min-w-0 flex-1">
@@ -373,12 +421,20 @@ export default function EquipmentListUnitPicker({
 
                     <span
                       className={`shrink-0 rounded-full px-2 py-1 text-[8px] font-bold ${
-                        alreadyAdded
+                        alreadyAdded || alreadyAtRepair
                           ? "bg-gray-200 text-gray-500"
-                          : "bg-green-100 text-green-700"
+                          : list.list_type === "maintenance"
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-green-100 text-green-700"
                       }`}
                     >
-                      {alreadyAdded ? "Added" : "Available"}
+                      {alreadyAdded
+                        ? "Added"
+                        : alreadyAtRepair
+                          ? "At Repair"
+                        : list.list_type === "maintenance"
+                          ? "Maintenance"
+                          : "Available"}
                     </span>
                   </button>
                 );

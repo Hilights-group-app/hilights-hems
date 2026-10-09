@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { canEditInventory } from "@/lib/authStore";
 import { Trash2 } from "lucide-react";
 import EquipmentListAddUnitsAction from "@/components/EquipmentListAddUnitsAction";
+import MaintenanceRepairBadge from "@/components/MaintenanceRepairBadge";
 import OnlineImageSearchPanel from "@/components/OnlineImageSearchPanel";
 
 type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
@@ -1917,6 +1918,8 @@ function ProjectorItemRow({
                   ) : null}
                 </div>
               </div>
+
+              <MaintenanceRepairBadge itemId={item.id} />
             </div>
           </button>
         </div>
@@ -1933,6 +1936,19 @@ function ProjectorItemRow({
               </button>
             </div>
           )}
+        </div>
+
+        <div
+          className={`absolute top-2 z-20 sm:hidden ${
+            editable ? "right-10" : "right-2"
+          }`}
+        >
+          <EquipmentListAddUnitsAction
+            item={item}
+            category={category}
+            subcategory={subcategory}
+            compact
+          />
         </div>
 
         <div className="absolute right-2 top-2 hidden items-center gap-1.5 sm:flex">

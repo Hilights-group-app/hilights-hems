@@ -16,6 +16,7 @@ import {
   Share2,
   ShieldCheck,
   Trash2,
+  Wrench,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -29,8 +30,10 @@ import {
 } from "react";
 import {
   canManageEquipmentLists,
+  getUserDepartment,
   getUserId,
   getUserName,
+  getUserRole,
 } from "@/lib/authStore";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -84,6 +87,20 @@ type ReviewPickerState = {
 type ReturnDialogState = {
   item: EquipmentListItem;
   remaining: number;
+};
+
+type MaintenanceWorkflowRequest = {
+  id: string;
+  list_id: string;
+  list_item_id: string;
+  display_name: string;
+  serial_number: string | null;
+  quantity: number;
+  received_quantity: number;
+  tested_quantity: number;
+  department: string;
+  report_href: string | null;
+  status: "sent" | "received" | "resolved";
 };
 
 type ListDetailsCache = {
@@ -200,6 +217,8 @@ const LIST_SELECT = `
   dismantling_date,
   loading_date,
   receiving_date,
+  repair_company,
+  maintenance_sent_date,
   notes,
   created_by,
   created_by_name,
@@ -489,6 +508,12 @@ function scheduleRows(list: EquipmentList) {
     return [{ label: "Receiving Date", value: formatDate(list.receiving_date) }];
   }
 
+  if (list.list_type === "maintenance") {
+    return [
+      { label: "Send Date", value: formatDate(list.maintenance_sent_date) },
+    ];
+  }
+
   return [];
 }
 
@@ -620,6 +645,8 @@ export default function EquipmentListDetailsClient({
   const router = useRouter();
   const [isManager, setIsManager] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [currentRole, setCurrentRole] = useState("");
+  const [currentDepartment, setCurrentDepartment] = useState("");
   const [list, setList] = useState<DetailedEquipmentList | null>(null);
   const [items, setItems] = useState<EquipmentListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -648,6 +675,12 @@ export default function EquipmentListDetailsClient({
     Record<string, RackContentRow[]>
   >({});
   const [rackRowsLoading, setRackRowsLoading] = useState(false);
+  const [maintenanceRequests, setMaintenanceRequests] = useState<
+    MaintenanceWorkflowRequest[]
+  >([]);
+  const [maintenanceActionId, setMaintenanceActionId] = useState<string | null>(
+    null,
+  );
 
   useClientLayoutEffect(() => {
     try {
@@ -682,18 +715,16 @@ export default function EquipmentListDetailsClient({
 
   useEffect(() => {
     setIsManager(canManageEquipmentLists());
+    setCurrentUserId(getUserId());
+    setCurrentRole(getUserRole() || "");
+    setCurrentDepartment((getUserDepartment() || "").toLowerCase());
 
     let cancelled = false;
 
     async function loadManagerAccess() {
-      const [userResult, managerResult] = await Promise.all([
-        supabase.auth.getUser(),
-        supabase.rpc("is_equipment_list_manager"),
-      ]);
+      const managerResult = await supabase.rpc("is_equipment_list_manager");
 
       if (cancelled) return;
-
-      setCurrentUserId(userResult.data.user?.id ?? null);
 
       if (managerResult.error) {
         console.error(
@@ -783,6 +814,45 @@ export default function EquipmentListDetailsClient({
       cancelled = true;
     };
   }, [listId, supabase]);
+
+  async function refreshMaintenanceRequests() {
+    if (list?.list_type !== "maintenance") {
+      setMaintenanceRequests([]);
+      return;
+    }
+
+    const { data, error: requestsError } = await supabase
+      .from("maintenance_requests")
+      .select(
+        "id,list_id,list_item_id,display_name,serial_number,quantity,received_quantity,tested_quantity,department,report_href,status",
+      )
+      .eq("list_id", list.id)
+      .eq("source_type", "maintenance")
+      .order("created_at", { ascending: true });
+
+    if (requestsError) {
+      console.error("load maintenance workflow requests error", requestsError);
+      setError(
+        "The repair workflow could not be loaded. Run the maintenance SQL migration.",
+      );
+      return;
+    }
+
+    setMaintenanceRequests(
+      (data ?? []) as MaintenanceWorkflowRequest[],
+    );
+  }
+
+  useEffect(() => {
+    if (!list || list.list_type !== "maintenance") {
+      setMaintenanceRequests([]);
+      return;
+    }
+
+    void refreshMaintenanceRequests();
+    // The list ID and status are sufficient; refresh actions call this directly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [list?.id, list?.list_type, list?.status]);
 
   useEffect(() => {
     let cancelled = false;
@@ -907,6 +977,7 @@ export default function EquipmentListDetailsClient({
 
   const isDraft = list?.status === "draft";
   const isInternalUse = list?.list_type === "internal_use";
+  const isMaintenanceList = list?.list_type === "maintenance";
   const isOwner = Boolean(
     list && currentUserId && list.created_by === currentUserId,
   );
@@ -919,9 +990,23 @@ export default function EquipmentListDetailsClient({
   );
   const canReceiveReturns = Boolean(
     isManager &&
+      !isMaintenanceList &&
       (list?.status === "active" || list?.status === "partially_returned"),
   );
+  const canReceiveMaintenance = Boolean(
+    isManager && isMaintenanceList && list?.status === "active",
+  );
   const canChangeItems = Boolean(canEditDraft || canReview);
+
+  function canTestMaintenance(request: MaintenanceWorkflowRequest) {
+    return Boolean(
+      isMaintenanceList &&
+        list?.status === "active" &&
+        (currentRole === "admin" ||
+          (currentRole === "head" &&
+            currentDepartment === request.department.toLowerCase())),
+    );
+  }
 
   async function refreshItems() {
     if (!list) return;
@@ -1035,6 +1120,97 @@ export default function EquipmentListDetailsClient({
       setError(returnError?.message || "The return could not be saved.");
     } finally {
       setReturningItemId(null);
+    }
+  }
+
+  async function receiveMaintenanceItem(request: MaintenanceWorkflowRequest) {
+    if (!canReceiveMaintenance || maintenanceActionId) return;
+
+    const remaining = Math.max(
+      0,
+      (Number(request.quantity) || 0) -
+        (Number(request.received_quantity) || 0),
+    );
+    if (remaining === 0) return;
+
+    const confirmed = window.confirm(
+      `Mark ${request.display_name} (${remaining} unit${remaining === 1 ? "" : "s"}) as received from repair? It will stay unavailable until it is tested.`,
+    );
+    if (!confirmed) return;
+
+    setMaintenanceActionId(request.id);
+    setError("");
+    setMessage("");
+
+    try {
+      const { error: receiveError } = await supabase.rpc(
+        "receive_maintenance_list_item",
+        { p_request_id: request.id },
+      );
+      if (receiveError) throw receiveError;
+
+      await refreshMaintenanceRequests();
+      setMessage("Item received. It is still unavailable and awaiting test.");
+      window.dispatchEvent(new CustomEvent("hems:maintenance-requests-change"));
+    } catch (receiveError: any) {
+      console.error("receive maintenance item error", receiveError);
+      setError(
+        receiveError?.message || "The repaired item could not be received.",
+      );
+    } finally {
+      setMaintenanceActionId(null);
+    }
+  }
+
+  async function testMaintenanceItem(request: MaintenanceWorkflowRequest) {
+    if (!canTestMaintenance(request) || maintenanceActionId) return;
+
+    const testable = Math.max(
+      0,
+      (Number(request.received_quantity) || 0) -
+        (Number(request.tested_quantity) || 0),
+    );
+    if (testable === 0) return;
+
+    const confirmed = window.confirm(
+      `Confirm ${request.display_name} passed testing? ${testable} unit${testable === 1 ? "" : "s"} will become Available.`,
+    );
+    if (!confirmed) return;
+
+    setMaintenanceActionId(request.id);
+    setError("");
+    setMessage("");
+
+    try {
+      const { error: testError } = await supabase.rpc(
+        "test_maintenance_list_item",
+        { p_request_id: request.id },
+      );
+      if (testError) throw testError;
+
+      await Promise.all([
+        refreshListAndItems(),
+        refreshMaintenanceRequests(),
+      ]);
+      setMessage(
+        "Test completed. The equipment is Available again; the list closes automatically after every item passes.",
+      );
+      window.dispatchEvent(new CustomEvent("hems:maintenance-requests-change"));
+      window.dispatchEvent(
+        new CustomEvent(EQUIPMENT_LISTS_EVENT, {
+          detail: { listId: list?.id, action: "maintenance-tested" },
+        }),
+      );
+      window.dispatchEvent(
+        new CustomEvent(EQUIPMENT_LIST_ITEMS_EVENT, {
+          detail: { listId: list?.id },
+        }),
+      );
+    } catch (testError: any) {
+      console.error("test maintenance item error", testError);
+      setError(testError?.message || "The test result could not be saved.");
+    } finally {
+      setMaintenanceActionId(null);
     }
   }
 
@@ -1891,16 +2067,14 @@ export default function EquipmentListDetailsClient({
     setMessage("");
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      const userId = getUserId();
       const submittedAt = new Date().toISOString();
 
       const { data, error: updateError } = await supabase
         .from("equipment_lists")
         .update({
           status: "pending",
-          submitted_by: user?.id || null,
+          submitted_by: userId,
           submitted_at: submittedAt,
           updated_at: submittedAt,
         })
@@ -1913,14 +2087,14 @@ export default function EquipmentListDetailsClient({
         throw updateError || new Error("The list could not be submitted.");
       }
 
-      const actorName = getUserName() || user?.email || "A team member";
+      const actorName = getUserName() || "A team member";
       const { error: activityError } = await supabase
         .from("equipment_list_activity")
         .insert({
           list_id: list.id,
           action: "submitted",
           message: `${list.reference} submitted for warehouse approval`,
-          actor_id: user?.id || null,
+          actor_id: userId,
           actor_name: actorName,
           details: {
             item_lines: items.length,
@@ -1952,7 +2126,9 @@ export default function EquipmentListDetailsClient({
     if (!list || !canReview || approving || items.length === 0) return;
 
     const confirmed = window.confirm(
-      `Approve and dispatch ${list.reference}? The selected equipment will become unavailable immediately.`,
+      list.list_type === "maintenance"
+        ? `Approve and send ${list.reference} to ${list.repair_company || "the repair company"}? The selected items are already in Maintenance and will remain unavailable.`
+        : `Approve and dispatch ${list.reference}? The selected equipment will become unavailable immediately.`,
     );
     if (!confirmed) return;
 
@@ -1991,8 +2167,16 @@ export default function EquipmentListDetailsClient({
       );
       setReviewPicker(null);
       setMessage(
-        "Approved and dispatched. Inventory availability has been updated.",
+        list.list_type === "maintenance"
+          ? "Approved and sent for repair. The list is now in Maintenance Active."
+          : "Approved and dispatched. Inventory availability has been updated.",
       );
+      if (list.list_type === "maintenance") {
+        await refreshMaintenanceRequests();
+        window.dispatchEvent(
+          new CustomEvent("hems:maintenance-requests-change"),
+        );
+      }
 
       window.dispatchEvent(
         new CustomEvent(EQUIPMENT_LISTS_EVENT, {
@@ -2085,7 +2269,7 @@ export default function EquipmentListDetailsClient({
         />
       ) : null}
 
-      {customItemOpen ? (
+      {customItemOpen && !isMaintenanceList ? (
         <CustomItemDialog
           saving={addingCustomItem}
           onClose={() => {
@@ -2200,7 +2384,11 @@ export default function EquipmentListDetailsClient({
                 ) : (
                   <ShieldCheck size={14} />
                 )}
-                {approving ? "Approving..." : "Approve & Dispatch"}
+                {approving
+                  ? "Approving..."
+                  : isMaintenanceList
+                    ? "Approve & Send"
+                    : "Approve & Dispatch"}
               </button>
             ) : null}
           </div>
@@ -2268,13 +2456,139 @@ export default function EquipmentListDetailsClient({
       ) : null}
 
       {list.status === "active" || list.status === "partially_returned" ? (
-        <div className="flex items-start gap-3 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-blue-900">
-          <CheckCircle2 size={17} className="mt-0.5 shrink-0" />
+        <div
+          className={`flex items-start gap-3 rounded-2xl border px-4 py-3 ${
+            isMaintenanceList
+              ? "border-amber-200 bg-amber-50 text-amber-900"
+              : "border-blue-200 bg-blue-50 text-blue-900"
+          }`}
+        >
+          {isMaintenanceList ? (
+            <Wrench size={17} className="mt-0.5 shrink-0" />
+          ) : (
+            <CheckCircle2 size={17} className="mt-0.5 shrink-0" />
+          )}
           <div>
-            <div className="text-[11px] font-bold">Approved equipment list</div>
-            <div className="mt-0.5 text-[10px] leading-4 text-blue-700">
-              This list is active and its equipment movement is being tracked.
+            <div className="text-[11px] font-bold">
+              {isMaintenanceList
+                ? "Maintenance Active"
+                : "Approved equipment list"}
             </div>
+            <div
+              className={`mt-0.5 text-[10px] leading-4 ${
+                isMaintenanceList ? "text-amber-700" : "text-blue-700"
+              }`}
+            >
+              {isMaintenanceList
+                ? `Equipment is at ${list.repair_company || "the repair company"}. Warehouse marks it Received, then Admin or the department Head confirms Tested.`
+                : "This list is active and its equipment movement is being tracked."}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {isMaintenanceList && maintenanceRequests.length > 0 ? (
+        <div className="overflow-hidden rounded-2xl border border-amber-200 bg-white">
+          <div className="flex items-start gap-3 border-b border-amber-100 bg-amber-50 px-4 py-3 sm:px-5">
+            <Wrench size={16} className="mt-0.5 shrink-0 text-amber-700" />
+            <div>
+              <div className="text-[11px] font-bold text-amber-950">
+                Repair Progress
+              </div>
+              <div className="mt-0.5 text-[9px] leading-4 text-amber-700">
+                Received items stay unavailable until Admin or the relevant
+                department Head confirms testing.
+              </div>
+            </div>
+          </div>
+
+          <div className="divide-y divide-gray-100">
+            {maintenanceRequests.map((request) => {
+              const received = Number(request.received_quantity) || 0;
+              const tested = Number(request.tested_quantity) || 0;
+              const total = Number(request.quantity) || 0;
+              const busy = maintenanceActionId === request.id;
+              const awaitingTest = Math.max(0, received - tested);
+
+              return (
+                <div
+                  key={request.id}
+                  className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-[10px] font-bold text-gray-900 sm:text-[11px]">
+                      {request.display_name}
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[8px] font-medium text-gray-500 sm:text-[9px]">
+                      {request.serial_number ? (
+                        <span className="rounded-md bg-gray-100 px-1.5 py-0.5">
+                          {request.serial_number}
+                        </span>
+                      ) : null}
+                      <span>{total} unit{total === 1 ? "" : "s"}</span>
+                      <span>·</span>
+                      <span>{received}/{total} Received</span>
+                      <span>·</span>
+                      <span>{tested}/{total} Tested</span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {request.report_href ? (
+                      <Link
+                        href={`${request.report_href}${
+                          request.report_href.includes("?") ? "&" : "?"
+                        }maintenanceRequest=${encodeURIComponent(request.id)}`}
+                        className="rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-[9px] font-semibold text-gray-700 hover:border-black"
+                      >
+                        Open Report
+                      </Link>
+                    ) : null}
+
+                    {request.status === "sent" && canReceiveMaintenance ? (
+                      <button
+                        type="button"
+                        onClick={() => void receiveMaintenanceItem(request)}
+                        disabled={Boolean(maintenanceActionId)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-black px-2.5 py-1.5 text-[9px] font-bold text-white hover:bg-gray-800 disabled:opacity-50"
+                      >
+                        {busy ? <Loader2 size={10} className="animate-spin" /> : null}
+                        Received
+                      </button>
+                    ) : null}
+
+                    {awaitingTest > 0 && canTestMaintenance(request) ? (
+                      <button
+                        type="button"
+                        onClick={() => void testMaintenanceItem(request)}
+                        disabled={Boolean(maintenanceActionId)}
+                        className="inline-flex items-center gap-1 rounded-lg bg-green-600 px-2.5 py-1.5 text-[9px] font-bold text-white hover:bg-green-700 disabled:opacity-50"
+                      >
+                        {busy ? (
+                          <Loader2 size={10} className="animate-spin" />
+                        ) : (
+                          <CheckCircle2 size={10} />
+                        )}
+                        Tested
+                      </button>
+                    ) : null}
+
+                    {request.status === "received" &&
+                    !canTestMaintenance(request) ? (
+                      <span className="rounded-lg bg-violet-100 px-2.5 py-1.5 text-[9px] font-semibold text-violet-800">
+                        Received · Awaiting Test
+                      </span>
+                    ) : null}
+
+                    {request.status === "resolved" ? (
+                      <span className="rounded-lg bg-green-100 px-2.5 py-1.5 text-[9px] font-semibold text-green-800">
+                        Tested · Available
+                      </span>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : null}
@@ -2304,7 +2618,7 @@ export default function EquipmentListDetailsClient({
           </div>
 
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-            {canChangeItems ? (
+            {canChangeItems && !isMaintenanceList ? (
               <button
                 type="button"
                 onClick={() => setCustomItemOpen(true)}
@@ -2930,10 +3244,16 @@ export default function EquipmentListDetailsClient({
               ) : (
                 <ShieldCheck size={15} />
               )}
-              {approving ? "Approving..." : "Approve & Dispatch"}
+              {approving
+                ? "Approving..."
+                : isMaintenanceList
+                  ? "Approve & Send"
+                  : "Approve & Dispatch"}
             </button>
             <div className="mt-2 text-center text-[9px] text-gray-400">
-              Availability changes only after this approval succeeds.
+              {isMaintenanceList
+                ? "Selected equipment must already be in Maintenance. Approval starts external repair tracking."
+                : "Availability changes only after this approval succeeds."}
             </div>
           </div>
         ) : null}

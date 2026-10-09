@@ -4,7 +4,7 @@
 
 import Link from "next/link";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { createClient } from "@/lib/supabase/client";
 
@@ -25,6 +25,13 @@ import {
   type EquipmentList,
 
 } from "@/lib/equipmentLists";
+import UnitReportFilterBar from "@/components/UnitReportFilterBar";
+import {
+  buildSerialPastePlan,
+  isMultiLineSerialPaste,
+  type ChainValidityFilter,
+  type UnitReportStatusFilter,
+} from "@/lib/unitReportTools";
 
 
 
@@ -123,6 +130,10 @@ const ACTIVE_LIST_SELECT = `
   loading_date,
 
   receiving_date,
+
+  repair_company,
+
+  maintenance_sent_date,
 
   notes,
 
@@ -234,6 +245,16 @@ function valuesMatch(a: unknown, b: unknown) {
 
 }
 
+function resizeNoteField(element: HTMLTextAreaElement | null) {
+
+  if (!element) return;
+
+  element.style.height = "auto";
+
+  element.style.height = `${element.scrollHeight}px`;
+
+}
+
 
 
 async function fileToDataUrl(file: File): Promise<string> {
@@ -309,6 +330,12 @@ export function ChainHoistRowsBlock({
   >({});
 
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+  const [filterQuery, setFilterQuery] = useState("");
+  const [statusFilter, setStatusFilter] =
+    useState<UnitReportStatusFilter>("all");
+  const [validityFilter, setValidityFilter] =
+    useState<ChainValidityFilter>("all");
+  const [bulkPasting, setBulkPasting] = useState(false);
 
 
 
@@ -618,6 +645,30 @@ export function ChainHoistRowsBlock({
 
   }, [units, onStatsChange]);
 
+  const filteredUnits = useMemo(() => {
+    const query = filterQuery.trim().toLocaleLowerCase();
+
+    return units.filter((unit) => {
+      const assigned =
+        Boolean(movementByUnit[unit.id]) || isMovementStatus(unit.status);
+      const statusMatches =
+        statusFilter === "all" ||
+        (statusFilter === "available" && unit.status === "available") ||
+        (statusFilter === "maintenance" && unit.status === "maintenance") ||
+        (statusFilter === "assigned" && assigned);
+      const validity = validStatus(unit);
+      const validityMatches =
+        validityFilter === "all" || validityFilter === validity;
+
+      if (!statusMatches || !validityMatches) return false;
+      if (!query) return true;
+
+      return [unit.unit_no, unit.serial, unit.notes].some((value) =>
+        String(value ?? "").toLocaleLowerCase().includes(query),
+      );
+    });
+  }, [filterQuery, movementByUnit, statusFilter, units, validityFilter]);
+
 
 
   async function updateUnit(id: string, patch: UnitPatch) {
@@ -882,6 +933,102 @@ const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
 
   }
 
+  async function pasteSerialColumn(unitId: string, clipboardText: string) {
+    if (!editable || !allowAdd || bulkPasting) return;
+
+    const plan = buildSerialPastePlan(
+      unitsRef.current,
+      unitId,
+      clipboardText,
+    );
+
+    if (plan.assignments.length === 0) {
+      alert("No new serial numbers were found in the pasted column.");
+      return;
+    }
+
+    if (
+      plan.overwriteCount > 0 &&
+      !confirm(
+        `${plan.overwriteCount} existing serial number${
+          plan.overwriteCount === 1 ? "" : "s"
+        } will be overwritten. Continue?`,
+      )
+    ) {
+      return;
+    }
+
+    setBulkPasting(true);
+
+    try {
+      const existingAssignments = plan.assignments.filter(
+        (assignment) => assignment.target,
+      );
+      const updateResults = await Promise.all(
+        existingAssignments.map((assignment) =>
+          supabase
+            .from("units")
+            .update({ serial: assignment.serial })
+            .eq("id", assignment.target!.id),
+        ),
+      );
+      const updateError = updateResults.find((result) => result.error)?.error;
+      if (updateError) throw updateError;
+
+      const newAssignments = plan.assignments.filter(
+        (assignment) => !assignment.target,
+      );
+
+      if (newAssignments.length > 0) {
+        const firstNumber =
+          unitsRef.current.length > 0
+            ? Math.max(
+                ...unitsRef.current.map((unit) => Number(unit.unit_no) || 0),
+              ) + 1
+            : 1;
+        const { error: insertError } = await supabase.from("units").insert(
+          newAssignments.map((assignment, index) => ({
+            item_id: itemId,
+            unit_no: String(firstNumber + index),
+            serial: assignment.serial,
+            status: "available",
+            notes: "",
+            cert_date: null,
+            expiry_date: null,
+            damage_photos: [],
+          })),
+        );
+        if (insertError) throw insertError;
+      }
+
+      await loadUnits();
+      await logActivity({
+        title: `imported serials for ${itemName || "Chain Hoist"}`,
+        message: `${plan.assignments.length} serial number${
+          plan.assignments.length === 1 ? "" : "s"
+        } pasted from Excel`,
+        link: activityLink,
+      });
+
+      const skipped = plan.duplicateCount;
+      alert(
+        `${plan.assignments.length} serial number${
+          plan.assignments.length === 1 ? "" : "s"
+        } saved${
+          skipped > 0
+            ? `. ${skipped} duplicate${skipped === 1 ? " was" : "s were"} skipped.`
+            : "."
+        }`,
+      );
+    } catch (pasteError: any) {
+      console.error("bulk chain hoist serial paste error", pasteError);
+      alert(pasteError?.message || "The serial numbers could not be saved.");
+      await loadUnits();
+    } finally {
+      setBulkPasting(false);
+    }
+  }
+
 
 
   async function deleteRow(unitId: string) {
@@ -1003,6 +1150,17 @@ const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
 
 
     <div className="w-full min-w-0 overflow-hidden bg-white border border-gray-200 rounded-xl px-[2px] sm:px-5 pt-4 sm:pt-5 pb-5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+      <UnitReportFilterBar
+        query={filterQuery}
+        status={statusFilter}
+        validity={validityFilter}
+        resultCount={filteredUnits.length}
+        totalCount={units.length}
+        onQueryChange={setFilterQuery}
+        onStatusChange={setStatusFilter}
+        onValidityChange={setValidityFilter}
+      />
+
 
       <div className="hidden lg:grid w-full min-w-0 grid-cols-[32px_minmax(0,1fr)_minmax(0,1.05fr)_minmax(0,1.05fr)_minmax(0,0.65fr)_minmax(0,0.85fr)_minmax(0,1.2fr)_minmax(0,1.3fr)_24px] items-center gap-1 pt-2 pb-4 text-[10px] font-semibold text-gray-600">
 
@@ -1032,9 +1190,15 @@ const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
 
         <div className="text-sm text-gray-500">No units found.</div>
 
+      ) : filteredUnits.length === 0 ? (
+
+        <div className="rounded-xl border border-dashed border-gray-300 px-4 py-8 text-center text-sm text-gray-500">
+          No units match these filters.
+        </div>
+
       ) : (
 
-        units.map((u) => (
+        filteredUnits.map((u) => (
 
           <ChainHoistEditableRow
 
@@ -1063,6 +1227,7 @@ const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
             onOpenPhoto={openPhoto}
 
             validStatus={validStatus(u)}
+            onBulkSerialPaste={pasteSerialColumn}
 
           />
 
@@ -1424,6 +1589,8 @@ function ChainHoistEditableRow({
 
   onOpenPhoto,
 
+  onBulkSerialPaste,
+
 }: {
 
   unit: Unit;
@@ -1449,6 +1616,8 @@ function ChainHoistEditableRow({
   onDeleteDamagePhoto: (unitId: string, photoIndex: number) => void;
 
   onOpenPhoto: (url: string) => void;
+
+  onBulkSerialPaste: (unitId: string, text: string) => Promise<void>;
 
 }) {
 
@@ -1659,6 +1828,12 @@ function ChainHoistEditableRow({
               readOnly={!editable}
 
               placeholder="Serial"
+              onPaste={(event) => {
+                const text = event.clipboardData.getData("text");
+                if (!editable || !isMultiLineSerialPaste(text)) return;
+                event.preventDefault();
+                void onBulkSerialPaste(unit.id, text);
+              }}
 
               onChange={(e) => {
 
@@ -1804,6 +1979,8 @@ function ChainHoistEditableRow({
 
           <textarea
 
+            ref={resizeNoteField}
+
             value={notes}
 
             readOnly={!editable}
@@ -1834,9 +2011,11 @@ function ChainHoistEditableRow({
 
             }}
 
+            onInput={(event) => resizeNoteField(event.currentTarget)}
+
             rows={2}
 
-            className="mt-1 w-full resize-none border-none bg-transparent p-0 text-[12px] text-gray-800 outline-none"
+            className="mt-1 w-full resize-none overflow-hidden whitespace-pre-wrap break-words border-none bg-transparent p-0 text-[12px] text-gray-800 outline-none [field-sizing:content]"
 
           />
 
@@ -1991,6 +2170,12 @@ function ChainHoistEditableRow({
           readOnly={!editable}
 
           placeholder={editable ? "Serial" : ""}
+          onPaste={(event) => {
+            const text = event.clipboardData.getData("text");
+            if (!editable || !isMultiLineSerialPaste(text)) return;
+            event.preventDefault();
+            void onBulkSerialPaste(unit.id, text);
+          }}
 
           onChange={(e) => {
 
@@ -2124,6 +2309,8 @@ function ChainHoistEditableRow({
 
         <textarea
 
+          ref={resizeNoteField}
+
           value={notes}
 
           readOnly={!editable}
@@ -2154,9 +2341,11 @@ function ChainHoistEditableRow({
 
           }}
 
+          onInput={(event) => resizeNoteField(event.currentTarget)}
+
           rows={1}
 
-          className="w-full min-w-0 resize-none overflow-hidden rounded-lg border-none bg-white px-1 py-1 text-[10px] outline-none read-only:text-gray-700"
+          className="w-full min-w-0 resize-none overflow-hidden whitespace-pre-wrap break-words rounded-lg border-none bg-white px-1 py-1 text-[10px] outline-none read-only:text-gray-700 [field-sizing:content]"
 
         />
 

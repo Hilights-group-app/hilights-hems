@@ -20,6 +20,43 @@ as $$
   );
 $$;
 
+create or replace function public.hems_current_user_department()
+returns text
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select lower(coalesce(
+    (select p.department::text from public.profiles p where p.id = auth.uid()),
+    ''
+  ));
+$$;
+
+create or replace function public.hems_inventory_department(
+  p_category text,
+  p_subcategory text default ''
+)
+returns text
+language plpgsql
+immutable
+as $$
+declare
+  route_text text := lower(
+    coalesce(p_category, '') || ' ' || coalesce(p_subcategory, '')
+  );
+begin
+  if route_text ~ '(truss|rigg|hoist|motor|lifting)' then
+    return 'rigging';
+  elsif route_text ~ '(lighting|light|fixture|dimmer|console)' then
+    return 'lighting';
+  elsif route_text ~ '(video|led|screen|project|projection|media|server|network|processor|camera|lens)' then
+    return 'video';
+  end if;
+  return 'general';
+end;
+$$;
+
 create or replace function public.is_equipment_list_manager()
 returns boolean
 language sql
@@ -85,6 +122,12 @@ as $$
           l.status::text = 'draft'
           and l.list_type::text <> 'internal_use'
           and l.created_by = auth.uid()
+          and (
+            l.list_type::text <> 'maintenance'
+            or public.hems_current_user_role() in (
+              'admin', 'warehouse_manager', 'head'
+            )
+          )
         )
         -- Admin/Warehouse own Internal Use and the operational workflow.
         or (
@@ -104,15 +147,52 @@ as $$
   );
 $$;
 
+create or replace function public.hems_can_edit_list_item(
+  p_list_id uuid,
+  p_metadata jsonb
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select public.hems_can_edit_equipment_list(p_list_id)
+    and exists (
+      select 1
+      from public.equipment_lists l
+      where l.id = p_list_id
+        and (
+          l.list_type::text <> 'maintenance'
+          or public.is_equipment_list_manager()
+          or (
+            public.hems_current_user_role() = 'head'
+            and l.status::text = 'draft'
+            and l.created_by = auth.uid()
+            and public.hems_inventory_department(
+              p_metadata ->> 'category',
+              p_metadata ->> 'subcategory'
+            ) = public.hems_current_user_department()
+          )
+        )
+    );
+$$;
+
 revoke all on function public.hems_current_user_role() from public;
+revoke all on function public.hems_current_user_department() from public;
+revoke all on function public.hems_inventory_department(text, text) from public;
 revoke all on function public.is_equipment_list_manager() from public;
 revoke all on function public.hems_can_view_equipment_list(uuid) from public;
 revoke all on function public.hems_can_edit_equipment_list(uuid) from public;
+revoke all on function public.hems_can_edit_list_item(uuid, jsonb) from public;
 
 grant execute on function public.hems_current_user_role() to authenticated;
+grant execute on function public.hems_current_user_department() to authenticated;
+grant execute on function public.hems_inventory_department(text, text) to authenticated;
 grant execute on function public.is_equipment_list_manager() to authenticated;
 grant execute on function public.hems_can_view_equipment_list(uuid) to authenticated;
 grant execute on function public.hems_can_edit_equipment_list(uuid) to authenticated;
+grant execute on function public.hems_can_edit_list_item(uuid, jsonb) to authenticated;
 
 alter table public.equipment_lists enable row level security;
 alter table public.equipment_list_items enable row level security;
@@ -150,8 +230,14 @@ with check (
   created_by = auth.uid()
   and status::text = 'draft'
   and (
-    list_type::text <> 'internal_use'
-    or public.is_equipment_list_manager()
+    (list_type::text = 'internal_use' and public.is_equipment_list_manager())
+    or (
+      list_type::text = 'maintenance'
+      and public.hems_current_user_role() in (
+        'admin', 'warehouse_manager', 'head'
+      )
+    )
+    or list_type::text not in ('internal_use', 'maintenance')
   )
 );
 
@@ -164,8 +250,14 @@ with check (
   created_by = auth.uid()
   and status::text = 'draft'
   and (
-    list_type::text <> 'internal_use'
-    or public.is_equipment_list_manager()
+    (list_type::text = 'internal_use' and public.is_equipment_list_manager())
+    or (
+      list_type::text = 'maintenance'
+      and public.hems_current_user_role() in (
+        'admin', 'warehouse_manager', 'head'
+      )
+    )
+    or list_type::text not in ('internal_use', 'maintenance')
   )
 );
 
@@ -180,6 +272,12 @@ with check (
     created_by = auth.uid()
     and list_type::text <> 'internal_use'
     and status::text in ('draft', 'pending')
+    and (
+      list_type::text <> 'maintenance'
+      or public.hems_current_user_role() in (
+        'admin', 'warehouse_manager', 'head'
+      )
+    )
   )
 );
 
@@ -195,6 +293,12 @@ with check (
     created_by = auth.uid()
     and list_type::text <> 'internal_use'
     and status::text in ('draft', 'pending')
+    and (
+      list_type::text <> 'maintenance'
+      or public.hems_current_user_role() in (
+        'admin', 'warehouse_manager', 'head'
+      )
+    )
   )
 );
 
@@ -208,6 +312,12 @@ using (
     (
       list_type::text <> 'internal_use'
       and created_by = auth.uid()
+      and (
+        list_type::text <> 'maintenance'
+        or public.hems_current_user_role() in (
+          'admin', 'warehouse_manager', 'head'
+        )
+      )
     )
     or (
       list_type::text = 'internal_use'
@@ -227,6 +337,12 @@ using (
     (
       list_type::text <> 'internal_use'
       and created_by = auth.uid()
+      and (
+        list_type::text <> 'maintenance'
+        or public.hems_current_user_role() in (
+          'admin', 'warehouse_manager', 'head'
+        )
+      )
     )
     or (
       list_type::text = 'internal_use'
@@ -263,21 +379,21 @@ create policy "hems_list_items_insert"
 on public.equipment_list_items
 for insert
 to authenticated
-with check (public.hems_can_edit_equipment_list(list_id));
+with check (public.hems_can_edit_list_item(list_id, metadata));
 
 create policy "hems_list_items_insert_guard"
 on public.equipment_list_items
 as restrictive
 for insert
 to authenticated
-with check (public.hems_can_edit_equipment_list(list_id));
+with check (public.hems_can_edit_list_item(list_id, metadata));
 
 create policy "hems_list_items_update"
 on public.equipment_list_items
 for update
 to authenticated
 using (public.hems_can_edit_equipment_list(list_id))
-with check (public.hems_can_edit_equipment_list(list_id));
+with check (public.hems_can_edit_list_item(list_id, metadata));
 
 create policy "hems_list_items_update_guard"
 on public.equipment_list_items
@@ -285,7 +401,7 @@ as restrictive
 for update
 to authenticated
 using (public.hems_can_edit_equipment_list(list_id))
-with check (public.hems_can_edit_equipment_list(list_id));
+with check (public.hems_can_edit_list_item(list_id, metadata));
 
 create policy "hems_list_items_delete"
 on public.equipment_list_items
