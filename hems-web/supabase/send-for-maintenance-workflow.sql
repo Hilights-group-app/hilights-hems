@@ -382,11 +382,47 @@ drop policy if exists "hems_lists_delete_guard" on public.equipment_lists;
 
 create policy "hems_lists_select"
 on public.equipment_lists for select to authenticated
-using (public.hems_can_view_equipment_list(id));
+using (
+  list_type::text = 'internal_use'
+  or (status::text = 'draft' and created_by = auth.uid())
+  or (
+    status::text = 'pending'
+    and (
+      created_by = auth.uid()
+      or public.is_equipment_list_manager()
+    )
+  )
+  or status::text in ('active', 'partially_returned', 'closed')
+  or (
+    status::text = 'cancelled'
+    and (
+      created_by = auth.uid()
+      or public.is_equipment_list_manager()
+    )
+  )
+);
 
 create policy "hems_lists_select_guard"
 on public.equipment_lists as restrictive for select to authenticated
-using (public.hems_can_view_equipment_list(id));
+using (
+  list_type::text = 'internal_use'
+  or (status::text = 'draft' and created_by = auth.uid())
+  or (
+    status::text = 'pending'
+    and (
+      created_by = auth.uid()
+      or public.is_equipment_list_manager()
+    )
+  )
+  or status::text in ('active', 'partially_returned', 'closed')
+  or (
+    status::text = 'cancelled'
+    and (
+      created_by = auth.uid()
+      or public.is_equipment_list_manager()
+    )
+  )
+);
 
 create policy "hems_lists_insert"
 on public.equipment_lists for insert to authenticated

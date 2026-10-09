@@ -35,7 +35,26 @@ export type Catalog = {
 export const CATALOG_CACHE_KEY = "hems:catalog:v4";
 export const CATALOG_CHANGED_EVENT = "hems:catalog-change";
 
+let memoryCatalog: Catalog | null = null;
+let catalogRequest: Promise<Catalog> | null = null;
+
+function readBrowserCatalogCache(): Catalog | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = sessionStorage.getItem(CATALOG_CACHE_KEY);
+    if (!raw) return null;
+    const categories = JSON.parse(raw) as CatalogCategory[];
+    return Array.isArray(categories) ? { categories } : null;
+  } catch {
+    return null;
+  }
+}
+
 function notifyCatalogChanged() {
+  memoryCatalog = null;
+  catalogRequest = null;
+
   if (typeof window === "undefined") return;
 
   try {
@@ -51,52 +70,74 @@ function notifyCatalogChanged() {
 READ CATALOG (DB)
 --------------------------*/
 export async function readCatalog(): Promise<Catalog> {
-  try {
+  if (memoryCatalog) return memoryCatalog;
+  if (catalogRequest) return catalogRequest;
 
-    const { data: cats, error: catErr } = await supabase
-      .from("categories")
-      .select("*")
-      .order("name");
+  const fallback = readBrowserCatalogCache();
 
-    if (catErr || !cats) {
-      console.error("readCatalog categories error", catErr);
-      return { categories: [] };
+  catalogRequest = (async () => {
+    try {
+
+      const { data: cats, error: catErr } = await supabase
+        .from("categories")
+        .select("*")
+        .order("name");
+
+      if (catErr || !cats) {
+        console.error("readCatalog categories error", catErr);
+        return fallback ?? { categories: [] };
+      }
+
+      const { data: subs, error: subErr } = await supabase
+        .from("subcategories")
+        .select("*")
+        .order("name");
+
+      if (subErr || !subs) {
+        console.error("readCatalog subcategories error", subErr);
+
+        return fallback ?? {
+          categories: (cats as Category[]).map((c) => ({
+            ...c,
+            subcategories: [],
+          })),
+        };
+      }
+
+      const subByCat = new Map<string, Subcategory[]>();
+
+      for (const s of subs as Subcategory[]) {
+        const arr = subByCat.get(s.category_id) ?? [];
+        arr.push(s);
+        subByCat.set(s.category_id, arr);
+      }
+
+      const categories: CatalogCategory[] = (cats as Category[]).map((c) => ({
+        ...c,
+        subcategories: subByCat.get(c.id) ?? [],
+      }));
+
+      const result = { categories };
+      memoryCatalog = result;
+
+      if (typeof window !== "undefined") {
+        try {
+          sessionStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(categories));
+        } catch {
+          // Keep the in-memory cache when browser storage is unavailable.
+        }
+      }
+
+      return result;
+    } catch (err) {
+      console.error("readCatalog fatal error", err);
+      return fallback ?? { categories: [] };
+    } finally {
+      catalogRequest = null;
     }
+  })();
 
-    const { data: subs, error: subErr } = await supabase
-      .from("subcategories")
-      .select("*")
-      .order("name");
-
-    if (subErr || !subs) {
-      console.error("readCatalog subcategories error", subErr);
-
-      return {
-        categories: (cats as Category[]).map((c) => ({
-          ...c,
-          subcategories: [],
-        })),
-      };
-    }
-
-    const subByCat = new Map<string, Subcategory[]>();
-
-    for (const s of subs as Subcategory[]) {
-      const arr = subByCat.get(s.category_id) ?? [];
-      arr.push(s);
-      subByCat.set(s.category_id, arr);
-    }
-
-    const categories: CatalogCategory[] = (cats as Category[]).map((c) => ({
-      ...c,
-      subcategories: subByCat.get(c.id) ?? [],
-    }));
-
-    return { categories };
-  } catch (err) {
-    console.error("readCatalog fatal error", err);
-    return { categories: [] };
-  }
+  return catalogRequest;
 }
 
 /* -------------------------

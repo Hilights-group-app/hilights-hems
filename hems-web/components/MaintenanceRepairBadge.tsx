@@ -26,61 +26,73 @@ type RepairMap = Record<string, RepairBadge[]>;
 
 let cachedRepairs: RepairMap | null = null;
 let repairRequest: Promise<RepairMap> | null = null;
+let repairRevision = 0;
+const invalidatedEvents = new WeakSet<Event>();
 
 function loadRepairs(force = false): Promise<RepairMap> {
+  // Always share an in-flight request. A maintenance change event is heard by
+  // every visible badge, so allowing each badge to force its own request can
+  // create dozens of identical Supabase calls on larger inventory pages.
+  if (repairRequest) return repairRequest;
   if (!force && cachedRepairs) return Promise.resolve(cachedRepairs);
-  if (!force && repairRequest) return repairRequest;
 
   const supabase = createClient();
   repairRequest = (async () => {
-    const { data, error } = await supabase
-      .from("maintenance_requests")
-      .select(
-        "parent_record_id,list_id,quantity,tested_quantity,status,source_reference,source_summary",
-      )
-      .eq("source_type", "maintenance")
-      .in("status", ["sent", "received"])
-      .order("created_at", { ascending: false });
+    for (;;) {
+      const requestRevision = repairRevision;
+      const { data, error } = await supabase
+        .from("maintenance_requests")
+        .select(
+          "parent_record_id,list_id,quantity,tested_quantity,status,source_reference,source_summary",
+        )
+        .eq("source_type", "maintenance")
+        .in("status", ["sent", "received"])
+        .order("created_at", { ascending: false });
 
-    if (error) {
-      // The migration may not have been run yet. Keep inventory usable and
-      // simply omit repair badges until the database is ready.
-      return {};
-    }
+      // A change during loading needs one follow-up query shared by all
+      // badges. Discard the stale result without replacing the shared promise.
+      if (requestRevision !== repairRevision) continue;
 
-    const grouped = new Map<string, RepairBadge>();
-    for (const row of (data ?? []) as RepairRequestRow[]) {
-      if (!row.parent_record_id) continue;
-      const remaining = Math.max(
-        0,
-        (Number(row.quantity) || 0) - (Number(row.tested_quantity) || 0),
-      );
-      if (remaining === 0) continue;
-
-      const key = `${row.parent_record_id}:${row.list_id}:${row.status}`;
-      const current = grouped.get(key);
-      if (current) {
-        current.quantity += remaining;
-      } else {
-        grouped.set(key, {
-          listId: row.list_id,
-          reference: row.source_reference,
-          label: row.source_summary || "External Repair",
-          quantity: remaining,
-          awaitingTest: row.status === "received",
-        });
+      if (error) {
+        // The migration may not have been run yet. Keep inventory usable and
+        // simply omit repair badges until the database is ready.
+        return {};
       }
-    }
 
-    const next: RepairMap = {};
-    for (const [key, badge] of grouped) {
-      const itemId = key.split(":", 1)[0];
-      if (!next[itemId]) next[itemId] = [];
-      next[itemId].push(badge);
-    }
+      const grouped = new Map<string, RepairBadge>();
+      for (const row of (data ?? []) as RepairRequestRow[]) {
+        if (!row.parent_record_id) continue;
+        const remaining = Math.max(
+          0,
+          (Number(row.quantity) || 0) - (Number(row.tested_quantity) || 0),
+        );
+        if (remaining === 0) continue;
 
-    cachedRepairs = next;
-    return next;
+        const key = `${row.parent_record_id}:${row.list_id}:${row.status}`;
+        const current = grouped.get(key);
+        if (current) {
+          current.quantity += remaining;
+        } else {
+          grouped.set(key, {
+            listId: row.list_id,
+            reference: row.source_reference,
+            label: row.source_summary || "External Repair",
+            quantity: remaining,
+            awaitingTest: row.status === "received",
+          });
+        }
+      }
+
+      const next: RepairMap = {};
+      for (const [key, badge] of grouped) {
+        const itemId = key.split(":", 1)[0];
+        if (!next[itemId]) next[itemId] = [];
+        next[itemId].push(badge);
+      }
+
+      cachedRepairs = next;
+      return next;
+    }
   })().finally(() => {
     repairRequest = null;
   });
@@ -88,9 +100,15 @@ function loadRepairs(force = false): Promise<RepairMap> {
   return repairRequest;
 }
 
-export function invalidateMaintenanceRepairBadges() {
+export function invalidateMaintenanceRepairBadges(event?: Event) {
+  // Every mounted badge receives the same event. Invalidate only once and
+  // keep any in-flight request so the other badges join it instead of refetching.
+  if (event) {
+    if (invalidatedEvents.has(event)) return;
+    invalidatedEvents.add(event);
+  }
   cachedRepairs = null;
-  repairRequest = null;
+  repairRevision += 1;
 }
 
 export default function MaintenanceRepairBadge({ itemId }: { itemId: string }) {
@@ -106,8 +124,8 @@ export default function MaintenanceRepairBadge({ itemId }: { itemId: string }) {
       if (!cancelled) setBadges(repairs[itemId] ?? []);
     }
 
-    function handleChange() {
-      invalidateMaintenanceRepairBadges();
+    function handleChange(event: Event) {
+      invalidateMaintenanceRepairBadges(event);
       void sync(true);
     }
 

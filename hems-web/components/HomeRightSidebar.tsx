@@ -175,6 +175,10 @@ export default function HomeRightSidebar() {
   }, [showInventoryImport]);
 
   useEffect(() => {
+    // Inventory subcategory pages render their own tools in this sidebar.
+    // Avoid loading home alerts, certificates and activity behind those tools.
+    if (showInventoryTools) return;
+
     let cancelled = false;
 
     const cachedAlerts = readCache<Alert[]>(ALERTS_CACHE_KEY);
@@ -387,7 +391,7 @@ export default function HomeRightSidebar() {
         refreshInBackground,
       );
     };
-  }, [supabase]);
+  }, [showInventoryTools, supabase]);
 
   if (showInventoryTools) {
     const toolsTitle = showLedReportTools
