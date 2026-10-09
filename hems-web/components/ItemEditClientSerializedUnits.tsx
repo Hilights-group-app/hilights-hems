@@ -218,9 +218,18 @@ export default function ItemEditClientSerializedUnits({
         `/api/google-image?q=${encodeURIComponent(finalQuery)}`
       );
 
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        alert(data?.error || "Image search failed. Please try again.");
+        return;
+      }
       const data = await res.json();
 
-      setImageResults(Array.isArray(data) ? data : []);
+      const results: OnlineImage[] = Array.isArray(data) ? data : [];
+      setImageResults(results);
+      if (results.length === 0) {
+        alert("No images found. Try the brand and model only, or upload a photo.");
+      }
     } catch (e) {
       console.error("Image search error:", e);
       alert("Failed to search images");

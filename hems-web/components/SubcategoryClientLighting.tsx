@@ -918,61 +918,24 @@ export default function SubcategoryClientLighting({
     setImageResults([]);
 
     try {
-      const simplified = q
-        .replace(/\b(lighting|light|fixture|luminaire|led|profile)\b/gi, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-      const simplifiedParts = simplified.split(/\s+/).filter(Boolean);
-      const shortQuery = [
-        simplifiedParts[0],
-        ...simplifiedParts.slice(1).filter((part) => /\d/.test(part)),
-      ]
-        .filter(Boolean)
-        .join(" ");
-      const queries = Array.from(
-        new Map(
-          [q, simplified, shortQuery]
-            .filter(Boolean)
-            .map((query) => [query.toLowerCase(), query] as const),
-        ).values(),
-      );
-
-      let results: OnlineImage[] = [];
-
-      for (const query of queries) {
-        const res = await fetch(
-          `/api/google-image?q=${encodeURIComponent(query)}`,
-        );
-
-        if (!res.ok) {
-          const data = await res.json().catch(() => null);
-          alert(data?.error || "Image search failed. Please try again.");
-          return;
-        }
-
-        const data = await res.json();
-        results = Array.isArray(data)
-          ? data
-          : Array.isArray(data?.images_results)
-            ? data.images_results
-            : Array.isArray(data?.items)
-              ? data.items
-              : Array.isArray(data?.results)
-                ? data.results
-                : Array.isArray(data?.images)
-                  ? data.images
-                  : [];
-
-        if (results.length > 0) {
-          setImageSearch(query);
-          break;
-        }
+      const res = await fetch(`/api/google-image?q=${encodeURIComponent(q)}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        alert(data?.error || "Image search failed. Please try again.");
+        return;
       }
 
+      const data = await res.json();
+      const results: OnlineImage[] = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.images_results)
+          ? data.images_results
+          : [];
+      setImageSearch(q);
       setImageResults(results);
 
       if (results.length === 0) {
-        alert("No images found. Try the brand and model only.");
+        alert("No images found. Try the brand and model only, or upload a photo.");
       }
     } catch (e) {
       console.error("Image search error:", e);

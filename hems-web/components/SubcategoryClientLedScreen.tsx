@@ -1138,6 +1138,11 @@ export default function SubcategoryClientLedScreen({
 
     try {
       const res = await fetch(`/api/google-image?q=${encodeURIComponent(q)}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        alert(data?.error || "Image search failed. Please try again.");
+        return;
+      }
       const data = await res.json();
 
       const results = Array.isArray(data)
@@ -1149,6 +1154,9 @@ export default function SubcategoryClientLedScreen({
         : [];
 
       setImageResults(results);
+      if (results.length === 0) {
+        alert("No images found. Try the brand and model only, or upload a photo.");
+      }
     } catch (e) {
       console.error(e);
       alert("Failed to search images");
