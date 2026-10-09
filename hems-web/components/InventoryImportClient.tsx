@@ -101,6 +101,32 @@ function clean(value: unknown) {
   return String(value ?? "").trim();
 }
 
+function importHeaderKey(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+function normalizeImportValues(
+  raw: Record<string, unknown>,
+  headers: string[],
+): Record<string, string> {
+  const aliases = new Map(
+    headers.flatMap((header) => [
+      [importHeaderKey(header), header] as const,
+      [importHeaderKey(FIELD_LABELS[header] ?? header), header] as const,
+    ]),
+  );
+  const values = Object.fromEntries(
+    Object.entries(raw).map(([key, value]) => {
+      const normalizedKey = importHeaderKey(key);
+      return [aliases.get(normalizedKey) ?? normalizedKey, clean(value)];
+    }),
+  );
+  if (values.item_type !== undefined) {
+    values.item_type = values.item_type.toLowerCase();
+  }
+  return values;
+}
+
 function positiveInt(value: string, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : fallback;
@@ -395,12 +421,7 @@ export default function InventoryImportClient({
         });
 
         values.forEach((raw, index) => {
-          const normalized = Object.fromEntries(
-            Object.entries(raw).map(([key, value]) => [
-              key.trim().toLowerCase().replace(/\s+/g, "_"),
-              clean(value),
-            ]),
-          );
+          const normalized = normalizeImportValues(raw, definition.headers);
           if (!Object.values(normalized).some(Boolean)) return;
 
           const row: ImportRow = {
@@ -431,7 +452,7 @@ export default function InventoryImportClient({
           else if (!subcategory) row.errors.push("Subcategory no longer exists");
           const matrixNamedItem =
             definition.kind === "matrix-items" &&
-            normalized.item_type?.toLowerCase() !== "unit";
+            ["cable", "rack"].includes(normalized.item_type);
           if (!matrixNamedItem && !normalized.brand) {
             row.errors.push("Brand is required");
           }
