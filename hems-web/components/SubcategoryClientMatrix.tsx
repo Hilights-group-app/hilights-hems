@@ -78,6 +78,12 @@ type OnlineImage = {
   thumbnail?: string;
 };
 
+type MatrixDropTarget = {
+  block: string;
+  itemId: string | null;
+  position: "before" | "after";
+};
+
 type ItemsCache = {
   categoryId: string | null;
   subcategoryId: string | null;
@@ -677,6 +683,10 @@ export default function SubcategoryClientMatrix({
   const [dragItemId, setDragItemId] = useState<string | null>(null);
   const [dragItemBlock, setDragItemBlock] = useState<string | null>(null);
   const [dragBlockName, setDragBlockName] = useState<string | null>(null);
+  const [itemDropTarget, setItemDropTarget] = useState<MatrixDropTarget | null>(
+    null,
+  );
+  const [desktopDragActive, setDesktopDragActive] = useState(false);
   const [sidebarTarget, setSidebarTarget] = useState<HTMLElement | null>(null);
   const [desktopSidebarActive, setDesktopSidebarActive] = useState(false);
   const [selectedBlockName, setSelectedBlockName] = useState<string | null>(
@@ -692,6 +702,8 @@ export default function SubcategoryClientMatrix({
   const [selectedName, setSelectedName] = useState("");
   const [selectedBlockDraft, setSelectedBlockDraft] = useState("");
   const [mobileAddOpen, setMobileAddOpen] = useState(false);
+
+  const canDragMatrix = reorderable && desktopDragActive;
 
   const selectedItem = useMemo(
     () => items.find((item) => item.id === selectedItemId) ?? null,
@@ -809,7 +821,9 @@ export default function SubcategoryClientMatrix({
       }
       writeMatrixManualOrder(categoryId, subcategoryId, {
         blockOrder: next,
-        itemOrderByBlock,
+        // An older refresh request must not erase a newer saved item order.
+        itemOrderByBlock: readMatrixManualOrder(categoryId, subcategoryId)
+          .itemOrderByBlock,
       });
       return next;
     });
@@ -861,22 +875,132 @@ export default function SubcategoryClientMatrix({
     setTimeout(() => setSaveMsg(""), 1500);
   }
 
-  function onBlockDragStart(name: string) {
-    if (!reorderable) return;
+  function clearMatrixDrag() {
+    setDragItemId(null);
+    setDragItemBlock(null);
+    setDragBlockName(null);
+    setItemDropTarget(null);
+  }
+
+  function onBlockDragStart(
+    event: React.DragEvent<HTMLButtonElement>,
+    name: string,
+  ) {
+    if (!canDragMatrix) {
+      event.preventDefault();
+      return;
+    }
+    event.stopPropagation();
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", name);
     setDragBlockName(name);
     setDragItemId(null);
     setDragItemBlock(null);
+    setItemDropTarget(null);
   }
 
-  function onItemDragStart(itemId: string, sourceBlock: string) {
-    if (!reorderable) return;
+  function onItemDragStart(
+    event: React.DragEvent<HTMLDivElement>,
+    itemId: string,
+    sourceBlock: string,
+  ) {
+    if (!canDragMatrix) {
+      event.preventDefault();
+      return;
+    }
+    event.stopPropagation();
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", itemId);
     setDragItemId(itemId);
     setDragItemBlock(sourceBlock);
     setDragBlockName(null);
+    setItemDropTarget(null);
+  }
+
+  function itemDropPosition(
+    event: React.DragEvent<HTMLDivElement>,
+  ): MatrixDropTarget["position"] {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return event.clientY < rect.top + rect.height / 2 ? "before" : "after";
+  }
+
+  function onItemDragOver(
+    event: React.DragEvent<HTMLDivElement>,
+    item: MatrixItemRow,
+  ) {
+    if (!canDragMatrix || !dragItemId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    if (dragItemId === item.id) {
+      setItemDropTarget(null);
+      return;
+    }
+
+    const position = itemDropPosition(event);
+    const block = itemBlockName(item);
+    setItemDropTarget((current) =>
+      current?.itemId === item.id &&
+      current.block === block &&
+      current.position === position
+        ? current
+        : { block, itemId: item.id, position },
+    );
+  }
+
+  function onItemDrop(
+    event: React.DragEvent<HTMLDivElement>,
+    item: MatrixItemRow,
+  ) {
+    if (!canDragMatrix || !dragItemId) return;
+    event.preventDefault();
+    // Do not also execute the block's append handler.
+    event.stopPropagation();
+    const position =
+      itemDropTarget?.itemId === item.id
+        ? itemDropTarget.position
+        : itemDropPosition(event);
+    void dropDraggedItem(itemBlockName(item), item.id, position);
+  }
+
+  function onBlockDragOver(
+    event: React.DragEvent<HTMLDivElement>,
+    block: string,
+  ) {
+    if (!canDragMatrix || (!dragItemId && !dragBlockName)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    if (dragItemId) {
+      setItemDropTarget((current) =>
+        current?.block === block && current.itemId === null
+          ? current
+          : { block, itemId: null, position: "after" },
+      );
+    }
+  }
+
+  function renderItemDropLine(itemId: string) {
+    if (
+      !canDragMatrix ||
+      !dragItemId ||
+      !itemDropTarget ||
+      itemDropTarget.itemId !== itemId
+    ) {
+      return null;
+    }
+    return (
+      <div
+        aria-hidden="true"
+        data-matrix-drop-line={itemDropTarget.position}
+        className={`pointer-events-none absolute inset-x-0 z-40 h-0.5 rounded-full bg-red-500 ${
+          itemDropTarget.position === "before" ? "-top-2" : "-bottom-2"
+        }`}
+      />
+    );
   }
 
   function dropBlockOnBlock(targetBlock: string) {
-    if (!reorderable || !dragBlockName || dragBlockName === targetBlock) return;
+    if (!canDragMatrix || !dragBlockName || dragBlockName === targetBlock) return;
 
     const currentBlocks = brandGroups.map((group) => group.brand);
     const base = blockOrder.length > 0 ? blockOrder : currentBlocks;
@@ -897,97 +1021,73 @@ export default function SubcategoryClientMatrix({
 
     const nextBlockOrder = moveArrayItem(normalized, from, to);
     saveManualOrder(nextBlockOrder, itemOrderByBlock);
-    setDragBlockName(null);
+    clearMatrixDrag();
   }
 
-  async function dropItemOnBlock(targetBlock: string) {
-    if (!reorderable || !dragItemId) return;
-
-    const sourceBlock = dragItemBlock || "";
-    const dragged = items.find((item) => item.id === dragItemId);
-    if (!dragged) return;
-
-    const nextItems = items.map((item) =>
-      item.id === dragItemId ? { ...item, block_name: targetBlock } : item,
+  async function dropDraggedItem(
+    targetBlock: string,
+    targetItemId: string | null,
+    position: "before" | "after",
+  ) {
+    if (!canDragMatrix || !dragItemId) return;
+    const draggedId = dragItemId;
+    const dragged = items.find((item) => item.id === draggedId);
+    const targetGroup = brandGroups.find(
+      (group) => group.brand.toLowerCase() === targetBlock.toLowerCase(),
     );
-
-    const nextOrder = { ...itemOrderByBlock };
-    if (sourceBlock) {
-      nextOrder[sourceBlock] = (nextOrder[sourceBlock] || []).filter(
-        (id) => id !== dragItemId,
-      );
-    }
-    nextOrder[targetBlock] = [
-      ...(nextOrder[targetBlock] || []).filter((id) => id !== dragItemId),
-      dragItemId,
-    ];
-
-    setItems(sortItemsByBrand(nextItems));
-    saveManualOrder(blockOrder, nextOrder);
-
-    const { error } = await supabase
-      .from("matrix_models")
-      .update({ block_name: targetBlock })
-      .eq("id", dragItemId);
-
-    if (error) {
-      alert(error.message);
-      await refreshData();
+    if (!dragged || !targetGroup || targetItemId === draggedId) {
+      clearMatrixDrag();
+      return;
     }
 
-    setDragItemId(null);
-    setDragItemBlock(null);
-  }
-
-  async function dropItemOnItem(targetItemId: string, targetBlock: string) {
-    if (!reorderable || !dragItemId || dragItemId === targetItemId) return;
-
-    const sourceBlock = dragItemBlock || "";
-    const targetItems = items
-      .filter(
-        (item) =>
-          itemBlockName(item).toLowerCase() === targetBlock.toLowerCase(),
-      )
+    // Use the full displayed order, including items missing from saved rankings.
+    const nextTargetOrder = targetGroup.items
       .map((item) => item.id)
-      .filter((id) => id !== dragItemId);
+      .filter((id) => id !== draggedId);
+    let index = nextTargetOrder.length;
+    if (targetItemId) {
+      index = nextTargetOrder.indexOf(targetItemId);
+      if (index === -1) {
+        clearMatrixDrag();
+        return;
+      }
+      if (position === "after") index += 1;
+    }
+    nextTargetOrder.splice(index, 0, draggedId);
 
-    const oldOrder = (itemOrderByBlock[targetBlock] || targetItems).filter(
-      (id) => id !== dragItemId,
+    const sourceBlock = dragItemBlock || itemBlockName(dragged);
+    const sourceGroup = brandGroups.find(
+      (group) => group.brand.toLowerCase() === sourceBlock.toLowerCase(),
     );
-
-    const targetIndex = Math.max(0, oldOrder.indexOf(targetItemId));
-    const nextTargetOrder = [...oldOrder];
-    nextTargetOrder.splice(targetIndex, 0, dragItemId);
-
-    const nextOrder = { ...itemOrderByBlock, [targetBlock]: nextTargetOrder };
-    if (
-      sourceBlock &&
-      sourceBlock.toLowerCase() !== targetBlock.toLowerCase()
-    ) {
-      nextOrder[sourceBlock] = (nextOrder[sourceBlock] || []).filter(
-        (id) => id !== dragItemId,
-      );
+    const changesBlock = sourceBlock.toLowerCase() !== targetGroup.brand.toLowerCase();
+    const nextOrder = {
+      ...itemOrderByBlock,
+      [targetGroup.brand]: nextTargetOrder,
+    };
+    if (changesBlock && sourceGroup) {
+      nextOrder[sourceGroup.brand] = sourceGroup.items
+        .map((item) => item.id)
+        .filter((id) => id !== draggedId);
     }
 
-    const nextItems = items.map((item) =>
-      item.id === dragItemId ? { ...item, block_name: targetBlock } : item,
-    );
-
-    setItems(sortItemsByBrand(nextItems));
     saveManualOrder(blockOrder, nextOrder);
+    clearMatrixDrag();
+    // A move within the block changes only the existing browser-saved order.
+    if (!changesBlock) return;
 
+    const nextItems = items.map((item) =>
+      item.id === draggedId ? { ...item, block_name: targetGroup.brand } : item,
+    );
+    setItems(sortItemsByBrand(nextItems));
     const { error } = await supabase
       .from("matrix_models")
-      .update({ block_name: targetBlock })
-      .eq("id", dragItemId);
+      .update({ block_name: targetGroup.brand })
+      .eq("id", draggedId);
 
     if (error) {
       alert(error.message);
       await refreshData();
     }
-
-    setDragItemId(null);
-    setDragItemBlock(null);
   }
 
   async function resolveIds() {
@@ -1303,6 +1403,24 @@ export default function SubcategoryClientMatrix({
   useEffect(() => {
     const media = window.matchMedia("(min-width: 1280px)");
     const sync = () => setDesktopSidebarActive(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia(
+      "(min-width: 768px) and (hover: hover) and (pointer: fine)",
+    );
+    const sync = () => {
+      setDesktopDragActive(media.matches);
+      if (!media.matches) {
+        setDragItemId(null);
+        setDragItemBlock(null);
+        setDragBlockName(null);
+        setItemDropTarget(null);
+      }
+    };
     sync();
     media.addEventListener("change", sync);
     return () => media.removeEventListener("change", sync);
@@ -2184,19 +2302,18 @@ export default function SubcategoryClientMatrix({
             setSelectedBlockName(null);
             setSelectedCableRow(null);
           }}
-          draggable={reorderable}
-          onDragStart={() => onItemDragStart(it.id, itemBlockName(it))}
-          onDragOver={(e) => reorderable && e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            void dropItemOnItem(it.id, itemBlockName(it));
-          }}
+          draggable={canDragMatrix}
+          onDragStart={(event) => onItemDragStart(event, it.id, itemBlockName(it))}
+          onDragOver={(event) => onItemDragOver(event, it)}
+          onDrop={(event) => onItemDrop(event, it)}
+          onDragEnd={clearMatrixDrag}
           className={`relative rounded-xl p-2 transition ${
             selectedItemId === it.id ? "ring-2 ring-black" : ""
           } ${!isLast ? "border-b border-gray-100 pb-6 mb-6" : ""} ${
-            reorderable ? "cursor-grab active:cursor-grabbing" : ""
+            canDragMatrix ? "cursor-grab active:cursor-grabbing" : ""
           }`}
         >
+          {renderItemDropLine(it.id)}
           {editable ? (
             <button
               type="button"
@@ -2380,19 +2497,18 @@ export default function SubcategoryClientMatrix({
             setSelectedBlockName(null);
             setSelectedCableRow(null);
           }}
-          draggable={reorderable}
-          onDragStart={() => onItemDragStart(it.id, itemBlockName(it))}
-          onDragOver={(e) => reorderable && e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            void dropItemOnItem(it.id, itemBlockName(it));
-          }}
+          draggable={canDragMatrix}
+          onDragStart={(event) => onItemDragStart(event, it.id, itemBlockName(it))}
+          onDragOver={(event) => onItemDragOver(event, it)}
+          onDrop={(event) => onItemDrop(event, it)}
+          onDragEnd={clearMatrixDrag}
           className={`relative rounded-xl p-2 transition ${
             selectedItemId === it.id ? "ring-2 ring-black" : ""
           } ${!isLast ? "border-b border-gray-100 pb-8 mb-8" : ""} ${
-            reorderable ? "cursor-grab active:cursor-grabbing" : ""
+            canDragMatrix ? "cursor-grab active:cursor-grabbing" : ""
           }`}
         >
+          {renderItemDropLine(it.id)}
           {editable ? (
             <button
               type="button"
@@ -2557,19 +2673,18 @@ export default function SubcategoryClientMatrix({
           setSelectedBlockName(null);
           setSelectedCableRow(null);
         }}
-        draggable={reorderable}
-        onDragStart={() => onItemDragStart(it.id, itemBlockName(it))}
-        onDragOver={(e) => reorderable && e.preventDefault()}
-        onDrop={(e) => {
-          e.preventDefault();
-          void dropItemOnItem(it.id, itemBlockName(it));
-        }}
+        draggable={canDragMatrix}
+        onDragStart={(event) => onItemDragStart(event, it.id, itemBlockName(it))}
+        onDragOver={(event) => onItemDragOver(event, it)}
+        onDrop={(event) => onItemDrop(event, it)}
+        onDragEnd={clearMatrixDrag}
         className={`relative rounded-xl p-2 transition ${
           selectedItemId === it.id ? "ring-2 ring-black" : ""
         } ${!isLast ? "border-b border-gray-100 pb-4 mb-4" : ""} ${
-          reorderable ? "cursor-grab active:cursor-grabbing" : ""
+          canDragMatrix ? "cursor-grab active:cursor-grabbing" : ""
         }`}
       >
+        {renderItemDropLine(it.id)}
         {editable ? (
           <button
             type="button"
@@ -3163,16 +3278,29 @@ export default function SubcategoryClientMatrix({
         brandGroups.map((group) => (
           <div
             key={group.brand}
-            onDragOver={(e) => reorderable && e.preventDefault()}
+            onDragOver={(event) => onBlockDragOver(event, group.brand)}
+            onDragLeave={(event) => {
+              if (
+                event.relatedTarget instanceof Node &&
+                event.currentTarget.contains(event.relatedTarget)
+              ) {
+                return;
+              }
+              setItemDropTarget((current) =>
+                current?.block === group.brand ? null : current,
+              );
+            }}
             onDrop={(e) => {
+              if (!canDragMatrix || (!dragItemId && !dragBlockName)) return;
               e.preventDefault();
+              e.stopPropagation();
               if (dragItemId) {
-                void dropItemOnBlock(group.brand);
+                void dropDraggedItem(group.brand, null, "after");
               } else if (dragBlockName) {
                 dropBlockOnBlock(group.brand);
               }
             }}
-            className={`bg-white border rounded-2xl p-2 sm:p-4 ${
+            className={`relative bg-white border rounded-2xl p-2 sm:p-4 ${
               selectedBlockName?.toLowerCase() === group.brand.toLowerCase()
                 ? "border-black ring-2 ring-black"
                 : dragItemId || dragBlockName
@@ -3181,11 +3309,12 @@ export default function SubcategoryClientMatrix({
             }`}
           >
             <div className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
-              {reorderable ? (
+              {canDragMatrix ? (
                 <button
                   type="button"
                   draggable
-                  onDragStart={() => onBlockDragStart(group.brand)}
+                  onDragStart={(event) => onBlockDragStart(event, group.brand)}
+                  onDragEnd={clearMatrixDrag}
                   className="h-5 w-5 cursor-grab rounded-full border border-gray-200 bg-white text-[10px] text-gray-500 hover:text-red-500 active:cursor-grabbing"
                   title="Drag block"
                 >
@@ -3217,6 +3346,16 @@ export default function SubcategoryClientMatrix({
             {group.items.map((it, index) =>
               renderItemRow(it, index === group.items.length - 1),
             )}
+            {canDragMatrix &&
+            dragItemId &&
+            itemDropTarget?.block === group.brand &&
+            itemDropTarget.itemId === null ? (
+              <div
+                aria-hidden="true"
+                data-matrix-drop-line="block-end"
+                className="pointer-events-none absolute inset-x-2 bottom-2 z-40 h-0.5 rounded-full bg-red-500 sm:inset-x-4"
+              />
+            ) : null}
           </div>
         ))
       )}
