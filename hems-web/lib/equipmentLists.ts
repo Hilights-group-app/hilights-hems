@@ -43,6 +43,7 @@ export type EquipmentList = {
   notes: string | null;
   created_by: string | null;
   created_by_name: string | null;
+  shared_with?: string[] | null;
   created_at: string;
   updated_at: string;
 };
@@ -70,6 +71,41 @@ export const ACTIVE_EQUIPMENT_LIST_EVENT =
 export const EQUIPMENT_LISTS_EVENT = "hems:equipment-lists-change";
 export const EQUIPMENT_LIST_ITEMS_EVENT =
   "hems:equipment-list-items-change";
+
+export const SHAREABLE_DRAFT_TYPES: EquipmentListType[] = [
+  "dry_hire", "local_event", "transfer_out",
+];
+
+export function canShareEquipmentDraft(list: EquipmentList | null, userId: string | null) {
+  return Boolean(list && userId && list.status === "draft"
+    && list.created_by === userId && SHAREABLE_DRAFT_TYPES.includes(list.list_type));
+}
+
+export function isSharedEquipmentDraft(list: EquipmentList | null, userId: string | null) {
+  return Boolean(list && userId && list.status === "draft"
+    && SHAREABLE_DRAFT_TYPES.includes(list.list_type)
+    && list.created_by !== userId && Array.isArray(list.shared_with)
+    && list.shared_with.includes(userId));
+}
+
+export function canEditEquipmentDraft(
+  list: EquipmentList | null,
+  userId: string | null,
+  manager: boolean,
+) {
+  if (!list || !userId || list.status !== "draft") return false;
+  if (list.list_type === "internal_use") return manager;
+  return list.created_by === userId || isSharedEquipmentDraft(list, userId);
+}
+
+export function canAddToEquipmentList(
+  list: EquipmentList | null,
+  userId: string | null,
+  manager: boolean,
+) {
+  return Boolean(list && userId && ((list.status === "pending" && manager)
+    || canEditEquipmentDraft(list, userId, manager)));
+}
 
 export const EQUIPMENT_LIST_TYPE_OPTIONS: Array<{
   value: EquipmentListType;

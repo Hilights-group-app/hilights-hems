@@ -36,6 +36,9 @@ import {
   equipmentListStatusLabel,
   equipmentListSummary,
   equipmentListTypeLabel,
+  canAddToEquipmentList,
+  isSharedEquipmentDraft,
+  SHAREABLE_DRAFT_TYPES,
   type EquipmentList,
   type EquipmentListItem,
   type EquipmentListStatus,
@@ -104,6 +107,7 @@ const LIST_SELECT = `
   notes,
   created_by,
   created_by_name,
+  shared_with,
   created_at,
   updated_at
 `;
@@ -258,6 +262,7 @@ export default function EquipmentListsSidebar() {
 
   useEffect(() => {
     let cancelled = false;
+    let listLoadVersion = 0;
 
     setMounted(true);
     setCanCreateLists(canCreateEquipmentLists());
@@ -272,15 +277,27 @@ export default function EquipmentListsSidebar() {
     }
 
     async function load(showLoading = true) {
+      const version = ++listLoadVersion;
       if (showLoading) setLoading(true);
       setError("");
 
-      const queryLists = () =>
-        supabase
-          .from("equipment_lists")
-          .select(LIST_SELECT)
-          .order("created_at", { ascending: false })
-          .limit(100);
+      const queryLists = async () => {
+        const userId = getUserId();
+        const recent = supabase.from("equipment_lists").select(LIST_SELECT)
+          .order("created_at", { ascending: false }).limit(100);
+        const shared = userId
+          ? supabase.from("equipment_lists").select(LIST_SELECT)
+              .eq("status", "draft").in("list_type", SHAREABLE_DRAFT_TYPES)
+              .contains("shared_with", [userId]).order("created_at", { ascending: false })
+          : Promise.resolve({ data: [], error: null });
+        const [recentResult, sharedResult] = await Promise.all([recent, shared]);
+        const error = recentResult.error || sharedResult.error;
+        const combined = new Map<string, EquipmentList>();
+        for (const row of [...(recentResult.data ?? []), ...(sharedResult.data ?? [])]) {
+          combined.set(row.id, row as EquipmentList);
+        }
+        return { error, data: Array.from(combined.values()).sort((a, b) => b.created_at.localeCompare(a.created_at)) };
+      };
 
       let [listResult, locationResult] = await Promise.all([
         queryLists(),
@@ -302,7 +319,7 @@ export default function EquipmentListsSidebar() {
         listResult = await queryLists();
       }
 
-      if (cancelled) return;
+      if (cancelled || version !== listLoadVersion) return;
 
       if (listResult.error) {
         console.error("equipment lists load error", listResult.error);
@@ -327,12 +344,27 @@ export default function EquipmentListsSidebar() {
       void load(false);
     }
 
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    function scheduleReload() {
+      clearTimeout(timer);
+      timer = setTimeout(() => void load(false), 120);
+    }
+    function focus() { if (document.visibilityState === "visible") scheduleReload(); }
+    const channel = supabase.channel(`draft-sidebar:${crypto.randomUUID()}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "equipment_lists" }, scheduleReload)
+      .subscribe();
     void load(true);
     window.addEventListener(EQUIPMENT_LISTS_EVENT, handleListsChange);
+    window.addEventListener("focus", focus);
+    document.addEventListener("visibilitychange", focus);
 
     return () => {
       cancelled = true;
+      clearTimeout(timer);
       window.removeEventListener(EQUIPMENT_LISTS_EVENT, handleListsChange);
+      window.removeEventListener("focus", focus);
+      document.removeEventListener("visibilitychange", focus);
+      void supabase.removeChannel(channel);
     };
   }, [supabase]);
 
@@ -344,7 +376,7 @@ export default function EquipmentListsSidebar() {
         );
 
         if (list.list_type === "internal_use") return true;
-        if (list.status === "draft") return isOwner;
+        if (list.status === "draft") return isOwner || isSharedEquipmentDraft(list, currentUserId);
         if (list.status === "pending") return isOwner || canManageLists;
         if (list.status === "cancelled") return isOwner || canManageLists;
         return true;
@@ -356,10 +388,7 @@ export default function EquipmentListsSidebar() {
     () =>
       accessibleLists.find((list) => {
         if (list.id !== activeListId) return false;
-        if (list.status === "pending") return canManageLists;
-        if (list.status !== "draft") return false;
-        if (list.list_type === "internal_use") return canManageLists;
-        return Boolean(currentUserId && list.created_by === currentUserId);
+        return canAddToEquipmentList(list, currentUserId, canManageLists);
       }) ?? null,
     [accessibleLists, activeListId, canManageLists, currentUserId],
   );
@@ -455,12 +484,24 @@ export default function EquipmentListsSidebar() {
       }
     }
 
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    function scheduleItemsRefresh() {
+      clearTimeout(timer);
+      timer = setTimeout(() => void loadListItems(), 120);
+    }
+    const channel = activeListId ? supabase.channel(`draft-sidebar-items:${activeListId}:${crypto.randomUUID()}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "equipment_list_items", filter: `list_id=eq.${activeListId}` }, scheduleItemsRefresh)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "equipment_list_items", filter: `list_id=eq.${activeListId}` }, scheduleItemsRefresh)
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "equipment_list_items" }, scheduleItemsRefresh)
+      .subscribe() : null;
     void loadListItems();
     window.addEventListener(EQUIPMENT_LIST_ITEMS_EVENT, handleItemsChange);
 
     return () => {
       cancelled = true;
+      clearTimeout(timer);
       window.removeEventListener(EQUIPMENT_LIST_ITEMS_EVENT, handleItemsChange);
+      if (channel) void supabase.removeChannel(channel);
     };
   }, [activeListId, supabase]);
 
@@ -552,11 +593,7 @@ export default function EquipmentListsSidebar() {
   }
 
   function canEditWorkingList(list: EquipmentList | null) {
-    if (!list) return false;
-    if (list.status === "pending") return canManageLists;
-    if (list.status !== "draft") return false;
-    if (list.list_type === "internal_use") return canManageLists;
-    return Boolean(currentUserId && list.created_by === currentUserId);
+    return canAddToEquipmentList(list, currentUserId, canManageLists);
   }
 
   function chooseActiveList(list: EquipmentList) {
@@ -1152,6 +1189,9 @@ export default function EquipmentListsSidebar() {
                                 {equipmentListSummary(list)}
                               </span>
 
+                              {isSharedEquipmentDraft(list, currentUserId) ? (
+                                <span className="mt-1 block text-[9px] font-semibold text-blue-700">Shared with you · {list.created_by_name || "Team member"}</span>
+                              ) : null}
                               {listDates(list) ? (
                                 <span className="mt-1 flex items-center gap-1 text-[9px] text-gray-400">
                                   <CalendarDays size={9} />

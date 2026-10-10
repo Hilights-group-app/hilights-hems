@@ -12,6 +12,7 @@ import EquipmentListUnitPicker from "@/components/EquipmentListUnitPicker";
 import {
   ACTIVE_EQUIPMENT_LIST_EVENT,
   ACTIVE_EQUIPMENT_LIST_KEY,
+  canAddToEquipmentList,
   type EquipmentList,
 } from "@/lib/equipmentLists";
 
@@ -44,7 +45,7 @@ const ACTIVE_LIST_SELECT = `
   maintenance_sent_date,
   notes,
   created_by,
-  created_by_name,
+  created_by_name, shared_with,
   created_at,
   updated_at
 `;
@@ -100,14 +101,7 @@ export default function EquipmentListAddUnitsAction({
 
       const userId = getUserId();
       const manager = canManageEquipmentLists();
-      const canEditList = Boolean(
-        data &&
-          ((data.status === "pending" && manager) ||
-            (data.status === "draft" &&
-              (data.list_type === "internal_use"
-                ? manager
-                : data.created_by === userId))),
-      );
+      const canEditList = canAddToEquipmentList(data as EquipmentList | null, userId, manager);
 
       if (error || !data || !canEditList) {
         if (error) console.error("load active equipment list error", error);

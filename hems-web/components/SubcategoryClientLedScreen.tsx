@@ -22,6 +22,7 @@ import {
   EQUIPMENT_LISTS_EVENT,
   equipmentListSummary,
   equipmentListTypeLabel,
+  canAddToEquipmentList,
   type EquipmentList,
 } from "@/lib/equipmentLists";
 import {
@@ -116,7 +117,7 @@ const ACTIVE_LIST_SELECT = `
   maintenance_sent_date,
   notes,
   created_by,
-  created_by_name,
+  created_by_name, shared_with,
   created_at,
   updated_at
 `;
@@ -908,14 +909,7 @@ export default function SubcategoryClientLedScreen({
       if (cancelled || version !== loadVersion) return;
 
       const manager = canManageEquipmentLists();
-      const canUseList = Boolean(
-        data &&
-          ((data.status === "pending" && manager) ||
-            (data.status === "draft" &&
-              (data.list_type === "internal_use"
-                ? manager
-                : data.created_by === userId))),
-      );
+      const canUseList = canAddToEquipmentList(data as EquipmentList | null, userId, manager);
 
       const canUseDepartment = Boolean(
         !data ||

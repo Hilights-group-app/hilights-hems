@@ -26,6 +26,7 @@ import {
   useEffect,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import {
@@ -44,11 +45,15 @@ import {
   equipmentListStatusLabel,
   equipmentListSummary,
   equipmentListTypeLabel,
+  canEditEquipmentDraft,
+  canShareEquipmentDraft,
+  isSharedEquipmentDraft,
   type EquipmentList,
   type EquipmentListItem,
   type EquipmentListStatus,
 } from "@/lib/equipmentLists";
 import EquipmentListUnitPicker from "@/components/EquipmentListUnitPicker";
+import EquipmentDraftShareButton from "@/components/EquipmentDraftShareButton";
 
 type DetailedEquipmentList = EquipmentList & {
   submitted_by?: string | null;
@@ -222,6 +227,7 @@ const LIST_SELECT = `
   notes,
   created_by,
   created_by_name,
+  shared_with,
   created_at,
   updated_at,
   submitted_by,
@@ -681,6 +687,7 @@ export default function EquipmentListDetailsClient({
   const [maintenanceActionId, setMaintenanceActionId] = useState<string | null>(
     null,
   );
+  const listReadVersion = useRef(0);
 
   useClientLayoutEffect(() => {
     try {
@@ -748,6 +755,7 @@ export default function EquipmentListDetailsClient({
     let cancelled = false;
 
     async function load() {
+      const version = ++listReadVersion.current;
       const cached = readListDetailsCache(listId);
 
       if (cached) {
@@ -765,7 +773,7 @@ export default function EquipmentListDetailsClient({
           .from("equipment_lists")
           .select(LIST_SELECT)
           .eq("id", listId)
-          .single(),
+          .maybeSingle(),
         supabase
           .from("equipment_list_items")
           .select(LIST_ITEM_SELECT)
@@ -773,20 +781,21 @@ export default function EquipmentListDetailsClient({
           .order("created_at", { ascending: true }),
       ]);
 
-      if (cancelled) return;
+      if (cancelled || version !== listReadVersion.current) return;
 
       if (listResult.error || !listResult.data) {
         console.error("equipment list details load error", listResult.error);
 
-        if (cached) {
+        if (cached && listResult.error) {
           setError("The latest list changes could not be refreshed.");
           setLoading(false);
           return;
         }
 
+        clearListDetailsCache(listId);
         setList(null);
         setItems([]);
-        setError("Equipment list not found.");
+        setError("Equipment list not found or access has been removed.");
         setLoading(false);
         return;
       }
@@ -981,9 +990,10 @@ export default function EquipmentListDetailsClient({
   const isOwner = Boolean(
     list && currentUserId && list.created_by === currentUserId,
   );
-  const canEditDraft = Boolean(
-    isDraft && (isInternalUse ? isManager : isOwner),
-  );
+  const canDeleteDraft = Boolean(isDraft && (isInternalUse ? isManager : isOwner));
+  const canEditDraft = canEditEquipmentDraft(list, currentUserId, isManager);
+  const canShareDraft = canShareEquipmentDraft(list, currentUserId);
+  const sharedDraft = isSharedEquipmentDraft(list, currentUserId);
   const canSubmitDraft = Boolean(canEditDraft && !isInternalUse && isOwner);
   const canReview = Boolean(
     isManager && !isInternalUse && list?.status === "pending",
@@ -1026,13 +1036,14 @@ export default function EquipmentListDetailsClient({
     setItems((data ?? []) as EquipmentListItem[]);
   }
 
-  async function refreshListAndItems() {
+  async function refreshListAndItems(isCancelled: () => boolean = () => false) {
+    const version = ++listReadVersion.current;
     const [listResult, itemsResult] = await Promise.all([
       supabase
         .from("equipment_lists")
         .select(LIST_SELECT)
         .eq("id", listId)
-        .single(),
+        .maybeSingle(),
       supabase
         .from("equipment_list_items")
         .select(LIST_ITEM_SELECT)
@@ -1040,15 +1051,68 @@ export default function EquipmentListDetailsClient({
         .order("created_at", { ascending: true }),
     ]);
 
-    if (listResult.error || !listResult.data) {
-      throw listResult.error || new Error("The equipment list could not be refreshed.");
+    if (isCancelled() || version !== listReadVersion.current) return;
+    if (!listResult.error && !listResult.data) {
+      clearListDetailsCache(listId);
+      setList(null);
+      setItems([]);
+      setLoading(false);
+      throw new Error("This list is no longer shared with you or is no longer available.");
     }
+    if (listResult.error) throw listResult.error;
 
     if (itemsResult.error) throw itemsResult.error;
 
-    setList(listResult.data as DetailedEquipmentList);
-    setItems((itemsResult.data ?? []) as EquipmentListItem[]);
+    const nextList = listResult.data as DetailedEquipmentList;
+    const nextItems = (itemsResult.data ?? []) as EquipmentListItem[];
+    setList(nextList);
+    setItems(nextItems);
+    writeListDetailsCache(listId, nextList, nextItems);
+    setLoading(false);
   }
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let refreshing = false;
+    let refreshAgain = false;
+    async function refresh() {
+      if (cancelled) return;
+      if (refreshing) { refreshAgain = true; return; }
+      refreshing = true;
+      try {
+        await refreshListAndItems(() => cancelled);
+      } catch (refreshError: any) {
+        if (!cancelled) setError(refreshError?.message || "Could not refresh the shared draft.");
+      } finally {
+        refreshing = false;
+        if (refreshAgain && !cancelled) { refreshAgain = false; schedule(); }
+      }
+    }
+    function schedule() {
+      clearTimeout(timer);
+      timer = setTimeout(() => void refresh(), 120);
+    }
+    function focus() { if (document.visibilityState === "visible") schedule(); }
+    const channel = supabase.channel(`draft-details:${listId}:${crypto.randomUUID()}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "equipment_lists", filter: `id=eq.${listId}` }, schedule)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "equipment_list_items", filter: `list_id=eq.${listId}` }, schedule)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "equipment_list_items", filter: `list_id=eq.${listId}` }, schedule)
+      // DELETE events cannot be filtered by list_id with the default replica identity.
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "equipment_list_items" }, schedule)
+      .subscribe();
+    window.addEventListener("focus", focus);
+    document.addEventListener("visibilitychange", focus);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      window.removeEventListener("focus", focus);
+      document.removeEventListener("visibilitychange", focus);
+      void supabase.removeChannel(channel);
+    };
+    // Reload the same list on collaboration events without resubscribing per edit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listId, supabase]);
 
   function remainingQuantity(item: EquipmentListItem) {
     return Math.max(
@@ -1393,7 +1457,7 @@ export default function EquipmentListDetailsClient({
   }
 
   async function deleteDraftList() {
-    if (!list || !canEditDraft || deletingList) return;
+    if (!list || !canDeleteDraft || deletingList) return;
 
     const confirmed = window.confirm(
       `Delete draft ${list.reference}? This cannot be undone.`,
@@ -2080,6 +2144,7 @@ export default function EquipmentListDetailsClient({
         })
         .eq("id", list.id)
         .eq("status", "draft")
+        .eq("created_by", userId)
         .select(LIST_SELECT)
         .single();
 
@@ -2310,6 +2375,14 @@ export default function EquipmentListDetailsClient({
           </div>
 
           <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+            {canShareDraft ? (
+              <EquipmentDraftShareButton list={list} onSaved={(userIds) => {
+                listReadVersion.current += 1;
+                setList(current => current && current.id === list.id
+                  ? { ...current, shared_with: userIds } : current);
+                setMessage("Draft sharing updated.");
+              }} />
+            ) : null}
             <button
               type="button"
               onClick={() => void shareList()}
@@ -2321,7 +2394,7 @@ export default function EquipmentListDetailsClient({
               ) : (
                 <Share2 size={12} />
               )}
-              Share
+              Share PDF
             </button>
 
             <button
@@ -2338,7 +2411,7 @@ export default function EquipmentListDetailsClient({
               PDF
             </button>
 
-            {canEditDraft ? (
+            {canDeleteDraft ? (
               <>
                 <button
                   type="button"
@@ -2417,6 +2490,7 @@ export default function EquipmentListDetailsClient({
 
         <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-gray-200 px-4 py-2.5 text-[9px] text-gray-400 sm:px-5">
           <span>Created by {list.created_by_name || "Unknown"}</span>
+          {sharedDraft ? <span className="font-semibold text-blue-700">Shared with you</span> : null}
           <span>{formatDateTime(list.created_at)}</span>
           {list.submitted_at ? (
             <span>Submitted {formatDateTime(list.submitted_at)}</span>
@@ -2618,6 +2692,17 @@ export default function EquipmentListDetailsClient({
           </div>
 
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            {canChangeItems ? (
+              <button type="button" onClick={() => {
+                localStorage.setItem(ACTIVE_EQUIPMENT_LIST_KEY, list.id);
+                window.dispatchEvent(new CustomEvent(ACTIVE_EQUIPMENT_LIST_EVENT, {
+                  detail: { listId: list.id },
+                }));
+                router.push("/inventory");
+              }} className="inline-flex items-center gap-1.5 rounded-xl bg-black px-3 py-2 text-[10px] font-semibold text-white">
+                <Plus size={12} /> Add equipment
+              </button>
+            ) : null}
             {canChangeItems && !isMaintenanceList ? (
               <button
                 type="button"

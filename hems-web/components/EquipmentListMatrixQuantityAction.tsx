@@ -14,6 +14,7 @@ import {
   ACTIVE_EQUIPMENT_LIST_KEY,
   EQUIPMENT_LIST_ITEMS_EVENT,
   equipmentListSummary,
+  canAddToEquipmentList,
   type EquipmentList,
 } from "@/lib/equipmentLists";
 
@@ -61,7 +62,7 @@ const ACTIVE_LIST_SELECT = `
   purpose, assigned_to, from_location_name, destination_name, pickup_date,
   return_date, setup_date, dismantling_date, loading_date, receiving_date,
   repair_company, maintenance_sent_date,
-  notes, created_by, created_by_name, created_at, updated_at
+  notes, created_by, created_by_name, shared_with, created_at, updated_at
 `;
 
 function qty(value: unknown) {
@@ -100,12 +101,7 @@ async function loadActiveListShared(
     const userId = getUserId();
     const manager = canManageEquipmentLists();
     const nextList =
-      data &&
-      ((data.status === "pending" && manager) ||
-        (data.status === "draft" &&
-          (data.list_type === "internal_use"
-            ? manager
-            : data.created_by === userId)))
+      canAddToEquipmentList(data as EquipmentList | null, userId, manager)
         ? (data as EquipmentList)
         : null;
     activeListCache.set(listId, nextList);
