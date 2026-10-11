@@ -1,6 +1,7 @@
 "use client";
 
-import Link from "next/link";
+import SettingsFrame from "@/components/SettingsFrame";
+import styles from "@/components/SettingsStyles.module.css";
 import { useEffect, useRef, useState } from "react";
 
 type UserRole = "admin" | "warehouse_manager" | "viewer" | "head";
@@ -248,29 +249,13 @@ export default function AccountManagementClient() {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="bg-white border rounded-2xl p-6 text-gray-900">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold">Account Management</h1>
-            <p className="text-sm text-gray-600 mt-1">
-              Create users and manage roles, departments and photos.
-            </p>
-          </div>
-
-          <Link
-            href="/settings"
-            className="px-4 py-2 rounded-full border text-sm font-medium hover:bg-gray-50"
-          >
-            Back
-          </Link>
-        </div>
-      </div>
-
-      <div className="bg-white border rounded-2xl p-6 text-gray-900">
+    <SettingsFrame title="Account Management"
+      description="Manage user roles, departments and profile photos."
+      status={loadingUsers ? "Loading accounts…" : `${users.length} accounts`}>
+      <div className={styles.panel}>
         <h2 className="text-sm font-bold text-gray-900 mb-4">Create User</h2>
 
-        <form onSubmit={onSubmit} className="space-y-4 max-w-2xl">
+        <form onSubmit={onSubmit} className={styles.createGrid}>
           <input
             ref={avatarInputRef}
             type="file"
@@ -279,11 +264,12 @@ export default function AccountManagementClient() {
             onChange={onPickCreateAvatar}
           />
 
-          <div className="flex items-center gap-4 rounded-2xl border border-gray-100 bg-gray-50 p-3">
+          <div className={`${styles.fullRow} flex items-center gap-4 rounded-xl border border-gray-100 bg-gray-50 p-3`}>
             <button
               type="button"
               onClick={() => avatarInputRef.current?.click()}
               className="h-16 w-16 overflow-hidden rounded-full bg-white border shadow-sm flex items-center justify-center text-sm font-bold text-gray-700 hover:ring-2 hover:ring-black/10 transition"
+              data-settings-avatar
               title="Upload user photo"
             >
               {avatarUrl ? (
@@ -336,7 +322,7 @@ export default function AccountManagementClient() {
             />
           </div>
 
-          <div>
+          <div className={styles.fullRow}>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Password
             </label>
@@ -349,7 +335,7 @@ export default function AccountManagementClient() {
             />
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className={`${styles.fullRow} grid grid-cols-1 sm:grid-cols-2 gap-3`}>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Role
@@ -388,10 +374,10 @@ export default function AccountManagementClient() {
             </div>
           </div>
 
-          {msg && <div className="text-sm text-green-600">{msg}</div>}
-          {err && <div className="text-sm text-red-600">{err}</div>}
+          {msg && <div role="status" className={`${styles.fullRow} ${styles.feedback} text-green-700`}>{msg}</div>}
+          {err && <div role="alert" className={`${styles.fullRow} ${styles.feedback} text-red-600`}>{err}</div>}
 
-          <div className="pt-2">
+          <div className={`${styles.fullRow} pt-1`}>
             <button
               type="submit"
               disabled={submitting}
@@ -403,7 +389,7 @@ export default function AccountManagementClient() {
         </form>
       </div>
 
-      <div className="bg-white border rounded-2xl p-6 text-gray-900">
+      <div className={styles.panel}>
         <div className="flex items-center justify-between gap-3 mb-4">
           <h2 className="text-sm font-bold text-gray-900">Existing Accounts</h2>
 
@@ -423,7 +409,7 @@ export default function AccountManagementClient() {
         ) : (
           <div className="space-y-3">
             {users.map((user) => (
-              <div key={user.id} className="border rounded-2xl p-4">
+              <div key={user.id} className={styles.account}>
                 <input
                   id={`avatar-${user.id}`}
                   type="file"
@@ -440,6 +426,7 @@ export default function AccountManagementClient() {
                     type="button"
                     onClick={() => document.getElementById(`avatar-${user.id}`)?.click()}
                     className="h-12 w-12 rounded-full overflow-hidden bg-gray-100 border flex items-center justify-center text-sm font-bold text-gray-700 shrink-0 hover:ring-2 hover:ring-black/20 transition"
+                    data-settings-avatar
                     title="Change photo"
                   >
                     {user.avatar_url ? (
@@ -466,8 +453,8 @@ export default function AccountManagementClient() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-                  <div className="md:col-span-3">
+                <div className={styles.accountFields}>
+                  <div className="min-w-0">
                     <label className="block text-xs text-gray-500 mb-1">
                       Full Name
                     </label>
@@ -480,7 +467,7 @@ export default function AccountManagementClient() {
                     />
                   </div>
 
-                  <div className="md:col-span-3">
+                  <div className="min-w-0">
                     <label className="block text-xs text-gray-500 mb-1">
                       Email
                     </label>
@@ -491,7 +478,7 @@ export default function AccountManagementClient() {
                     />
                   </div>
 
-                  <div className="md:col-span-2">
+                  <div className="min-w-0">
                     <label className="block text-xs text-gray-500 mb-1">
                       Role
                     </label>
@@ -513,7 +500,7 @@ export default function AccountManagementClient() {
                     </select>
                   </div>
 
-                  <div className="md:col-span-2">
+                  <div className="min-w-0">
                     <label className="block text-xs text-gray-500 mb-1">
                       Department
                     </label>
@@ -534,7 +521,7 @@ export default function AccountManagementClient() {
                     </select>
                   </div>
 
-                  <div className="md:col-span-2 flex gap-2">
+                  <div className={styles.accountActions}>
                     <button
                       type="button"
                       onClick={() => saveUser(user)}
@@ -548,7 +535,7 @@ export default function AccountManagementClient() {
                       type="button"
                       onClick={() => deleteUser(user.id)}
                       disabled={deletingId === user.id}
-                      className="flex-1 px-4 py-2 rounded-full border text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+                      className={`${styles.danger} px-4 py-2 rounded-full border font-medium disabled:opacity-50`}
                     >
                       {deletingId === user.id ? "Deleting..." : "Delete"}
                     </button>
@@ -566,6 +553,6 @@ export default function AccountManagementClient() {
           </div>
         )}
       </div>
-    </div>
+    </SettingsFrame>
   );
 }

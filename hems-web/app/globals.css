@@ -182,3 +182,36 @@ body {
   html[data-hems-mobile="classic"] [data-hems-topbar] { padding-top: env(safe-area-inset-top); }
   html[data-hems-mobile="classic"] [data-hems-main] { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
 }
+
+/* Each header is bounded by its inventory block, letting the next replace it. */
+[data-hems-block-header] {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  min-height: 44px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+}
+[data-hems-block-header] h2,
+[data-hems-block-header] > button:not([draggable]) {
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: #374151;
+  overflow-wrap: anywhere;
+}
+@media (min-width: 640px) {
+  [data-hems-block-header] { min-height: 48px; }
+  [data-hems-block-header] h2,
+  [data-hems-block-header] > button:not([draggable]) { font-size: 15px; }
+}
+@media (max-width: 639px) {
+  html[data-hems-mobile="new"] [data-hems-block-header] {
+    top: var(--hems-topbar-height, calc(116px + env(safe-area-inset-top)));
+  }
+}
+@media print {
+  [data-hems-block-header] { position: static; }
+}

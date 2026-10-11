@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { IMPORTANT_ACTIVITY_FILTER, isImportantActivity } from "@/lib/importantActivity";
 import { readWorkspaceProfile } from "@/lib/workspaceStartup";
 import {
   Bell,
@@ -150,6 +151,27 @@ export default function TopBar() {
   const supabase = useMemo(() => createClient(), []);
   const showPrivateNav = loggedIn && pathname !== "/login";
 
+  const topbarRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const bar = topbarRef.current;
+    if (!bar) return;
+    const updateHeight = () => {
+      document.documentElement.style.setProperty(
+        "--hems-topbar-height", `${Math.ceil(bar.getBoundingClientRect().height)}px`,
+      );
+    };
+    updateHeight();
+    const observer = typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(updateHeight) : null;
+    observer?.observe(bar);
+    window.addEventListener("resize", updateHeight);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateHeight);
+      document.documentElement.style.removeProperty("--hems-topbar-height");
+    };
+  }, []);
+
   useEffect(() => {
     setSidebarOpen(false);
     setOpen(false);
@@ -203,10 +225,11 @@ export default function TopBar() {
     const { data, error } = await supabase
       .from("notifications")
       .select("id, title, message, link, is_read, created_at, actor_name")
+            .or(IMPORTANT_ACTIVITY_FILTER)
       .order("created_at", { ascending: false })
       .limit(10);
 
-    if (!error) setNotifications((data ?? []) as NotificationRow[]);
+    if (!error) setNotifications(((data ?? []) as NotificationRow[]).filter(isImportantActivity));
   }
 
   async function markNotificationsRead() {
@@ -630,7 +653,7 @@ if (!notifCache) {
 
   return (
     <>
-      <header data-hems-topbar className="bg-white shadow-sm">
+      <header ref={topbarRef} data-hems-topbar className="bg-white shadow-sm">
         <div data-hems-header-row className="flex w-full items-center gap-2 px-2 py-2 sm:px-4">
           <div className="flex shrink-0 items-center gap-2">
             {showPrivateNav ? (
@@ -784,6 +807,19 @@ if (!notifCache) {
                       aria-label="Home"
                     >
                       <House size={14} strokeWidth={2.1} />
+                    </Link>
+
+                    <Link
+                      href="/inventory"
+                      className={`hidden h-6 w-6 items-center justify-center rounded-full transition sm:flex ${
+                        pathname.startsWith("/inventory")
+                          ? "bg-gray-900 text-white"
+                          : "text-gray-700 hover:bg-gray-100"
+                      }`}
+                      title="Inventory"
+                      aria-label="Inventory"
+                    >
+                      <Boxes size={14} strokeWidth={2.1} />
                     </Link>
 
                     {profile.role === "admin" ? (

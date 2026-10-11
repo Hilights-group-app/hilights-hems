@@ -1,40 +1,28 @@
 "use client";
 
 import Link from "next/link";
+import { ArrowRight, LayoutGrid, Users } from "lucide-react";
+import SettingsFrame from "@/components/SettingsFrame";
+import styles from "@/components/SettingsStyles.module.css";
+
+const sections = [
+  { href: "/settings/catalog", title: "Categories & Subcategories", description: "Organize inventory categories, subcategories and equipment types.", action: "Manage catalog", icon: LayoutGrid },
+  { href: "/settings/accounts", title: "Account Management", description: "Create accounts and manage user roles, departments and profile photos.", action: "Manage accounts", icon: Users },
+];
 
 export default function SettingsClient() {
   return (
-    <div className="space-y-4">
-      {/* HEADER */}
-      <div className="bg-white border rounded-2xl p-6 text-gray-900">
-        <h1 className="text-2xl font-bold">Settings</h1>
-        <p className="text-sm text-gray-600 mt-1">
-          Manage system configuration and administration pages.
-        </p>
+    <SettingsFrame title="Settings" description="Manage your inventory workspace." status="Admin">
+      <div className={styles.cards}>
+        {sections.map(({ href, title, description, action, icon: Icon }) => (
+          <Link key={href} href={href} className={styles.card}>
+            <span className={styles.icon}><Icon size={19} strokeWidth={1.8} aria-hidden="true" /></span>
+            <h2>{title}</h2>
+            <p>{description}</p>
+            <span className={styles.cardAction}>{action}<ArrowRight size={13} aria-hidden="true" /></span>
+          </Link>
+        ))}
       </div>
-
-      {/* SETTINGS CARDS */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Link
-          href="/settings/catalog"
-          className="bg-white border rounded-2xl p-6 text-gray-900 hover:bg-gray-50 transition"
-        >
-          <div className="text-lg font-semibold">Manage Categories & Subcategories</div>
-          <div className="text-sm text-gray-500 mt-1">
-            Create, rename, delete and manage inventory structure.
-          </div>
-        </Link>
-
-        <Link
-          href="/settings/accounts"
-          className="bg-white border rounded-2xl p-6 text-gray-900 hover:bg-gray-50 transition"
-        >
-          <div className="text-lg font-semibold">Account Management</div>
-          <div className="text-sm text-gray-500 mt-1">
-            Create users and manage roles and permissions.
-          </div>
-        </Link>
-      </div>
-    </div>
+    </SettingsFrame>
   );
 }

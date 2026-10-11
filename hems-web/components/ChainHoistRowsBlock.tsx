@@ -781,6 +781,17 @@ export function ChainHoistRowsBlock({
 
 
 
+    if (!keys.some((key) => ["status", "cert_date", "damage_photos"].includes(key))) return;
+    if (keys.includes("status")) {
+      message = `${unitLabel} status changed to ${getStatusLabel(nextPatch.status ?? previous.status)}`;
+    } else if (keys.includes("cert_date")) {
+      message = nextPatch.cert_date
+        ? `${unitLabel} certificate updated; expiry ${nextPatch.expiry_date}`
+        : `${unitLabel} certificate date was removed`;
+    } else {
+      message = `${unitLabel} damage photos were updated`;
+    }
+
     await logActivity({
 
       title: `edited ${itemName || "Chain Hoist"}`,

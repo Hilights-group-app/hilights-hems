@@ -2239,7 +2239,7 @@ export default function SubcategoryClientLighting({
           key={group.type}
           className="bg-white border border-gray-200 rounded-2xl p-6"
         >
-          <div className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
+          <div data-hems-block-header className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
             <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
             <h2 className="text-[8px] font-semibold uppercase tracking-wide text-gray-500">
               {group.type}
@@ -2254,7 +2254,7 @@ export default function SubcategoryClientLighting({
 
       {uncategorizedItems.length > 0 ? (
         <div className="bg-white border border-gray-200 rounded-2xl p-6">
-          <div className="mb-5">
+          <div data-hems-block-header className="mb-5">
             <h2 className="text-[13px] font-semibold text-gray-900">
               Other Fixtures
             </h2>

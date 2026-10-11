@@ -12,7 +12,8 @@ import {
   deleteSubcategory,
   setSubcategoryType,
 } from "@/lib/catalogStore";
-import Link from "next/link";
+import SettingsFrame from "@/components/SettingsFrame";
+import styles from "@/components/SettingsStyles.module.css";
 
 const TYPE_LABEL: Record<SubcategoryType, string> = {
   matrix: "Matrix",
@@ -181,46 +182,27 @@ export default function CatalogSettingsClient() {
 
   if (!catalog) {
     return (
-      <div className="bg-white border rounded-2xl p-4 text-gray-900 text-sm">
-        Loading...
-      </div>
+      <SettingsFrame title="Categories & Subcategories" description="Organize your inventory structure.">
+        <div className={styles.panel} role="status">Loading catalog…</div>
+      </SettingsFrame>
     );
   }
 
   return (
-    <div className="space-y-3">
-      {/* HEADER */}
-      <div className="bg-white border rounded-2xl p-4 text-gray-900">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="text-lg font-bold leading-tight">
-              Manage Categories & Subcategories
-            </h1>
-            <p className="text-xs text-gray-600 mt-1">
-              Create, rename, delete and manage inventory structure.
-            </p>
-            {loading && <p className="text-[11px] text-gray-500 mt-1">Refreshing…</p>}
-          </div>
-
-          <Link
-            href="/settings"
-            className="px-3 py-1.5 rounded-full border text-xs font-medium hover:bg-gray-50 shrink-0"
-          >
-            Back
-          </Link>
-        </div>
-      </div>
-
+    <SettingsFrame title="Categories & Subcategories"
+      description="Manage inventory categories, subcategories and equipment types."
+      status={loading ? "Refreshing…" : `${catalog.categories.length} categories`}>
       {/* ADD CATEGORY */}
-      <div className="bg-white border rounded-2xl p-4 text-gray-900">
+      <div className={styles.panel}>
         <h2 className="text-xs font-bold text-gray-900 mb-2 uppercase tracking-wide">
           Add Category
         </h2>
 
-        <div className="flex gap-2 max-w-xl">
+        <div className="flex flex-col sm:flex-row gap-2 max-w-xl">
           <input
             value={newCatName}
             onChange={(e) => setNewCatName(e.target.value)}
+            aria-label="Category name"
             placeholder="Category name"
             className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black"
           />
@@ -236,7 +218,7 @@ export default function CatalogSettingsClient() {
       </div>
 
       {/* CATEGORIES LIST */}
-      <div className="bg-white border rounded-2xl p-4 text-gray-900">
+      <div className={styles.panel}>
         <h2 className="text-xs font-bold text-gray-900 mb-3 uppercase tracking-wide">
           Categories
         </h2>
@@ -251,15 +233,15 @@ export default function CatalogSettingsClient() {
               const subcats = cat.subcategories ?? [];
 
               return (
-                <div key={cat.id} className="border rounded-2xl p-3">
+                <div key={cat.id} className={styles.category}>
                   {/* Category header */}
-                  <div className="flex items-start justify-between gap-3">
+                  <div className={styles.categoryHeader}>
                     <div className="min-w-0">
-                      <div className="font-semibold text-sm text-gray-900 truncate">
+                      <div className="font-semibold text-sm text-gray-900 break-words">
                         {cat.name}
                       </div>
                       <div className="text-[11px] text-gray-500 break-all">
-                        Slug: {cat.slug}
+                        {subcats.length} subcategories
                       </div>
                     </div>
 
@@ -273,7 +255,7 @@ export default function CatalogSettingsClient() {
 
                       <button
                         onClick={() => onDeleteCategory(cat.id)}
-                        className="px-3 py-1.5 rounded-full border text-[11px] font-medium hover:bg-gray-50"
+                        className={`${styles.danger} px-3 py-1.5 rounded-full border font-medium`}
                       >
                         Delete
                       </button>
@@ -292,11 +274,13 @@ export default function CatalogSettingsClient() {
                         onChange={(e) =>
                           setSubName((p) => ({ ...p, [cat.id]: e.target.value }))
                         }
+                        aria-label={`New subcategory for ${cat.name}`}
                         placeholder="Subcategory name"
                         className="md:col-span-6 border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-black"
                       />
 
                       <select
+                        aria-label={`New subcategory type for ${cat.name}`}
                         value={draftType}
                         onChange={(e) =>
                           setSubType((p) => ({
@@ -344,16 +328,17 @@ export default function CatalogSettingsClient() {
                             >
                               <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2">
                                 <div className="min-w-0">
-                                  <div className="font-medium text-sm text-gray-900 truncate">
+                                  <div className="font-medium text-sm text-gray-900 break-words">
                                     {sub.name}
                                   </div>
                                   <div className="text-[11px] text-gray-500 break-all">
-                                    Slug: {sub.slug} • Type: {TYPE_LABEL[t]}
+                                    {TYPE_LABEL[t]}
                                   </div>
                                 </div>
 
                                 <div className="flex flex-wrap gap-1.5 items-center shrink-0">
                                   <select
+                                    aria-label={`Equipment type for ${sub.name}`}
                                     value={t}
                                     onChange={(e) =>
                                       onChangeType(sub.id, e.target.value as SubcategoryType)
@@ -376,7 +361,7 @@ export default function CatalogSettingsClient() {
 
                                   <button
                                     onClick={() => onDeleteSub(sub.id)}
-                                    className="px-3 py-1.5 rounded-full border text-[11px] font-medium hover:bg-gray-50"
+                                    className={`${styles.danger} px-3 py-1.5 rounded-full border font-medium`}
                                   >
                                     Delete
                                   </button>
@@ -394,6 +379,6 @@ export default function CatalogSettingsClient() {
           </div>
         )}
       </div>
-    </div>
+    </SettingsFrame>
   );
 }

@@ -1,3 +1,4 @@
+import { isImportantActivity } from "@/lib/importantActivity";
 import { getUserName } from "@/lib/authStore";
 import { createClient } from "@/lib/supabase/client";
 
@@ -10,6 +11,8 @@ export async function logActivity({
   message?: string | null;
   link?: string | null;
 }) {
+  if (!isImportantActivity({ title, message })) return;
+
   try {
     const supabase = createClient();
     const actorName = getUserName() || "A team member";

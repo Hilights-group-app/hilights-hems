@@ -21,26 +21,44 @@ export default function AppStartup({ children }: { children: ReactNode }) {
     let cancelled = false;
     setReadyScope(null); setSlow(false);
     const timer = setTimeout(() => { if (!cancelled) setSlow(true); }, 8000);
+    async function warmWorkspace(userId: string) {
+      // Optional preparation must never hold the opening screen open.
+      await Promise.all([
+        (async () => {
+          try {
+            const catalog = await readCatalog();
+            if (!cancelled) seedCatalogRoutes(catalog);
+          } catch { /* The inventory page can load its own catalog. */ }
+        })(),
+        (async () => {
+          try {
+            const draftId = localStorage.getItem(ACTIVE_EQUIPMENT_LIST_KEY);
+            if (draftId && !cancelled) {
+              await readWorkingDraft(client, draftId, false, userId);
+            }
+          } catch { /* Draft controls can retry when their page is opened. */ }
+        })(),
+      ]);
+    }
     async function prepare() {
       try {
+        // Login has its own auth flow and must not wait for a session refresh.
+        if (isLogin) { if (!cancelled) setReadyScope(true); return; }
         const { data: { session } } = await client.auth.getSession();
         if (cancelled) return;
-        if (isLogin || !session) { setReadyScope(isLogin); return; }
+        if (!session) { setReadyScope(isLogin); return; }
         setUserId(session.user.id);
-        const [profileResult, catalog] = await Promise.all([
-          readWorkspaceProfile(client, session.user.id), readCatalog(),
-        ]);
+        const profileResult = await readWorkspaceProfile(client, session.user.id);
         if (cancelled) return;
         const profile = profileResult.data;
-        setUserRole(profile?.role || "viewer");
-        setUserDepartment(profile?.department || "");
-        setUserName(profile?.full_name || "");
-        seedCatalogRoutes(catalog);
-        let draftId: string | null = null;
-        try { draftId = localStorage.getItem(ACTIVE_EQUIPMENT_LIST_KEY); } catch {}
-        if (draftId) await readWorkingDraft(client, draftId, false, session.user.id);
-        if (cancelled) return;
+        if (!profileResult.error && profile) {
+          setUserRole(profile.role || "viewer");
+          setUserDepartment(profile.department || "");
+          setUserName(profile.full_name || "");
+        }
         setReadyScope(isLogin);
+        clearTimeout(timer);
+        void warmWorkspace(session.user.id);
         // Warm one shared entry route; stock is fetched when a page is opened.
         router.prefetch("/inventory");
       } catch {

@@ -151,19 +151,19 @@ export function inventoryDepartmentFromRoute(
     .toLowerCase()
     .replace(/[_-]+/g, " ");
 
-  if (/\b(lighting|light|fixture|dimmer|console)\b/.test(route)) {
+  if (/\b(lighting|lights?|fixtures?|dimmers?|consoles?)\b/.test(route)) {
     return "lighting";
   }
 
   if (
-    /\b(video|led|screen|projector|projection|media|server|network|processor|camera|lens)\b/.test(
+    /\b(video|led|screens?|projectors?|projection|media|servers?|networks?|networking|processors?|cameras?|lens|lenses)\b/.test(
       route,
     )
   ) {
     return "video";
   }
 
-  if (/\b(rigging|truss|hoist|motor|lifting)\b/.test(route)) {
+  if (/\b(rigging|truss|trusses|hoists?|motors?|lifting)\b/.test(route)) {
     return "rigging";
   }
 

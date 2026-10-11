@@ -5,7 +5,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import {
   canEditInventory,
-  canEditReportForRoute,
+  canEditReportForDepartment,
 } from "@/lib/authStore";
 import { logActivity } from "@/lib/activityStore";
 import {
@@ -41,7 +41,7 @@ export default function ItemEditClientProjectorUnits({
   const supabase = createClient();
   const itemPhotoRef = useRef<HTMLInputElement | null>(null);
   const inventoryEditable = canEditInventory();
-  const reportEditable = canEditReportForRoute(category, subcategory);
+  const reportEditable = canEditReportForDepartment("video");
 
   const backHref = useMemo(() => {
     return `/inventory/${encodeURIComponent(category)}/${encodeURIComponent(

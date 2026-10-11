@@ -480,6 +480,13 @@ export function ProjectorRowsBlock({
       message = `${unitLabel} number was updated`;
     }
 
+    if (!changedKeys.some((key) => ["status", "damage_photos"].includes(key))) return;
+    if (changedKeys.includes("status")) {
+      message = `${unitLabel} status changed to ${statusLabel(String(nextPatch.status ?? current.status))}`;
+    } else {
+      message = `${unitLabel} damage photos were updated`;
+    }
+
     await logActivity({
       title: `edited ${equipmentName}`,
       message,

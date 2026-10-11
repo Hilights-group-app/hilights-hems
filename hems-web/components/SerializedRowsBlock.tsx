@@ -366,6 +366,11 @@ export function SerializedRowsBlock({
       message = `${unitLabel} number was updated`;
     }
 
+    if (!changedKeys.some((key) => ["status", "damage_photos"].includes(key))) return;
+    message = changedKeys.includes("status")
+      ? `${unitLabel} status changed to ${statusLabel(nextPatch.status)}`
+      : `${unitLabel} damage photos were updated`;
+
     await logActivity({ title, message, link: activityLink });
   }
 

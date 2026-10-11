@@ -3255,7 +3255,7 @@ export default function SubcategoryClientMatrix({
                   : "border-gray-200"
             }`}
           >
-            <div className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
+            <div data-hems-block-header className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
               {canDragMatrix ? (
                 <button
                   type="button"

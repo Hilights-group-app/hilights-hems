@@ -1143,11 +1143,16 @@ export default function LedScreenReportClient({
     setIssues(nextIssues);
     await syncMaintenance(nextIssues);
 
-    await logActivity({
-      title: `updated LED report for ${model?.name || "LED Screen"}`,
-      message: `${getIssueLabel(editedIssue.problem_type)} report was updated — Qty ${cleanQty}`,
-      link: activityLink,
-    });
+    const damagePhotosChanged = isCrewDamage(editedIssue.problem_type) &&
+      JSON.stringify(normalizePhotoList(editedIssue.photo_data_list, editedIssue.photo_data)) !==
+        JSON.stringify(editPhotoList);
+    if (cleanQty !== editedIssue.qty || damagePhotosChanged) {
+      await logActivity({
+        title: `updated LED report for ${model?.name || "LED Screen"}`,
+        message: `${getIssueLabel(editedIssue.problem_type)} report was updated — Qty ${cleanQty}`,
+        link: activityLink,
+      });
+    }
   }
 
   async function deleteIssue(issueId: string) {

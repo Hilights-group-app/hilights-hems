@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { IMPORTANT_ACTIVITY_FILTER, isImportantActivity } from "@/lib/importantActivity";
 import { usePathname } from "next/navigation";
 import { AlertTriangle, Clock3, Wrench } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -52,7 +53,7 @@ type MaintenanceRequest = {
 };
 
 const ALERTS_CACHE_KEY = "hems:home-sidebar:alerts";
-const ACTIVITY_CACHE_KEY = "hems:home-sidebar:activity";
+const ACTIVITY_CACHE_KEY = "hems:home-sidebar:important-activity-v2";
 
 function readCache<T>(key: string): T | null {
   try {
@@ -185,7 +186,7 @@ export default function HomeRightSidebar() {
     const cachedActivity = readCache<Activity[]>(ACTIVITY_CACHE_KEY);
 
     if (cachedAlerts !== null) setAlerts(cachedAlerts);
-    if (cachedActivity !== null) setActivity(cachedActivity);
+    if (cachedActivity !== null) setActivity(cachedActivity.filter(isImportantActivity));
 
     async function load() {
       const role = getUserRole() ?? "";
@@ -212,6 +213,7 @@ export default function HomeRightSidebar() {
           supabase
             .from("notifications")
             .select("id,title,message,link,created_at,actor_name")
+            .or(IMPORTANT_ACTIVITY_FILTER)
             .order("created_at", { ascending: false })
             .limit(8),
           supabase
@@ -226,7 +228,7 @@ export default function HomeRightSidebar() {
       if (cancelled) return;
 
       if (!notificationResult.error) {
-        const nextActivity = (notificationResult.data ?? []) as Activity[];
+        const nextActivity = ((notificationResult.data ?? []) as Activity[]).filter(isImportantActivity);
         setActivity(nextActivity);
         writeCache(ACTIVITY_CACHE_KEY, nextActivity);
       }

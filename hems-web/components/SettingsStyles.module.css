@@ -1,0 +1,77 @@
+.page {
+  min-width: 0;
+  color: #111827;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 12px;
+}
+.header, .panel {
+  min-width: 0;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  background: white;
+  padding: 20px;
+}
+.header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.heading { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+.dot { height: 8px; width: 8px; flex-shrink: 0; margin-top: 7px; border-radius: 50%; background: #ef4444; }
+.heading h1 { margin: 0; font-size: 18px; line-height: 1.35; font-weight: 700; }
+.heading p { margin: 5px 0 0; color: #6b7280; font-size: 12px; line-height: 1.6; }
+.status { flex-shrink: 0; border-radius: 999px; background: #f3f4f6; padding: 6px 10px; font-size: 11px; color: #6b7280; }
+.nav { display: flex; gap: 6px; padding: 5px; border: 1px solid #e5e7eb; background: white; border-radius: 14px; }
+.tab, .activeTab { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 8px 14px; border-radius: 10px; font-size: 12px; font-weight: 600; transition: background .15s, color .15s; }
+.tab { color: #6b7280; }
+.tab:hover { background: #f9fafb; color: #111827; }
+.activeTab { background: #111827; color: white; }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+.card { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; padding: 20px; border: 1px solid #e5e7eb; border-radius: 16px; background: white; transition: border-color .15s, background .15s; }
+.card:hover { border-color: #fecaca; background: #fffafa; }
+.icon { display: flex; align-items: center; justify-content: center; width: 38px; height: 38px; border: 1px solid #fee2e2; border-radius: 12px; background: #fef2f2; color: #ef4444; margin-bottom: 16px; }
+.card h2 { font-size: 14px; line-height: 1.4; font-weight: 600; margin: 0; }
+.card p { font-size: 12px; line-height: 1.6; color: #6b7280; margin: 6px 0 16px; }
+.cardAction { display: flex; align-items: center; gap: 6px; color: #ef4444; font-size: 11px; font-weight: 600; margin-top: auto; }
+.page .panel h2 { font-size: 13px; line-height: 1.4; font-weight: 600; }
+.page input:not([type="file"]), .page select {
+  min-width: 0;
+  max-width: 100%;
+  min-height: 38px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: white;
+  padding: 8px 11px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #111827;
+}
+.page input[readonly], .page select:disabled { background: #f9fafb; color: #6b7280; }
+.page label { font-size: 11px; font-weight: 500; color: #6b7280; }
+.page button:not([data-settings-avatar]) { min-height: 36px; font-size: 11px; }
+.page :is(button, a, input, select):focus-visible { outline: 2px solid #111827; outline-offset: 3px; }
+.page button:disabled { cursor: default; opacity: .5; }
+.page .danger { border-color: #fecaca; color: #dc2626; background: white; }
+.page .danger:hover { background: #fef2f2; }
+.category, .account { min-width: 0; border: 1px solid #e5e7eb; border-radius: 14px; padding: 16px; background: white; }
+.categoryHeader { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.createGrid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+.fullRow { grid-column: 1 / -1; }
+.accountFields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; align-items: end; }
+.accountFields > div { min-width: 0; }
+.accountActions { display: flex; gap: 8px; grid-column: 1 / -1; justify-content: flex-end; }
+.accountActions button { flex: 0 1 auto; min-width: 88px; }
+.feedback { border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px 12px; font-size: 12px; line-height: 1.5; }
+@media (min-width: 1536px) { .accountFields { grid-template-columns: repeat(4,minmax(0,1fr)); } }
+@media (max-width: 639px) {
+  .header, .panel { padding: 16px; }
+  .header { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .heading h1 { font-size: 16px; }
+  .status { margin-left: 20px; }
+  .nav { gap: 3px; }
+  .tab, .activeTab { flex: 1; min-width: 0; min-height: 44px; padding: 9px 6px; font-size: 11px; gap: 5px; }
+  .cards, .createGrid, .accountFields { grid-template-columns: minmax(0,1fr); }
+  .card { padding: 18px; }
+  .category, .account { padding: 12px; }
+  .page input:not([type="file"]), .page select { min-height: 44px; font-size: 16px; }
+  .page button:not([data-settings-avatar]) { min-height: 44px; font-size: 12px; }
+  .accountActions button { flex: 1; }
+}

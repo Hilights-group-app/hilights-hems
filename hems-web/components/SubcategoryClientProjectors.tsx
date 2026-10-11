@@ -1731,8 +1731,13 @@ export default function SubcategoryClientProjectors({
           No items yet.
         </div>
       ) : (
-        <div className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-6">
-          {displayItems.map((it, index) => {
+        projectorGroups.map((group) => (
+        <div key={group.block} className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-6">
+          <div data-hems-block-header className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
+            <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+            <h2>{group.block}</h2>
+          </div>
+          {group.items.map((it, index) => {
             const st = stats[it.id] ?? {
               total: 0,
               available: 0,
@@ -1741,31 +1746,15 @@ export default function SubcategoryClientProjectors({
               inKsa: 0,
             };
 
-            const blockLabel = it.fixture_type?.trim() || "Unassigned";
-            const previousBlock =
-              index > 0
-                ? displayItems[index - 1].fixture_type?.trim() || "Unassigned"
-                : null;
-            const showBlockHeader = blockLabel !== previousBlock;
-
             return (
               <React.Fragment key={it.id}>
-                {showBlockHeader ? (
-                  <div className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
-                    <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-                    <h2 className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">
-                      {blockLabel}
-                    </h2>
-                  </div>
-                ) : null}
-
                 <ProjectorItemRow
                   item={it}
                   stats={st}
                   category={category}
                   subcategory={subcategory}
                   editable={editable}
-                  isLast={index === displayItems.length - 1}
+                  isLast={index === group.items.length - 1}
                   selected={selectedItemId === it.id}
                   mobileMenuOpen={mobileMenuItemId === it.id}
                   onSelect={async () => {
@@ -1800,6 +1789,7 @@ export default function SubcategoryClientProjectors({
             );
           })}
         </div>
+        ))
       )}
 
       {!loading && !resolvedSubcategoryId && (

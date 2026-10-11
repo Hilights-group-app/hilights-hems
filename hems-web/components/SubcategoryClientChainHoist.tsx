@@ -308,6 +308,17 @@ export default function SubcategoryClientChainHoist({
     });
   }, [items]);
 
+  const hoistGroups = useMemo(() => {
+    const groups: { block: string; items: typeof displayItems }[] = [];
+    for (const item of displayItems) {
+      const block = getHoistBlockName(item) || "Unassigned";
+      const previous = groups[groups.length - 1];
+      if (previous?.block === block) previous.items.push(item);
+      else groups.push({ block, items: [item] });
+    }
+    return groups;
+  }, [displayItems]);
+
   const selectedItem = items.find((item) => item.id === selectedItemId) ?? null;
 
   const blockOptions = useMemo(
@@ -1648,8 +1659,13 @@ export default function SubcategoryClientChainHoist({
           No items yet.
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-2xl p-6">
-          {displayItems.map((it, index) => {
+        hoistGroups.map((group, groupIndex) => (
+        <div key={`${group.block}:${groupIndex}`} className="bg-white border border-gray-200 rounded-2xl p-6">
+          <div data-hems-block-header className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
+            <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+            <h2>{group.block}</h2>
+          </div>
+          {group.items.map((it, index) => {
             const st = stats[it.id] ?? {
               total: 0,
               available: 0,
@@ -1659,13 +1675,7 @@ export default function SubcategoryClientChainHoist({
               expired: 0,
             };
 
-            const blockLabel = getHoistBlockName(it) || "Unassigned";
-            const previousBlock =
-              index > 0
-                ? getHoistBlockName(displayItems[index - 1]) || "Unassigned"
-                : null;
-            const showBlockHeader = blockLabel !== previousBlock;
-            const isLast = index === displayItems.length - 1;
+            const isLast = index === group.items.length - 1;
             const detailsHref = `/inventory/${category}/${subcategory}/${it.id}`;
             const hoistDetails = getHoistListDetails(it);
 
@@ -1674,14 +1684,6 @@ export default function SubcategoryClientChainHoist({
                 key={it.id}
                 className={!isLast ? "border-b border-gray-100 pb-4 mb-4" : ""}
               >
-                {showBlockHeader ? (
-                  <div className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
-                    <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
-                    <h2 className="text-[9px] font-semibold uppercase tracking-wide text-gray-500">
-                      {blockLabel}
-                    </h2>
-                  </div>
-                ) : null}
                 <div
                   data-chain-hoist-row="true"
                   data-chain-hoist-item-id={it.id}
@@ -1874,6 +1876,7 @@ export default function SubcategoryClientChainHoist({
             );
           })}
         </div>
+        ))
       )}
     </div>
   );

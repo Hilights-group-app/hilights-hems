@@ -1518,7 +1518,9 @@ export default function SubcategoryClientLedScreen({
     const parentModel = models.find((model) => model.id === row.model_id);
     await logActivity({
       title: `edited ${parentModel?.name || "LED Screen"}`,
-      message: `${nextCabinetModel || "Cabinet"} — ${nextSize} was updated`,
+      message: nextTotal !== clampQty(row.qty)
+        ? `${nextCabinetModel || "Cabinet"} — ${nextSize}: stock quantity changed from ${clampQty(row.qty)} to ${nextTotal}`
+        : `${nextCabinetModel || "Cabinet"} — ${nextSize} was updated`,
       link: getReportHref(row.id),
     });
   }
@@ -2846,10 +2848,7 @@ function LedModelCard({
           : "border-gray-200"
       }`}
     >
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-  <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
-    <div className="min-w-0 flex-1">
-      <div className="flex items-start justify-between gap-2 min-w-0">
+      <div data-hems-block-header className="flex items-center justify-between gap-2 min-w-0 mb-3">
         <button
           type="button"
           data-led-model-select="true"
@@ -2881,6 +2880,10 @@ function LedModelCard({
           </button>
         ) : null}
       </div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+  <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
+    <div className="min-w-0 flex-1">
+
 
       <div className="mt-2 sm:hidden">
         <div className={`grid gap-x-1.5 gap-y-1 text-center ${
