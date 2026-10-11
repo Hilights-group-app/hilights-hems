@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { useMatrixManualOrder } from "@/lib/useMatrixManualOrder";
 import {
   canEditInventory,
   canReorderInventory,
@@ -343,7 +344,10 @@ function groupItemsByBrand(
   });
 
   return sortedBlocks.map((brand) => {
-    const order = itemOrderByBlock[brand] || [];
+    const orderKey = Object.keys(itemOrderByBlock).find(
+      (key) => key.toLowerCase() === brand.toLowerCase(),
+    );
+    const order = itemOrderByBlock[brand] || (orderKey ? itemOrderByBlock[orderKey] : []) || [];
     const itemIndex = (id: string) => {
       const idx = order.indexOf(id);
       return idx === -1 ? 999999 : idx;
@@ -391,57 +395,6 @@ function writeItemsCache(
   try {
     sessionStorage.setItem(
       cacheKeyFor(categoryId, subcategoryId),
-      JSON.stringify(data),
-    );
-  } catch {}
-}
-
-function matrixOrderKey(
-  categoryId: string | null,
-  subcategoryId: string | null,
-) {
-  return `hems:${categoryId || "no-cat"}:${subcategoryId || "no-sub"}:matrix-manual-order-v1`;
-}
-
-type MatrixManualOrder = {
-  blockOrder: string[];
-  itemOrderByBlock: Record<string, string[]>;
-};
-
-function readMatrixManualOrder(
-  categoryId: string | null,
-  subcategoryId: string | null,
-): MatrixManualOrder {
-  if (typeof window === "undefined") {
-    return { blockOrder: [], itemOrderByBlock: {} };
-  }
-
-  try {
-    const raw = localStorage.getItem(matrixOrderKey(categoryId, subcategoryId));
-    if (!raw) return { blockOrder: [], itemOrderByBlock: {} };
-    const parsed = JSON.parse(raw) as Partial<MatrixManualOrder>;
-    return {
-      blockOrder: Array.isArray(parsed.blockOrder) ? parsed.blockOrder : [],
-      itemOrderByBlock:
-        parsed.itemOrderByBlock && typeof parsed.itemOrderByBlock === "object"
-          ? parsed.itemOrderByBlock
-          : {},
-    };
-  } catch {
-    return { blockOrder: [], itemOrderByBlock: {} };
-  }
-}
-
-function writeMatrixManualOrder(
-  categoryId: string | null,
-  subcategoryId: string | null,
-  data: MatrixManualOrder,
-) {
-  if (typeof window === "undefined") return;
-
-  try {
-    localStorage.setItem(
-      matrixOrderKey(categoryId, subcategoryId),
       JSON.stringify(data),
     );
   } catch {}
@@ -676,10 +629,6 @@ export default function SubcategoryClientMatrix({
     null,
   );
 
-  const [blockOrder, setBlockOrder] = useState<string[]>([]);
-  const [itemOrderByBlock, setItemOrderByBlock] = useState<
-    Record<string, string[]>
-  >({});
   const [dragItemId, setDragItemId] = useState<string | null>(null);
   const [dragItemBlock, setDragItemBlock] = useState<string | null>(null);
   const [dragBlockName, setDragBlockName] = useState<string | null>(null);
@@ -687,6 +636,8 @@ export default function SubcategoryClientMatrix({
     null,
   );
   const [desktopDragActive, setDesktopDragActive] = useState(false);
+  const [movingMatrixItem, setMovingMatrixItem] = useState(false);
+  const matrixMovePendingRef = useRef(false);
   const [sidebarTarget, setSidebarTarget] = useState<HTMLElement | null>(null);
   const [desktopSidebarActive, setDesktopSidebarActive] = useState(false);
   const [selectedBlockName, setSelectedBlockName] = useState<string | null>(
@@ -703,7 +654,21 @@ export default function SubcategoryClientMatrix({
   const [selectedBlockDraft, setSelectedBlockDraft] = useState("");
   const [mobileAddOpen, setMobileAddOpen] = useState(false);
 
-  const canDragMatrix = reorderable && desktopDragActive;
+  const {
+    blockOrder,
+    itemOrderByBlock,
+    ready: manualOrderReady,
+    saving: manualOrderSaving,
+    syncError: manualOrderError,
+    saveManualOrder,
+    retryManualOrder,
+  } = useMatrixManualOrder(
+    categoryId,
+    subcategoryId,
+    editable,
+    reorderable && desktopDragActive,
+  );
+  const canDragMatrix = reorderable && desktopDragActive && manualOrderReady && !movingMatrixItem;
 
   const selectedItem = useMemo(
     () => items.find((item) => item.id === selectedItemId) ?? null,
@@ -792,45 +757,8 @@ export default function SubcategoryClientMatrix({
     return newBlockName.trim() || blockName.trim();
   }, [newBlockName, blockName]);
 
-  useEffect(() => {
-    const order = readMatrixManualOrder(categoryId, subcategoryId);
-    setBlockOrder(order.blockOrder);
-    setItemOrderByBlock(order.itemOrderByBlock);
-  }, [categoryId, subcategoryId]);
-
-  function saveManualOrder(
-    nextBlockOrder = blockOrder,
-    nextItemOrderByBlock = itemOrderByBlock,
-  ) {
-    setBlockOrder(nextBlockOrder);
-    setItemOrderByBlock(nextItemOrderByBlock);
-    writeMatrixManualOrder(categoryId, subcategoryId, {
-      blockOrder: nextBlockOrder,
-      itemOrderByBlock: nextItemOrderByBlock,
-    });
-  }
-
-  function ensureBlockOrder(list: MatrixItemRow[]) {
-    const names = Array.from(new Set(list.map((item) => itemBlockName(item))));
-    setBlockOrder((prev) => {
-      const next = [...prev.filter((name) => names.includes(name))];
-      for (const name of names) {
-        if (!next.some((x) => x.toLowerCase() === name.toLowerCase())) {
-          next.push(name);
-        }
-      }
-      writeMatrixManualOrder(categoryId, subcategoryId, {
-        blockOrder: next,
-        // An older refresh request must not erase a newer saved item order.
-        itemOrderByBlock: readMatrixManualOrder(categoryId, subcategoryId)
-          .itemOrderByBlock,
-      });
-      return next;
-    });
-  }
-
   async function renameBlock(oldName: string, requestedName?: string) {
-    if (!editable) return;
+    if (!editable || !manualOrderReady) return;
 
     const nextName = requestedName ?? prompt("Rename block:", oldName);
     if (!nextName) return;
@@ -869,7 +797,7 @@ export default function SubcategoryClientMatrix({
     }
 
     setItems(sortItemsByBrand(nextItems));
-    saveManualOrder(nextBlockOrder, nextItemOrderByBlock);
+    await saveManualOrder(nextBlockOrder, nextItemOrderByBlock);
     setSelectedBlockName(clean);
     setSaveMsg("Block renamed");
     setTimeout(() => setSaveMsg(""), 1500);
@@ -928,7 +856,7 @@ export default function SubcategoryClientMatrix({
     event: React.DragEvent<HTMLDivElement>,
     item: MatrixItemRow,
   ) {
-    if (!canDragMatrix || !dragItemId) return;
+    if (!canDragMatrix || !dragItemId || matrixMovePendingRef.current) return;
     event.preventDefault();
     event.stopPropagation();
     event.dataTransfer.dropEffect = "move";
@@ -1020,7 +948,7 @@ export default function SubcategoryClientMatrix({
     if (from === -1 || to === -1) return;
 
     const nextBlockOrder = moveArrayItem(normalized, from, to);
-    saveManualOrder(nextBlockOrder, itemOrderByBlock);
+    void saveManualOrder(nextBlockOrder, itemOrderByBlock);
     clearMatrixDrag();
   }
 
@@ -1029,7 +957,7 @@ export default function SubcategoryClientMatrix({
     targetItemId: string | null,
     position: "before" | "after",
   ) {
-    if (!canDragMatrix || !dragItemId) return;
+    if (!canDragMatrix || !dragItemId || matrixMovePendingRef.current) return;
     const draggedId = dragItemId;
     const dragged = items.find((item) => item.id === draggedId);
     const targetGroup = brandGroups.find(
@@ -1070,23 +998,31 @@ export default function SubcategoryClientMatrix({
         .filter((id) => id !== draggedId);
     }
 
-    saveManualOrder(blockOrder, nextOrder);
     clearMatrixDrag();
-    // A move within the block changes only the existing browser-saved order.
-    if (!changesBlock) return;
+    if (!changesBlock) {
+      await saveManualOrder(blockOrder, nextOrder);
+      return;
+    }
 
-    const nextItems = items.map((item) =>
-      item.id === draggedId ? { ...item, block_name: targetGroup.brand } : item,
-    );
-    setItems(sortItemsByBrand(nextItems));
-    const { error } = await supabase
-      .from("matrix_models")
-      .update({ block_name: targetGroup.brand })
-      .eq("id", draggedId);
-
-    if (error) {
-      alert(error.message);
+    matrixMovePendingRef.current = true;
+    setMovingMatrixItem(true);
+    try {
+      const nextItems = items.map((item) =>
+        item.id === draggedId ? { ...item, block_name: targetGroup.brand } : item,
+      );
+      setItems(sortItemsByBrand(nextItems));
+      const { error } = await supabase
+        .from("matrix_models")
+        .update({ block_name: targetGroup.brand })
+        .eq("id", draggedId);
+      if (error) throw error;
+      await saveManualOrder(blockOrder, nextOrder);
+    } catch (error: any) {
+      alert(error?.message || "Could not move the item");
       await refreshData();
+    } finally {
+      matrixMovePendingRef.current = false;
+      setMovingMatrixItem(false);
     }
   }
 
@@ -1309,7 +1245,6 @@ export default function SubcategoryClientMatrix({
 
       setItems(list);
       setStatsByItem(stats);
-      ensureBlockOrder(list);
 
       writeItemsCache(ids.categoryId, ids.subcategoryId, {
         categoryId: ids.categoryId,
@@ -2838,6 +2773,17 @@ export default function SubcategoryClientMatrix({
 
   return (
     <div className="w-full mx-auto space-y-3">
+      {manualOrderSaving ? (
+        <div role="status" className="text-xs text-gray-500">Saving order…</div>
+      ) : null}
+      {manualOrderError ? (
+        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
+          {manualOrderError}
+          <button type="button" onClick={retryManualOrder} className="ml-3 underline">
+            Retry
+          </button>
+        </div>
+      ) : null}
       <input
         ref={listPhotoFileRef}
         type="file"
