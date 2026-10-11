@@ -1,6 +1,11 @@
 import "./globals.css";
+import type { Viewport } from "next";
+import AppStartup from "@/components/AppStartup";
 import TopBar from "@/components/TopBar";
+import MobileDraftDock from "@/components/MobileDraftDock";
 import AppShellClient from "@/components/AppShellClient";
+
+export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };
 
 export const metadata = {
   metadataBase: new URL("https://hilights-hems.vercel.app"),
@@ -45,8 +50,11 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="bg-white text-black">
+        <AppStartup>
         <TopBar />
         <AppShellClient>{children}</AppShellClient>
+        <MobileDraftDock />
+        </AppStartup>
       </body>
     </html>
   );

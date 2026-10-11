@@ -419,7 +419,7 @@ export default function EquipmentListMatrixQuantityAction({
     );
     window.dispatchEvent(
       new CustomEvent(EQUIPMENT_LIST_ITEMS_EVENT, {
-        detail: { listId: list.id, matrixLinesCached: true },
+        detail: { listId: list.id, status: list.status, matrixLinesCached: true },
       }),
     );
 
@@ -467,7 +467,7 @@ export default function EquipmentListMatrixQuantityAction({
     );
     window.dispatchEvent(
       new CustomEvent(EQUIPMENT_LIST_ITEMS_EVENT, {
-        detail: { listId: list.id, matrixLinesCached: true },
+        detail: { listId: list.id, status: list.status, matrixLinesCached: true },
       }),
     );
     setSaving(false);
@@ -641,6 +641,7 @@ export default function EquipmentListMatrixQuantityAction({
           <div
             onClick={(event) => event.stopPropagation()}
             className="inline-flex h-6 items-center overflow-hidden rounded-full border border-gray-200 bg-gray-50 text-gray-800"
+            data-hems-mobile-add="quantity"
             title={`Quantity in ${activeList.reference}`}
           >
             <button
@@ -706,6 +707,7 @@ export default function EquipmentListMatrixQuantityAction({
             setError("");
             setOpen(true);
           }}
+          data-hems-mobile-add="quantity"
           title={`Enter quantity for ${activeList.reference}`}
           className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-300 bg-white text-[14px] font-medium leading-none text-gray-700 transition hover:border-gray-400 hover:bg-gray-50 disabled:opacity-40"
           aria-label="Enter quantity"

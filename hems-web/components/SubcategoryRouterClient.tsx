@@ -12,7 +12,7 @@ import SubcategoryClientChainHoist from "@/components/SubcategoryClientChainHois
 import SubcategoryClientProjectors from "@/components/SubcategoryClientProjectors";
 import SubcategoryClientLighting from "@/components/SubcategoryClientLighting";
 
-import type { SubcategoryType } from "@/lib/catalogStore";
+import { readCatalog, type SubcategoryType } from "@/lib/catalogStore";
 
 type RouteInfo = {
   type: SubcategoryType;
@@ -58,6 +58,19 @@ export default function SubcategoryRouterClient({
         if (cached) {
           const parsed = JSON.parse(cached) as RouteInfo;
           if (!cancelled) setRouteInfo(parsed);
+          return;
+        }
+
+        const catalog = await readCatalog();
+        const knownCategory = catalog.categories.find(row => row.slug === category);
+        const knownSubcategory = knownCategory?.subcategories.find(row => row.slug === subcategory);
+        if (knownCategory && knownSubcategory) {
+          const next: RouteInfo = {
+            categoryId: knownCategory.id, subcategoryId: knownSubcategory.id,
+            type: isSafeType(knownSubcategory.type) ? knownSubcategory.type : "fixture_units",
+          };
+          try { sessionStorage.setItem(cacheKey, JSON.stringify(next)); } catch {}
+          if (!cancelled) setRouteInfo(next);
           return;
         }
 

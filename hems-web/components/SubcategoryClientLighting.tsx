@@ -528,7 +528,7 @@ export default function SubcategoryClientLighting({
     return subRes.data.id as string;
   }
 
-  async function load(forceRefresh = false) {
+  async function load(forceRefresh = false, quiet = false) {
     setErr(null);
 
     const cacheKey = cacheKeyFor(category, subcategory);
@@ -548,7 +548,7 @@ export default function SubcategoryClientLighting({
       }
     }
 
-    setLoading(items.length === 0);
+    if (!quiet) setLoading(items.length === 0);
     await refreshData(cacheKey);
   }
 
@@ -742,8 +742,9 @@ export default function SubcategoryClientLighting({
   }, [category, subcategory]);
 
   useEffect(() => {
-    function refreshEquipmentMovements() {
-      void load(true);
+    function refreshEquipmentMovements(event: Event) {
+      if ((event as CustomEvent<{ status?: string }>).detail?.status === "draft") return;
+      void load(true, true);
     }
 
     window.addEventListener(EQUIPMENT_LISTS_EVENT, refreshEquipmentMovements);
@@ -1555,6 +1556,7 @@ export default function SubcategoryClientLighting({
                 setListPickerItem(it);
               }}
               title={`Add units to ${activeDraftList.reference}`}
+              data-hems-mobile-add="units"
               className={`absolute top-2 z-20 rounded-full bg-black px-2.5 py-1 text-[9px] font-semibold text-white shadow-sm sm:hidden ${
                 editable ? "right-10" : "right-2"
               }`}

@@ -248,7 +248,7 @@ export default function EquipmentListUnitPicker({
 
     window.dispatchEvent(
       new CustomEvent(EQUIPMENT_LIST_ITEMS_EVENT, {
-        detail: { listId: list.id },
+        detail: { listId: list.id, status: list.status },
       }),
     );
 

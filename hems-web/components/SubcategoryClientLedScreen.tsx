@@ -755,8 +755,8 @@ export default function SubcategoryClientLedScreen({
     setAllocationsByRow(emptyAllocations);
   }
 
-  async function loadModels(subId: string) {
-    setLoading(models.length === 0);
+  async function loadModels(subId: string, quiet = false) {
+    if (!quiet) setLoading(models.length === 0);
     setErrorMsg(null);
 
     try {
@@ -851,8 +851,9 @@ export default function SubcategoryClientLedScreen({
   }, [subcategoryId, categoryId]);
 
   useEffect(() => {
-    function refreshEquipmentMovements() {
-      if (subcategoryId) void loadModels(subcategoryId);
+    function refreshEquipmentMovements(event: Event) {
+      if ((event as CustomEvent<{ status?: string }>).detail?.status === "draft") return;
+      if (subcategoryId) void loadModels(subcategoryId, true);
     }
 
     window.addEventListener(EQUIPMENT_LISTS_EVENT, refreshEquipmentMovements);
@@ -2201,7 +2202,7 @@ export default function SubcategoryClientLedScreen({
             setTimeout(() => {
               setSaveMsg((current) => (current === message ? "" : current));
             }, 1800);
-            if (subcategoryId) void loadModels(subcategoryId);
+            // The draft does not allocate stock; its item event updates list UI.
           }}
         />
       ) : null}
@@ -3028,6 +3029,7 @@ function LedModelCard({
                             event.stopPropagation();
                             onAddToList(r);
                           }}
+                          data-hems-mobile-add="cabinets"
                           title={`Add cabinets to ${activeDraftList.reference}`}
                           className={`absolute top-2 z-20 inline-flex h-[26px] min-w-[26px] items-center justify-center rounded-full bg-black px-2 text-[9px] font-semibold text-white shadow-sm ${
                             editable ? "right-10" : "right-2"
@@ -3338,7 +3340,8 @@ function DesktopEditableCabinetRow({
               event.stopPropagation();
               onAddToList();
             }}
-            title={`Add cabinets to ${activeDraftList.reference}`}
+            data-hems-mobile-add="cabinets"
+                          title={`Add cabinets to ${activeDraftList.reference}`}
             className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-black text-xs font-bold text-white hover:bg-gray-800"
           >
             +

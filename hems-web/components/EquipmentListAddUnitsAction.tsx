@@ -1,5 +1,6 @@
 "use client";
 
+import { readWorkingDraft } from "@/lib/workspaceStartup";
 import { useEffect, useMemo, useState } from "react";
 import {
   canCreateEquipmentLists,
@@ -71,7 +72,7 @@ export default function EquipmentListAddUnitsAction({
     let cancelled = false;
     let loadVersion = 0;
 
-    async function syncActiveList(listId?: string | null) {
+    async function syncActiveList(listId?: string | null, force = false) {
       const version = ++loadVersion;
       let nextListId = listId;
 
@@ -91,11 +92,7 @@ export default function EquipmentListAddUnitsAction({
         return;
       }
 
-      const { data, error } = await supabase
-        .from("equipment_lists")
-        .select(ACTIVE_LIST_SELECT)
-        .eq("id", nextListId)
-        .maybeSingle();
+      const { data, error } = await readWorkingDraft(supabase, nextListId, force);
 
       if (cancelled || version !== loadVersion) return;
 
@@ -115,12 +112,12 @@ export default function EquipmentListAddUnitsAction({
     function handleActiveListChange(event: Event) {
       const listId = (event as CustomEvent<{ listId?: string | null }>).detail
         ?.listId;
-      void syncActiveList(listId ?? null);
+      void syncActiveList(listId ?? null, true);
     }
 
     function handleStorage(event: StorageEvent) {
       if (event.key === ACTIVE_EQUIPMENT_LIST_KEY) {
-        void syncActiveList(event.newValue);
+        void syncActiveList(event.newValue, true);
       }
     }
 
@@ -172,6 +169,8 @@ export default function EquipmentListAddUnitsAction({
           event.stopPropagation();
           setPickerOpen(true);
         }}
+        data-hems-mobile-add={compact ? "units" : undefined}
+        aria-label={`Add ${item.name} to ${activeList.reference}`}
         title={`Add units to ${activeList.reference}`}
         className={
           compact

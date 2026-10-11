@@ -38,7 +38,7 @@ export default function AppShellClient({
         {desktopLayout ? <EquipmentListsSidebar /> : null}
       </aside>
 
-      <main className="min-h-screen min-w-0 flex-1 px-2 py-2 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:bg-white xl:[&>*]:!bg-white">
+      <main data-hems-main className="min-h-screen min-w-0 flex-1 px-2 py-2 xl:h-full xl:min-h-0 xl:overflow-y-auto xl:bg-white xl:[&>*]:!bg-white">
         <MaintenanceRequestBanner />
         {children}
       </main>

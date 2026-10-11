@@ -1324,7 +1324,7 @@ export default function SubcategoryClientMatrix({
     }
   }
 
-  async function load(force = false) {
+  async function load(force = false, quiet = false) {
     setErr(null);
 
     if (
@@ -1345,7 +1345,7 @@ export default function SubcategoryClientMatrix({
       }
     }
 
-    setLoading(items.length === 0);
+    if (!quiet) setLoading(items.length === 0);
     await refreshData();
   }
 
@@ -1355,8 +1355,9 @@ export default function SubcategoryClientMatrix({
   }, [category, subcategory]);
 
   useEffect(() => {
-    function refreshEquipmentMovements() {
-      void load(true);
+    function refreshEquipmentMovements(event: Event) {
+      if ((event as CustomEvent<{ status?: string }>).detail?.status === "draft") return;
+      void load(true, true);
     }
 
     window.addEventListener(EQUIPMENT_LISTS_EVENT, refreshEquipmentMovements);

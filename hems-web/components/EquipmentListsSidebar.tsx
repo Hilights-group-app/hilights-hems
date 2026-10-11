@@ -1,5 +1,7 @@
 "use client";
 
+import { createBrowserId } from "@/lib/browserId";
+
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -350,7 +352,7 @@ export default function EquipmentListsSidebar() {
       timer = setTimeout(() => void load(false), 120);
     }
     function focus() { if (document.visibilityState === "visible") scheduleReload(); }
-    const channel = supabase.channel(`draft-sidebar:${crypto.randomUUID()}`)
+    const channel = supabase.channel(`draft-sidebar:${createBrowserId()}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "equipment_lists" }, scheduleReload)
       .subscribe();
     void load(true);
@@ -489,7 +491,7 @@ export default function EquipmentListsSidebar() {
       clearTimeout(timer);
       timer = setTimeout(() => void loadListItems(), 120);
     }
-    const channel = activeListId ? supabase.channel(`draft-sidebar-items:${activeListId}:${crypto.randomUUID()}`)
+    const channel = activeListId ? supabase.channel(`draft-sidebar-items:${activeListId}:${createBrowserId()}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "equipment_list_items", filter: `list_id=eq.${activeListId}` }, scheduleItemsRefresh)
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "equipment_list_items", filter: `list_id=eq.${activeListId}` }, scheduleItemsRefresh)
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "equipment_list_items" }, scheduleItemsRefresh)

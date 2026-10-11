@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { readWorkspaceProfile } from "@/lib/workspaceStartup";
 import {
   Bell,
   Boxes,
@@ -163,6 +164,8 @@ export default function TopBar() {
       if (desktop.matches) setSidebarOpen(false);
     };
     const closeAfterListSelection = () => setSidebarOpen(false);
+    const openMobileLists = () => setSidebarOpen(true);
+    window.addEventListener("hems:open-mobile-lists", openMobileLists);
 
     closeDesktopDrawer();
     desktop.addEventListener("change", closeDesktopDrawer);
@@ -172,6 +175,7 @@ export default function TopBar() {
     );
 
     return () => {
+      window.removeEventListener("hems:open-mobile-lists", openMobileLists);
       desktop.removeEventListener("change", closeDesktopDrawer);
       window.removeEventListener(
         ACTIVE_EQUIPMENT_LIST_EVENT,
@@ -442,11 +446,7 @@ export default function TopBar() {
     let mounted = true;
 
     async function loadProfile(userId: string) {
-      const { data } = await supabase
-        .from("profiles")
-        .select("role, department, avatar_url, full_name")
-        .eq("id", userId)
-        .single();
+      const { data } = await readWorkspaceProfile(supabase, userId);
 
       if (!mounted || !data) return;
 
@@ -630,14 +630,15 @@ if (!notifCache) {
 
   return (
     <>
-      <header className="bg-white shadow-sm">
-        <div className="flex w-full items-center gap-2 px-2 py-2 sm:px-4">
+      <header data-hems-topbar className="bg-white shadow-sm">
+        <div data-hems-header-row className="flex w-full items-center gap-2 px-2 py-2 sm:px-4">
           <div className="flex shrink-0 items-center gap-2">
             {showPrivateNav ? (
               <button
                 type="button"
                 onClick={() => setSidebarOpen(true)}
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-700 transition hover:bg-gray-100 active:scale-95 xl:hidden"
+                aria-label="Open navigation and equipment lists"
                 title="Menu"
               >
                 <Menu size={22} strokeWidth={2.4} />
@@ -652,7 +653,8 @@ if (!notifCache) {
               />
             </Link>
 
-            <span className="h-3 w-px shrink-0 bg-black/30 sm:h-5" />
+            <span data-hems-brand-divider className="h-3 w-px shrink-0 bg-black/30 sm:h-5" />
+            <span data-hems-mobile-brand className="hidden text-sm font-bold tracking-tight">HEMS</span>
 
             <span className="hidden truncate text-xs font-semibold tracking-wide text-gray-900 lg:block">
               Equipment Management System
@@ -662,6 +664,7 @@ if (!notifCache) {
           {showPrivateNav ? (
             <div
               ref={searchRef}
+              data-hems-search
               className="relative min-w-0 flex-1 sm:mx-2 sm:max-w-md lg:max-w-xl"
             >
               <Search
@@ -870,6 +873,7 @@ if (!notifCache) {
                 <div ref={wrapperRef} className="relative">
                   <button
                     type="button"
+                    aria-label="Profile menu"
                     onClick={() => {
                       setOpen((v) => !v);
                       setNotifOpen(false);
@@ -936,6 +940,12 @@ if (!notifCache) {
 
                       <div className="my-3 h-px bg-gray-200" />
 
+                      <button type="button" onClick={() => {
+                        window.dispatchEvent(new CustomEvent("hems:toggle-mobile-layout"));
+                        setOpen(false);
+                      }} className="mb-1 w-full rounded-lg px-2 py-3 text-left text-sm font-medium text-gray-700 sm:hidden">
+                        Switch mobile layout
+                      </button>
                       <button
                         type="button"
                         onClick={onLogout}

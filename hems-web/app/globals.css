@@ -54,3 +54,131 @@ body {
     margin: 10mm;
   }
 }
+/* Mobile trial: the profile-menu switch restores the classic layout immediately. */
+@media (max-width: 639px) {
+  html[data-hems-mobile="new"] {
+    background: #f5f6f8;
+    -webkit-tap-highlight-color: transparent;
+    scroll-padding-top: 120px;
+  }
+  html[data-hems-mobile="new"] [data-hems-topbar] {
+    position: sticky;
+    top: 0;
+    z-index: 90;
+    padding-top: env(safe-area-inset-top);
+    background: rgba(255,255,255,.96);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid #e5e7eb;
+    box-shadow: none;
+  }
+  html[data-hems-mobile="new"] [data-hems-header-row] {
+    display: grid;
+    grid-template-columns: minmax(0,1fr) auto;
+    gap: 8px;
+    padding: 8px 12px 12px;
+  }
+  html[data-hems-mobile="new"] [data-hems-mobile-brand] { display: block; }
+  html[data-hems-mobile="new"] [data-hems-brand-divider] { display: none; }
+  html[data-hems-mobile="new"] [data-hems-search] {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+  }
+  html[data-hems-mobile="new"] [data-hems-search] input {
+    height: 44px;
+    font-size: 16px;
+    padding-left: 36px;
+    border: 0;
+    border-radius: 14px;
+    background: #f1f3f5;
+  }
+  html[data-hems-mobile="new"] [data-hems-search] > .fixed {
+    top: calc(116px + env(safe-area-inset-top));
+    left: 12px;
+    right: 12px;
+    border-radius: 18px;
+  }
+  html[data-hems-mobile="new"] [data-hems-header-row] a[aria-label="Home"],
+  html[data-hems-mobile="new"] [data-hems-header-row] a[aria-label="Settings"] { display: none; }
+  html[data-hems-mobile="new"] [data-hems-header-row] button[title="Menu"],
+  html[data-hems-mobile="new"] [data-hems-header-row] button[title="Notifications"],
+  html[data-hems-mobile="new"] [data-hems-header-row] button[aria-label="Profile menu"] {
+    min-height: 44px;
+    min-width: 44px;
+    border-radius: 14px;
+  }
+  html[data-hems-mobile="new"] [data-hems-header-row] button[title="Menu"] { background: #f1f3f5; }
+  html[data-hems-mobile="new"] [data-hems-header-row] button[aria-label="Profile menu"] > div:first-child {
+    width: 34px;
+    height: 34px;
+  }
+  html[data-hems-mobile="new"] [data-hems-main] {
+    padding: 12px 10px calc(150px + env(safe-area-inset-bottom));
+    background: #f5f6f8;
+  }
+  /* Reserve an actual footer for add controls, including long equipment names. */
+  html[data-hems-mobile="new"] .relative:has(> .absolute > [data-hems-mobile-add]),
+  html[data-hems-mobile="new"] .relative:has(> .absolute[data-hems-mobile-add]) {
+    padding-bottom: 66px !important;
+  }
+  html[data-hems-mobile="new"] .absolute:has(> [data-hems-mobile-add]),
+  html[data-hems-mobile="new"] .absolute[data-hems-mobile-add] {
+    top: auto !important;
+    bottom: 10px !important;
+    right: 10px !important;
+    left: auto !important;
+  }
+  html[data-hems-mobile="new"] [data-hems-mobile-add] {
+    min-height: 44px;
+    min-width: 44px;
+    border-radius: 14px;
+    font-size: 12px;
+    font-weight: 700;
+    touch-action: manipulation;
+  }
+  html[data-hems-mobile="new"] button[data-hems-mobile-add="units"],
+  html[data-hems-mobile="new"] button[data-hems-mobile-add="cabinets"] {
+    min-width: 84px;
+    padding: 0 16px;
+    background: #dc2626;
+    color: white;
+    border: 0;
+  }
+  html[data-hems-mobile="new"] div[data-hems-mobile-add="quantity"] > button {
+    min-height: 44px;
+    min-width: 40px;
+    font-size: 16px;
+    touch-action: manipulation;
+  }
+  html[data-hems-mobile="new"] input:not([type="checkbox"]):not([type="radio"]),
+  html[data-hems-mobile="new"] select,
+  html[data-hems-mobile="new"] textarea { font-size: 16px; }
+  html[data-hems-mobile="new"] [role="dialog"] > .relative {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  html[data-hems-mobile="new"] aside.fixed {
+    height: 100dvh;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html[data-hems-mobile="new"] * { scroll-behavior: auto !important; transition-duration: 0s !important; }
+  }
+}
+
+@media (max-width: 639px) {
+  html[data-hems-mobile="new"] body:has([role="dialog"]) { overflow: hidden; }
+  html[data-hems-mobile="new"] [role="dialog"] { overscroll-behavior: contain; }
+  /* Cable headers and rows reserve the same width for a three-button stepper. */
+  html[data-hems-mobile="new"] .grid[class*="74px_45px"] {
+    grid-template-columns: 74px 40px 40px 132px !important;
+  }
+  html[data-hems-mobile="new"] .grid[class*="74px_45px_45px_45px"] {
+    grid-template-columns: 74px 40px 40px 40px 132px !important;
+  }
+}
+
+@media (max-width: 639px) {
+  html[data-hems-mobile="classic"] [data-hems-topbar] { padding-top: env(safe-area-inset-top); }
+  html[data-hems-mobile="classic"] [data-hems-main] { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+}

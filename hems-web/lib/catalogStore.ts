@@ -37,6 +37,8 @@ export const CATALOG_CHANGED_EVENT = "hems:catalog-change";
 
 let memoryCatalog: Catalog | null = null;
 let catalogRequest: Promise<Catalog> | null = null;
+let catalogRefreshStartedAt = 0;
+let catalogGeneration = 0;
 
 function readBrowserCatalogCache(): Catalog | null {
   if (typeof window === "undefined") return null;
@@ -54,6 +56,8 @@ function readBrowserCatalogCache(): Catalog | null {
 function notifyCatalogChanged() {
   memoryCatalog = null;
   catalogRequest = null;
+  catalogRefreshStartedAt = 0;
+  catalogGeneration += 1;
 
   if (typeof window === "undefined") return;
 
@@ -70,74 +74,48 @@ function notifyCatalogChanged() {
 READ CATALOG (DB)
 --------------------------*/
 export async function readCatalog(): Promise<Catalog> {
-  if (memoryCatalog) return memoryCatalog;
-  if (catalogRequest) return catalogRequest;
+  const fallback = memoryCatalog ?? readBrowserCatalogCache();
+  if (fallback) memoryCatalog = fallback;
+  if (catalogRequest) return fallback ?? catalogRequest;
+  if (memoryCatalog && Date.now() - catalogRefreshStartedAt < 60000) return memoryCatalog;
 
-  const fallback = readBrowserCatalogCache();
-
-  catalogRequest = (async () => {
+  const generation = catalogGeneration;
+  catalogRefreshStartedAt = Date.now();
+  const request = (async () => {
     try {
-
-      const { data: cats, error: catErr } = await supabase
-        .from("categories")
-        .select("*")
-        .order("name");
-
-      if (catErr || !cats) {
-        console.error("readCatalog categories error", catErr);
+      const [categoryResult, subcategoryResult] = await Promise.all([
+        supabase.from("categories").select("*").order("name"),
+        supabase.from("subcategories").select("*").order("name"),
+      ]);
+      if (categoryResult.error || subcategoryResult.error || !categoryResult.data || !subcategoryResult.data) {
         return fallback ?? { categories: [] };
       }
-
-      const { data: subs, error: subErr } = await supabase
-        .from("subcategories")
-        .select("*")
-        .order("name");
-
-      if (subErr || !subs) {
-        console.error("readCatalog subcategories error", subErr);
-
-        return fallback ?? {
-          categories: (cats as Category[]).map((c) => ({
-            ...c,
-            subcategories: [],
-          })),
-        };
-      }
-
       const subByCat = new Map<string, Subcategory[]>();
-
-      for (const s of subs as Subcategory[]) {
-        const arr = subByCat.get(s.category_id) ?? [];
-        arr.push(s);
-        subByCat.set(s.category_id, arr);
+      for (const sub of subcategoryResult.data as Subcategory[]) {
+        const rows = subByCat.get(sub.category_id) ?? [];
+        rows.push(sub); subByCat.set(sub.category_id, rows);
       }
-
-      const categories: CatalogCategory[] = (cats as Category[]).map((c) => ({
-        ...c,
-        subcategories: subByCat.get(c.id) ?? [],
-      }));
-
-      const result = { categories };
+      const result: Catalog = { categories: (categoryResult.data as Category[]).map(category => ({
+        ...category, subcategories: subByCat.get(category.id) ?? [],
+      })) };
+      if (generation !== catalogGeneration) return memoryCatalog ?? fallback ?? result;
       memoryCatalog = result;
-
       if (typeof window !== "undefined") {
-        try {
-          sessionStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(categories));
-        } catch {
-          // Keep the in-memory cache when browser storage is unavailable.
+        try { sessionStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(result.categories)); } catch {}
+        if (fallback && JSON.stringify(fallback) !== JSON.stringify(result)) {
+          window.dispatchEvent(new Event(CATALOG_CHANGED_EVENT));
         }
       }
-
       return result;
-    } catch (err) {
-      console.error("readCatalog fatal error", err);
+    } catch (error) {
+      console.error("readCatalog error", error);
       return fallback ?? { categories: [] };
-    } finally {
-      catalogRequest = null;
     }
   })();
-
-  return catalogRequest;
+  catalogRequest = request;
+  void request.finally(() => { if (catalogRequest === request) catalogRequest = null; });
+  // Cached navigation is usable now; freshness checks continue quietly.
+  return fallback ?? request;
 }
 
 /* -------------------------

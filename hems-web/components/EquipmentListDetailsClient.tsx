@@ -1,5 +1,7 @@
 "use client";
 
+import { createBrowserId } from "@/lib/browserId";
+
 import {
   ArrowLeft,
   BriefcaseBusiness,
@@ -1094,7 +1096,7 @@ export default function EquipmentListDetailsClient({
       timer = setTimeout(() => void refresh(), 120);
     }
     function focus() { if (document.visibilityState === "visible") schedule(); }
-    const channel = supabase.channel(`draft-details:${listId}:${crypto.randomUUID()}`)
+    const channel = supabase.channel(`draft-details:${listId}:${createBrowserId()}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "equipment_lists", filter: `id=eq.${listId}` }, schedule)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "equipment_list_items", filter: `list_id=eq.${listId}` }, schedule)
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "equipment_list_items", filter: `list_id=eq.${listId}` }, schedule)
@@ -1422,7 +1424,7 @@ export default function EquipmentListDetailsClient({
       .insert({
         list_id: list.id,
         inventory_record_type: "item",
-        inventory_record_id: globalThis.crypto.randomUUID(),
+        inventory_record_id: createBrowserId(),
         parent_record_id: null,
         display_name: name,
         serial_number: null,
