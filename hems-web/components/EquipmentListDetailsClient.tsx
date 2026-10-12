@@ -58,6 +58,7 @@ import {
 } from "@/lib/equipmentLists";
 import EquipmentListUnitPicker from "@/components/EquipmentListUnitPicker";
 import EquipmentDraftShareButton from "@/components/EquipmentDraftShareButton";
+import CustomDraftItemInline from "@/components/CustomDraftItemInline";
 
 type DetailedEquipmentList = EquipmentList & {
   submitted_by?: string | null;
@@ -257,6 +258,7 @@ const LIST_ITEM_SELECT = `
   returned_maintenance_quantity,
   metadata,
   draft_sort_order,
+  draft_category,
   created_at
 `;
 
@@ -296,6 +298,7 @@ function formatDateTime(value: string | null | undefined) {
 }
 
 function metadataText(item: EquipmentListItem, key: string) {
+  if (key === "category" && item.metadata?.custom_item === true && item.draft_category) return item.draft_category;
   const value = item.metadata?.[key];
   return typeof value === "string" ? value : "";
 }
@@ -662,6 +665,7 @@ export default function EquipmentListDetailsClient({
   const [items, setItems] = useState<EquipmentListItem[]>([]);
   const [dragGroupKey, setDragGroupKey] = useState<string | null>(null);
   const [draftDrop, setDraftDrop] = useState<{ key: string; position: "before" | "after" } | null>(null);
+  const [draftCategoryDrop, setDraftCategoryDrop] = useState<string | null>(null);
   const [savingDraftOrder, setSavingDraftOrder] = useState(false);
   const draftOrderBusy = useRef(false);
   const draftOrderVersion = useRef(0);
@@ -671,6 +675,7 @@ export default function EquipmentListDetailsClient({
     setSavingDraftOrder(false);
     setDragGroupKey(null);
     setDraftDrop(null);
+    setDraftCategoryDrop(null);
   }, [listId]);
 
   const [loading, setLoading] = useState(true);
@@ -692,8 +697,17 @@ export default function EquipmentListDetailsClient({
     null,
   );
   const [customItemOpen, setCustomItemOpen] = useState(false);
+  const customEditVersion = useRef(0);
+  const pendingCustomEditCount = useRef(0);
+  const [pendingCustomEdits, setPendingCustomEdits] = useState(0);
+  useEffect(() => {
+    customEditVersion.current++;
+    pendingCustomEditCount.current = 0;
+    setPendingCustomEdits(0);
+  }, [listId]);
   const [addingCustomItem, setAddingCustomItem] = useState(false);
   const [updatingItemId, setUpdatingItemId] = useState<string | null>(null);
+  const [quantityInputVersion, setQuantityInputVersion] = useState(0);
   const [hiddenUnitGroups, setHiddenUnitGroups] = useState<string[]>([]);
   const [rackRowsByModel, setRackRowsByModel] = useState<
     Record<string, RackContentRow[]>
@@ -1029,19 +1043,24 @@ export default function EquipmentListDetailsClient({
   );
   const canChangeItems = Boolean(!savingDraftOrder && (canEditDraft || canReview));
 
-  const canReorderDraft = Boolean(isDraft && !isMaintenanceList && canEditDraft && !savingDraftOrder && !submitting);
+  const canReorderDraft = Boolean(!isMaintenanceList && ((isDraft && canEditDraft) || (list?.status === "pending" && (isOwner || isManager))) && !savingDraftOrder && !pendingCustomEdits && !submitting);
 
   function clearDraftDrag() {
     setDragGroupKey(null);
     setDraftDrop(null);
+    setDraftCategoryDrop(null);
   }
 
-  async function saveDraftGroupOrder(targetKey: string, position: "before" | "after") {
+  async function saveDraftGroupOrder(targetKey: string, position: "before" | "after", targetCategory?: string) {
     if (!canReorderDraft || !dragGroupKey || draftOrderBusy.current ||
         !window.matchMedia("(min-width: 640px)").matches) return;
+    const source = sortedGroups.find((group) => group.key === dragGroupKey);
+    const customMove = Boolean(isDraft && targetCategory && source?.items.every((item) => item.metadata?.custom_item === true));
+    const category = targetCategory === "equipment" ? "other" : targetCategory;
+    const categoryChanged = customMove && source && metadataText(source.items[0], "category").toLowerCase() !== category;
     const next = moveDraftGroup(sortedGroups, dragGroupKey, targetKey, position);
     clearDraftDrag();
-    if (next === sortedGroups || next.every((group, i) => group.key === sortedGroups[i].key)) return;
+    if (!categoryChanged && (next === sortedGroups || next.every((group, i) => group.key === sortedGroups[i].key))) return;
     const version = ++draftOrderVersion.current;
     draftOrderBusy.current = true;
     listReadVersion.current++; // Ignore refreshes started before this reorder.
@@ -1052,13 +1071,14 @@ export default function EquipmentListDetailsClient({
       const { data, error: orderError } = await supabase.rpc("hems_reorder_draft_items", {
         p_list_id: listId,
         p_item_ids: next.flatMap((group) => group.items.map((item) => item.id)),
+        ...(customMove && source ? { p_custom_item_ids: source.items.map((item) => item.id), p_category: category } : {}),
       });
       if (version !== draftOrderVersion.current) return;
       if (orderError) throw orderError;
       if (!Array.isArray(data) || data.length !== items.length) throw new Error("Unexpected order response. Refresh the list and try again.");
       listReadVersion.current++;
       setItems((data ?? []) as EquipmentListItem[]);
-      setMessage("Equipment order saved.");
+      setMessage(categoryChanged ? "Custom item category and order saved." : "Equipment order saved.");
     } catch (orderError: any) {
       if (version !== draftOrderVersion.current) return;
       setError(orderError?.message || "The equipment order could not be saved.");
@@ -1069,6 +1089,17 @@ export default function EquipmentListDetailsClient({
         void refreshListAndItems().catch(() => {});
       }
     }
+  }
+
+  const draggingCustomItem = Boolean(dragGroupKey && sortedGroups.find((group) => group.key === dragGroupKey)
+    ?.items.every((item) => item.metadata?.custom_item === true));
+
+  function dropCustomCategory(category: string) {
+    const candidates = sortedGroups.filter((group) => group.key !== dragGroupKey);
+    const categoryGroups = candidates.filter((group) =>
+      categoryLabel(metadataText(group.items[0], "category")).toLowerCase() === category);
+    const target = categoryGroups[categoryGroups.length - 1] || candidates[candidates.length - 1];
+    void saveDraftGroupOrder(target?.key || dragGroupKey || "", "after", category);
   }
 
   function canTestMaintenance(request: MaintenanceWorkflowRequest) {
@@ -1379,6 +1410,30 @@ export default function EquipmentListDetailsClient({
     );
   }
 
+  async function removeSerializedGroup(group: ItemGroup) {
+    if (!list || !canChangeItems || removingItemId || submitting ||
+        !group.items.length || group.items.some((item) => item.inventory_record_type !== "unit")) return;
+    const ids = [...new Set(group.items.map((item) => item.id))];
+    if (!window.confirm(`Remove all ${ids.length} serial unit(s) of ${group.displayName} from this list?`)) return;
+    setRemovingItemId(group.items[0].id);
+    setError("");
+    try {
+      const { data, error: deleteError } = await supabase.from("equipment_list_items")
+        .delete().eq("list_id", list.id).in("id", ids).select("id");
+      if (deleteError) throw deleteError;
+      const removed = new Set((data ?? []).map((row: { id: string }) => row.id));
+      setItems((current) => current.filter((item) => !removed.has(item.id)));
+      if (removed.size !== ids.length) setError("Some units could not be removed. Refresh the list and check your access.");
+      window.dispatchEvent(new CustomEvent(EQUIPMENT_LIST_ITEMS_EVENT, {
+        detail: { listId: list.id, status: list.status },
+      }));
+    } catch (deleteError: any) {
+      setError(deleteError?.message || "Could not remove the serial units.");
+    } finally {
+      setRemovingItemId(null);
+    }
+  }
+
   async function updateItemQuantity(
     item: EquipmentListItem,
     nextValue: number,
@@ -1445,6 +1500,7 @@ export default function EquipmentListDetailsClient({
     if (updateError || !data) {
       console.error("update equipment list quantity error", updateError);
       setError(updateError?.message || "Failed to update the quantity.");
+      setQuantityInputVersion((version) => version + 1);
       setUpdatingItemId(null);
       return;
     }
@@ -1462,6 +1518,31 @@ export default function EquipmentListDetailsClient({
       }),
     );
     setUpdatingItemId(null);
+  }
+
+  async function saveCustomItemInline(item: EquipmentListItem, input: { name: string; notes: string }) {
+    if (!isDraft || !canEditDraft || draftOrderBusy.current || item.metadata?.custom_item !== true || !input.name.trim()) {
+      throw new Error("This custom item cannot be edited right now.");
+    }
+    const version = customEditVersion.current;
+    pendingCustomEditCount.current++;
+    setPendingCustomEdits(pendingCustomEditCount.current);
+    try {
+    const { data, error: editError } = await supabase.rpc("hems_edit_custom_draft_item", {
+      p_item_id: item.id, p_name: input.name.trim(), p_notes: input.notes.trim(),
+    });
+    if (editError) throw editError;
+    if (version !== customEditVersion.current) return;
+    const saved = Array.isArray(data) ? data[0] : data;
+    if (!saved?.id) throw new Error("The custom item could not be saved.");
+    listReadVersion.current++;
+    setItems((current) => current.map((line) => line.id === saved.id ? saved as EquipmentListItem : line));
+    } finally {
+      if (version === customEditVersion.current) {
+        pendingCustomEditCount.current--;
+        setPendingCustomEdits(pendingCustomEditCount.current);
+      }
+    }
   }
 
   async function addCustomItem(input: {
@@ -2175,6 +2256,7 @@ export default function EquipmentListDetailsClient({
       !list ||
       !canSubmitDraft ||
       draftOrderBusy.current ||
+      pendingCustomEditCount.current > 0 ||
       submitting
     ) {
       return;
@@ -2495,7 +2577,7 @@ export default function EquipmentListDetailsClient({
                   <button
                     type="button"
                     onClick={() => void submitForApproval()}
-                    disabled={submitting || savingDraftOrder || items.length === 0}
+                    disabled={submitting || savingDraftOrder || pendingCustomEdits > 0 || items.length === 0}
                     className="inline-flex items-center justify-center gap-2 rounded-xl bg-black px-4 py-2.5 text-[10px] font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {submitting ? (
@@ -2752,7 +2834,7 @@ export default function EquipmentListDetailsClient({
             </div>
             <div className="mt-1 text-[10px] text-gray-500">
               Selected equipment, quantities and serial numbers in this list.
-              {canEditDraft && !isMaintenanceList ? <span className="hidden sm:block mt-1">Drag the handle to reorder equipment.</span> : null}
+              {canReorderDraft ? <span className="hidden sm:block mt-1">Drag the handle to reorder equipment.</span> : null}
               {savingDraftOrder ? <span role="status" className="block mt-1 text-red-600">Saving order…</span> : null}
             </div>
           </div>
@@ -2781,6 +2863,24 @@ export default function EquipmentListDetailsClient({
             ) : null}
           </div>
         </div>
+
+        {isDraft && canReorderDraft && draggingCustomItem ? (
+          <div className="hidden sm:block border-t border-red-100 bg-red-50/40 px-4 py-3 sm:px-5">
+            <div className="mb-2 text-[10px] font-semibold text-gray-600">Drop custom item into a category</div>
+            <div className="flex flex-wrap gap-2">
+              {["Lighting", "Video", "Rigging", "Audio", "Power", "Other"].map((label) => {
+                const category = label.toLowerCase();
+                return <div key={category} data-draft-category-drop={category}
+                  onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; setDraftCategoryDrop(category); }}
+                  onDragLeave={() => setDraftCategoryDrop(null)}
+                  onDrop={(event) => { event.preventDefault(); event.stopPropagation(); dropCustomCategory(category); }}
+                  className={`rounded-xl border px-4 py-3 text-[11px] font-semibold ${draftCategoryDrop === category ? "border-red-500 bg-red-100 text-red-700" : "border-gray-200 bg-white text-gray-700"}`}>
+                  {label}
+                </div>;
+              })}
+            </div>
+          </div>
+        ) : null}
 
         {groups.length === 0 ? (
           <div className="m-4 rounded-xl border border-dashed border-gray-300 px-4 py-12 text-center">
@@ -2892,7 +2992,7 @@ export default function EquipmentListDetailsClient({
                     event.preventDefault();
                     event.stopPropagation();
                     const rect = event.currentTarget.getBoundingClientRect();
-                    void saveDraftGroupOrder(group.key, event.clientY < rect.top + rect.height / 2 ? "before" : "after");
+                    void saveDraftGroupOrder(group.key, event.clientY < rect.top + rect.height / 2 ? "before" : "after", currentCategoryLabel.toLowerCase());
                   }}
                   className={`relative px-3 py-2.5 transition hover:bg-gray-50 sm:px-5 ${dragGroupKey === group.key ? "opacity-50" : ""}`}
                 >
@@ -2925,7 +3025,12 @@ export default function EquipmentListDetailsClient({
 
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div className="min-w-0">
+                        <div className="min-w-0 flex-1">
+                          {isDraft && canEditDraft && firstItem.metadata?.custom_item === true ? (
+                            <CustomDraftItemInline key={firstItem.id} name={firstItem.display_name}
+                              notes={metadataText(firstItem, "notes")} disabled={savingDraftOrder || submitting}
+                              onSave={(input) => saveCustomItemInline(firstItem, input)} />
+                          ) : (
                           <div
                             className="truncate text-[12px] text-gray-900 sm:text-[13px]"
                             title={displayParts.primaryName}
@@ -2953,6 +3058,7 @@ export default function EquipmentListDetailsClient({
                               </span>
                             )}
                           </div>
+                          )}
                           {displayParts.cabinetDetail ? (
                             <div className="mt-0.5 truncate text-[8px] font-normal text-slate-600 sm:text-[9px]">
                               {displayParts.cabinetDetail}
@@ -2963,10 +3069,8 @@ export default function EquipmentListDetailsClient({
                               Block: {group.blockName}
                             </div>
                           ) : null}
-                          {isCustomItem && metadataText(firstItem, "notes") ? (
-                            <div className="mt-0.5 text-[9px] text-gray-500">
-                              {metadataText(firstItem, "notes")}
-                            </div>
+                          {!(isDraft && canEditDraft && firstItem.metadata?.custom_item === true) && isCustomItem && metadataText(firstItem, "notes") ? (
+                            <div className="mt-0.5 text-[9px] text-gray-500">{metadataText(firstItem, "notes")}</div>
                           ) : null}
                           {isRackModel && showUnitDetails && rackRows.length > 0 ? (
                             <div className="mt-1.5 flex flex-wrap gap-1">
@@ -2991,12 +3095,29 @@ export default function EquipmentListDetailsClient({
                         </div>
 
                         <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                          {canChangeItems && !isMatrixChildCollection && (isMatrixRow || isGenericMatrixModel || isCustomItem) ? (
+                            <button type="button" onClick={() => void removeItem(firstItem.id)}
+                              disabled={Boolean(removingItemId)} aria-label={`Remove ${group.displayName} from list`}
+                              title={`Remove ${group.displayName}`}
+                              className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50">
+                              {removingItemId === firstItem.id ? <Loader2 size={10} className="animate-spin" /> : <X size={10} />}
+                            </button>
+                          ) : null}
+                          {isSerializedGroup && canChangeItems ? (
+                            <button type="button" onClick={() => void removeSerializedGroup(group)}
+                              disabled={Boolean(removingItemId) || submitting}
+                              aria-label={`Remove all ${group.items.length} serial units of ${group.displayName} from list`}
+                              title="Remove all serial units of this item"
+                              className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:opacity-50">
+                              {removingItemId === firstItem.id ? <Loader2 size={10} className="animate-spin" /> : <X size={10} />}
+                            </button>
+                          ) : null}
                           {!isMatrixChildCollection ? (
                           <div className="flex min-w-[72px] items-center justify-end">
                             {canEditQuantity ? (
                               <div className="flex items-center justify-end gap-1">
                                 <input
-                                  key={`${firstItem.id}:${firstItem.requested_quantity}:${groupSquareMetres}`}
+                                  key={`${firstItem.id}:${firstItem.requested_quantity}:${groupSquareMetres}:${quantityInputVersion}`}
                                   type="number"
                                   min={
                                     hasSquareMetreQuantity && hasCabinetArea
@@ -3135,22 +3256,7 @@ export default function EquipmentListDetailsClient({
                             </button>
                           ) : null}
 
-                          {isGenericMatrixModel && canChangeItems ? (
-                            <button
-                              type="button"
-                              onClick={() => void removeItem(firstItem.id)}
-                              disabled={Boolean(removingItemId)}
-                              title={`Remove ${group.displayName}`}
-                              aria-label={`Remove ${group.displayName} from list`}
-                              className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-gray-200 text-gray-400 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-                            >
-                              {removingItemId === firstItem.id ? (
-                                <Loader2 size={10} className="animate-spin" />
-                              ) : (
-                                <X size={10} />
-                              )}
-                            </button>
-                          ) : null}
+
                         </div>
                       </div>
 
@@ -3190,10 +3296,27 @@ export default function EquipmentListDetailsClient({
                                 </span>
 
                                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                                  {canChangeItems ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => void removeItem(item.id)}
+                                      disabled={Boolean(removingItemId)}
+                                      title={`Remove ${rowLabel}`}
+                                      aria-label={`Remove ${rowLabel} from list`}
+                                      className="grid h-7 w-7 shrink-0 place-items-center rounded-lg text-gray-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                                    >
+                                      {removingItemId === item.id ? (
+                                        <Loader2 size={10} className="animate-spin" />
+                                      ) : (
+                                        <X size={10} />
+                                      )}
+                                    </button>
+                                  ) : null}
+
                                   {childCanEdit ? (
                                     <div className="flex items-center gap-1">
                                       <input
-                                        key={`${item.id}:${item.requested_quantity}`}
+                                        key={`${item.id}:${item.requested_quantity}:${quantityInputVersion}`}
                                         type="number"
                                         min={1}
                                         step={1}
@@ -3235,22 +3358,7 @@ export default function EquipmentListDetailsClient({
                                     />
                                   ) : null}
 
-                                  {canChangeItems ? (
-                                    <button
-                                      type="button"
-                                      onClick={() => void removeItem(item.id)}
-                                      disabled={Boolean(removingItemId)}
-                                      title={`Remove ${rowLabel}`}
-                                      aria-label={`Remove ${rowLabel} from list`}
-                                      className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-gray-200 text-gray-400 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
-                                    >
-                                      {removingItemId === item.id ? (
-                                        <Loader2 size={10} className="animate-spin" />
-                                      ) : (
-                                        <X size={10} />
-                                      )}
-                                    </button>
-                                  ) : canReceiveReturns && remaining > 0 ? (
+                                  {!canChangeItems && canReceiveReturns && remaining > 0 ? (
                                     <button
                                       type="button"
                                       onClick={() => openQuantityReturn(item)}
@@ -3260,7 +3368,7 @@ export default function EquipmentListDetailsClient({
                                       <RotateCcw size={9} />
                                       Received
                                     </button>
-                                  ) : returnedOk > 0 || returnedMaintenance > 0 ? (
+                                  ) : !canChangeItems && (returnedOk > 0 || returnedMaintenance > 0) ? (
                                     <span
                                       className={`rounded-md px-2 py-1 text-[8px] font-medium ${
                                         returnedMaintenance > 0
@@ -3282,7 +3390,7 @@ export default function EquipmentListDetailsClient({
                             );
                           })}
                         </div>
-                      ) : isGenericMatrix && !canReceiveReturns ? null : isSerializedGroup && !showUnitDetails ? null : (
+                      ) : (isGenericMatrix || ((isMatrixRow || isCustomItem) && canChangeItems)) && !canReceiveReturns ? null : isSerializedGroup && !showUnitDetails ? null : (
                       <div className="mt-1 flex flex-wrap gap-1">
                         {group.items.map((item) => {
                           const remaining = remainingQuantity(item);
@@ -3306,7 +3414,7 @@ export default function EquipmentListDetailsClient({
                                   disabled={Boolean(removingItemId)}
                                   title={`Remove ${unitLabel(item)}`}
                                   aria-label={`Remove ${unitLabel(item)} from list`}
-                                  className="grid h-6 w-6 shrink-0 place-items-center border-l border-gray-200 text-gray-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                                  className="order-first grid h-6 w-6 shrink-0 place-items-center border-r border-gray-200 text-gray-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
                                 >
                                   {removingItemId === item.id ? (
                                     <Loader2 size={10} className="animate-spin" />
@@ -3399,7 +3507,7 @@ export default function EquipmentListDetailsClient({
             <button
               type="button"
               onClick={() => void submitForApproval()}
-              disabled={submitting || savingDraftOrder || items.length === 0}
+              disabled={submitting || savingDraftOrder || pendingCustomEdits > 0 || items.length === 0}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-black px-4 py-3 text-[11px] font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {submitting ? (

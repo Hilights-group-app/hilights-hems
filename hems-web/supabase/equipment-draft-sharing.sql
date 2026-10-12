@@ -54,14 +54,46 @@ revoke all on function public.hems_can_edit_equipment_list(uuid) from public, an
 grant execute on function public.hems_can_view_equipment_list(uuid) to authenticated;
 grant execute on function public.hems_can_edit_equipment_list(uuid) to authenticated;
 
--- Replace both visibility policies: the existing restrictive policy otherwise
--- hides drafts from every recipient even when the item helpers allow editing.
+-- Evaluate the candidate row directly so INSERT ... RETURNING can read it.
+-- A STABLE helper querying equipment_lists cannot see a just-inserted row.
 drop policy if exists "hems_lists_select" on public.equipment_lists;
 drop policy if exists "hems_lists_select_guard" on public.equipment_lists;
 create policy "hems_lists_select" on public.equipment_lists
-for select to authenticated using (public.hems_can_view_equipment_list(id));
+for select to authenticated using (
+  auth.uid() is not null and (
+    list_type::text = 'internal_use'
+    or (status::text = 'draft' and (
+      created_by = auth.uid()
+      or (list_type::text in ('dry_hire', 'local_event', 'transfer_out')
+        and shared_with @> array[auth.uid()])
+    ))
+    or (status::text = 'pending' and (
+      created_by = auth.uid() or public.is_equipment_list_manager()
+    ))
+    or status::text in ('active', 'partially_returned', 'closed')
+    or (status::text = 'cancelled' and (
+      created_by = auth.uid() or public.is_equipment_list_manager()
+    ))
+  )
+);
 create policy "hems_lists_select_guard" on public.equipment_lists
-as restrictive for select to authenticated using (public.hems_can_view_equipment_list(id));
+as restrictive for select to authenticated using (
+  auth.uid() is not null and (
+    list_type::text = 'internal_use'
+    or (status::text = 'draft' and (
+      created_by = auth.uid()
+      or (list_type::text in ('dry_hire', 'local_event', 'transfer_out')
+        and shared_with @> array[auth.uid()])
+    ))
+    or (status::text = 'pending' and (
+      created_by = auth.uid() or public.is_equipment_list_manager()
+    ))
+    or status::text in ('active', 'partially_returned', 'closed')
+    or (status::text = 'cancelled' and (
+      created_by = auth.uid() or public.is_equipment_list_manager()
+    ))
+  )
+);
 
 -- Existing item RLS calls the helpers above. Existing maintenance department
 -- checks remain in hems_can_edit_list_item and are intentionally unchanged.
@@ -159,6 +191,11 @@ begin
   select * into parent from public.equipment_lists where id = target_list for no key update;
   if not found or parent.list_type::text not in ('dry_hire', 'local_event', 'transfer_out') then
     if tg_op = 'DELETE' then return old; else return new; end if;
+  end if;
+  -- Pending creators may reorder only; all other item fields remain locked.
+  if tg_op = 'UPDATE' and parent.status::text = 'pending' and caller = parent.created_by then
+    if (to_jsonb(new) - 'draft_sort_order' - 'updated_at') is not distinct from
+       (to_jsonb(old) - 'draft_sort_order' - 'updated_at') then return new; end if;
   end if;
   if parent.status::text = 'draft' then
     if caller is distinct from parent.created_by and not (parent.shared_with @> array[caller]) then
