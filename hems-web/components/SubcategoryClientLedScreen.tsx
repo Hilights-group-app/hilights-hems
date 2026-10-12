@@ -852,7 +852,7 @@ export default function SubcategoryClientLedScreen({
 
   useEffect(() => {
     function refreshEquipmentMovements(event: Event) {
-      if ((event as CustomEvent<{ status?: string }>).detail?.status === "draft") return;
+      if (["draft", "pending"].includes((event as CustomEvent<{ status?: string }>).detail?.status || "")) return;
       if (subcategoryId) void loadModels(subcategoryId, true);
     }
 

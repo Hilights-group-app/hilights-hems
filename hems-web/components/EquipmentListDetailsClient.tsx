@@ -627,6 +627,14 @@ async function loadPdfItemPhoto(source: string): Promise<PdfItemPhoto | null> {
   }
 }
 
+function pdfHeading(list: EquipmentList) {
+  if (list.list_type === "transfer_out") {
+    return [list.from_location_name?.trim(), list.destination_name?.trim()]
+      .filter(Boolean).join(" to ") || "Equipment Transfer";
+  }
+  return equipmentListTypeLabel(list.list_type);
+}
+
 function pdfFileName(list: EquipmentList) {
   const type = equipmentListTypeLabel(list.list_type).trim();
   const summary = equipmentListSummary(list).trim();
@@ -1405,7 +1413,7 @@ export default function EquipmentListDetailsClient({
 
     window.dispatchEvent(
       new CustomEvent(EQUIPMENT_LIST_ITEMS_EVENT, {
-        detail: { listId: list.id },
+        detail: { listId: list.id, status: list.status },
       }),
     );
   }
@@ -1514,7 +1522,7 @@ export default function EquipmentListDetailsClient({
     );
     window.dispatchEvent(
       new CustomEvent(EQUIPMENT_LIST_ITEMS_EVENT, {
-        detail: { listId: list.id },
+        detail: { listId: list.id, status: list.status },
       }),
     );
     setUpdatingItemId(null);
@@ -1594,7 +1602,7 @@ export default function EquipmentListDetailsClient({
     setMessage(`${name} added to ${list.reference}.`);
     window.dispatchEvent(
       new CustomEvent(EQUIPMENT_LIST_ITEMS_EVENT, {
-        detail: { listId: list.id },
+        detail: { listId: list.id, status: list.status },
       }),
     );
     setAddingCustomItem(false);
@@ -1716,11 +1724,15 @@ export default function EquipmentListDetailsClient({
     pdf.setFont("helvetica", "bold");
     pdf.setFontSize(17);
     pdf.setTextColor(20, 20, 20);
-    pdf.text(equipmentListTypeLabel(list.list_type), 14, 36);
+    const headingLines = pdf.splitTextToSize(pdfHeading(list), 182);
+    const headingOffset = Math.max(0, headingLines.length - 1) * 7;
+    pdf.text(headingLines, 14, 36);
     pdf.setFontSize(10);
     pdf.setFont("helvetica", "normal");
     pdf.setTextColor(95, 95, 95);
-    pdf.text(equipmentListSummary(list) || "Equipment List", 14, 43);
+    if (list.list_type !== "transfer_out") {
+      pdf.text(equipmentListSummary(list) || "Equipment List", 14, 43 + headingOffset);
+    }
 
     const pdfDates = scheduleRows(list);
     const details = [
@@ -1729,24 +1741,26 @@ export default function EquipmentListDetailsClient({
     ];
     pdf.setFontSize(8);
     pdf.setTextColor(75, 75, 75);
-    pdf.text(details.join("   |   "), 14, 50);
+    const detailsY = (list.list_type === "transfer_out" ? 44 : 50) + headingOffset;
+    pdf.text(details.join("   |   "), 14, detailsY);
 
-    let tableStartY = 57;
+    let tableStartY = detailsY + 7;
     if (list.notes?.trim()) {
       const noteLines = pdf.splitTextToSize(list.notes.trim(), 174);
       const noteHeight = Math.max(14, noteLines.length * 4 + 8);
       pdf.setFillColor(248, 248, 248);
       pdf.setDrawColor(230, 230, 230);
-      pdf.roundedRect(14, 54, 182, noteHeight, 2, 2, "FD");
+      const notesY = detailsY + 4;
+      pdf.roundedRect(14, notesY, 182, noteHeight, 2, 2, "FD");
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(7);
       pdf.setTextColor(125, 125, 125);
-      pdf.text("NOTES", 18, 60);
+      pdf.text("NOTES", 18, notesY + 6);
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(8);
       pdf.setTextColor(65, 65, 65);
-      pdf.text(noteLines, 18, 65);
-      tableStartY = 54 + noteHeight + 5;
+      pdf.text(noteLines, 18, notesY + 11);
+      tableStartY = notesY + noteHeight + 5;
     }
 
     const body: any[] = [];
@@ -1808,7 +1822,7 @@ export default function EquipmentListDetailsClient({
           : "";
       const customDetail =
         firstItem.inventory_record_type === "item"
-          ? metadataText(firstItem, "notes") || "Custom / Non-inventory"
+          ? metadataText(firstItem, "notes")
           : "";
       const isSerializedGroup =
         firstItem.inventory_record_type === "unit";

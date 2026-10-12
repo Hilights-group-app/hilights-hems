@@ -450,31 +450,35 @@ export default function EquipmentListsSidebar() {
   useEffect(() => {
     let cancelled = false;
 
-    async function loadListItems() {
+    let readVersion = 0;
+    async function loadListItems(showLoading = false) {
+      const version = ++readVersion;
       if (!activeListId) {
         setActiveListItems([]);
         setLoadingListItems(false);
         return;
       }
-
-      setLoadingListItems(true);
-
-      const { data, error: itemsError } = await supabase
-        .from("equipment_list_items")
-        .select(LIST_ITEM_SELECT)
-        .eq("list_id", activeListId)
-        .order("created_at", { ascending: true });
-
-      if (cancelled) return;
-
-      if (itemsError) {
-        console.error("equipment list items load error", itemsError);
+      if (showLoading) {
         setActiveListItems([]);
-      } else {
-        setActiveListItems((data ?? []) as EquipmentListItem[]);
+        setLoadingListItems(true);
       }
-
-      setLoadingListItems(false);
+      try {
+        const { data, error: itemsError } = await supabase
+          .from("equipment_list_items")
+          .select(LIST_ITEM_SELECT)
+          .eq("list_id", activeListId)
+          .order("created_at", { ascending: true });
+        if (cancelled || version !== readVersion) return;
+        if (itemsError) {
+          console.error("equipment list items load error", itemsError);
+        } else {
+          setActiveListItems((data ?? []) as EquipmentListItem[]);
+        }
+      } catch (itemsError) {
+        if (!cancelled && version === readVersion) console.error("equipment list items refresh error", itemsError);
+      } finally {
+        if (!cancelled && version === readVersion) setLoadingListItems(false);
+      }
     }
 
     function handleItemsChange(event: Event) {
@@ -482,7 +486,7 @@ export default function EquipmentListsSidebar() {
         ?.listId;
 
       if (!changedListId || changedListId === activeListId) {
-        void loadListItems();
+        scheduleItemsRefresh();
       }
     }
 
@@ -496,7 +500,7 @@ export default function EquipmentListsSidebar() {
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "equipment_list_items", filter: `list_id=eq.${activeListId}` }, scheduleItemsRefresh)
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "equipment_list_items" }, scheduleItemsRefresh)
       .subscribe() : null;
-    void loadListItems();
+    void loadListItems(true);
     window.addEventListener(EQUIPMENT_LIST_ITEMS_EVENT, handleItemsChange);
 
     return () => {

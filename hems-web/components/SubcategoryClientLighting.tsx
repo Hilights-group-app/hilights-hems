@@ -743,7 +743,7 @@ export default function SubcategoryClientLighting({
 
   useEffect(() => {
     function refreshEquipmentMovements(event: Event) {
-      if ((event as CustomEvent<{ status?: string }>).detail?.status === "draft") return;
+      if (["draft", "pending"].includes((event as CustomEvent<{ status?: string }>).detail?.status || "")) return;
       void load(true, true);
     }
 
