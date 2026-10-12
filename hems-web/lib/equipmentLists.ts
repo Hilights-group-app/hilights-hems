@@ -62,6 +62,7 @@ export type EquipmentListItem = {
   returned_ok_quantity: number;
   returned_maintenance_quantity: number;
   metadata: Record<string, unknown> | null;
+  draft_sort_order?: number | null;
   created_at: string;
 };
 

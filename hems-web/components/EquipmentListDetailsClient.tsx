@@ -1,9 +1,11 @@
 "use client";
 
 import { createBrowserId } from "@/lib/browserId";
+import { draftGroupRank, moveDraftGroup } from "@/lib/draftItemOrder";
 
 import {
   ArrowLeft,
+  GripVertical,
   BriefcaseBusiness,
   CalendarDays,
   CheckCircle2,
@@ -254,6 +256,7 @@ const LIST_ITEM_SELECT = `
   returned_ok_quantity,
   returned_maintenance_quantity,
   metadata,
+  draft_sort_order,
   created_at
 `;
 
@@ -657,6 +660,19 @@ export default function EquipmentListDetailsClient({
   const [currentDepartment, setCurrentDepartment] = useState("");
   const [list, setList] = useState<DetailedEquipmentList | null>(null);
   const [items, setItems] = useState<EquipmentListItem[]>([]);
+  const [dragGroupKey, setDragGroupKey] = useState<string | null>(null);
+  const [draftDrop, setDraftDrop] = useState<{ key: string; position: "before" | "after" } | null>(null);
+  const [savingDraftOrder, setSavingDraftOrder] = useState(false);
+  const draftOrderBusy = useRef(false);
+  const draftOrderVersion = useRef(0);
+  useEffect(() => {
+    draftOrderVersion.current++;
+    draftOrderBusy.current = false;
+    setSavingDraftOrder(false);
+    setDragGroupKey(null);
+    setDraftDrop(null);
+  }, [listId]);
+
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [approving, setApproving] = useState(false);
@@ -940,6 +956,9 @@ export default function EquipmentListDetailsClient({
   const sortedGroups = useMemo(
     () =>
       [...groups].sort((left, right) => {
+        const leftRank = draftGroupRank(left.items);
+        const rightRank = draftGroupRank(right.items);
+        if (leftRank !== rightRank) return leftRank < rightRank ? -1 : 1;
         const leftCategory = categoryLabel(
           metadataText(left.items[0], "category"),
         );
@@ -1008,7 +1027,49 @@ export default function EquipmentListDetailsClient({
   const canReceiveMaintenance = Boolean(
     isManager && isMaintenanceList && list?.status === "active",
   );
-  const canChangeItems = Boolean(canEditDraft || canReview);
+  const canChangeItems = Boolean(!savingDraftOrder && (canEditDraft || canReview));
+
+  const canReorderDraft = Boolean(isDraft && !isMaintenanceList && canEditDraft && !savingDraftOrder && !submitting);
+
+  function clearDraftDrag() {
+    setDragGroupKey(null);
+    setDraftDrop(null);
+  }
+
+  async function saveDraftGroupOrder(targetKey: string, position: "before" | "after") {
+    if (!canReorderDraft || !dragGroupKey || draftOrderBusy.current ||
+        !window.matchMedia("(min-width: 640px)").matches) return;
+    const next = moveDraftGroup(sortedGroups, dragGroupKey, targetKey, position);
+    clearDraftDrag();
+    if (next === sortedGroups || next.every((group, i) => group.key === sortedGroups[i].key)) return;
+    const version = ++draftOrderVersion.current;
+    draftOrderBusy.current = true;
+    listReadVersion.current++; // Ignore refreshes started before this reorder.
+    setSavingDraftOrder(true);
+    setError("");
+    setMessage("");
+    try {
+      const { data, error: orderError } = await supabase.rpc("hems_reorder_draft_items", {
+        p_list_id: listId,
+        p_item_ids: next.flatMap((group) => group.items.map((item) => item.id)),
+      });
+      if (version !== draftOrderVersion.current) return;
+      if (orderError) throw orderError;
+      if (!Array.isArray(data) || data.length !== items.length) throw new Error("Unexpected order response. Refresh the list and try again.");
+      listReadVersion.current++;
+      setItems((data ?? []) as EquipmentListItem[]);
+      setMessage("Equipment order saved.");
+    } catch (orderError: any) {
+      if (version !== draftOrderVersion.current) return;
+      setError(orderError?.message || "The equipment order could not be saved.");
+    } finally {
+      if (version === draftOrderVersion.current) {
+        draftOrderBusy.current = false;
+        setSavingDraftOrder(false);
+        void refreshListAndItems().catch(() => {});
+      }
+    }
+  }
 
   function canTestMaintenance(request: MaintenanceWorkflowRequest) {
     return Boolean(
@@ -1053,7 +1114,7 @@ export default function EquipmentListDetailsClient({
         .order("created_at", { ascending: true }),
     ]);
 
-    if (isCancelled() || version !== listReadVersion.current) return;
+    if (isCancelled() || version !== listReadVersion.current || draftOrderBusy.current) return;
     if (!listResult.error && !listResult.data) {
       clearListDetailsCache(listId);
       setList(null);
@@ -2113,6 +2174,7 @@ export default function EquipmentListDetailsClient({
     if (
       !list ||
       !canSubmitDraft ||
+      draftOrderBusy.current ||
       submitting
     ) {
       return;
@@ -2433,7 +2495,7 @@ export default function EquipmentListDetailsClient({
                   <button
                     type="button"
                     onClick={() => void submitForApproval()}
-                    disabled={submitting || items.length === 0}
+                    disabled={submitting || savingDraftOrder || items.length === 0}
                     className="inline-flex items-center justify-center gap-2 rounded-xl bg-black px-4 py-2.5 text-[10px] font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     {submitting ? (
@@ -2690,6 +2752,8 @@ export default function EquipmentListDetailsClient({
             </div>
             <div className="mt-1 text-[10px] text-gray-500">
               Selected equipment, quantities and serial numbers in this list.
+              {canEditDraft && !isMaintenanceList ? <span className="hidden sm:block mt-1">Drag the handle to reorder equipment.</span> : null}
+              {savingDraftOrder ? <span role="status" className="block mt-1 text-red-600">Saving order…</span> : null}
             </div>
           </div>
 
@@ -2811,9 +2875,42 @@ export default function EquipmentListDetailsClient({
                   </div>
                 ) : null}
                 <div
-                  className="px-3 py-2.5 transition hover:bg-gray-50 sm:px-5"
+                  data-draft-equipment-group={group.key}
+                  onDragOver={(event) => {
+                    if (!canReorderDraft || !dragGroupKey || dragGroupKey === group.key) return;
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    setDraftDrop({ key: group.key, position: event.clientY < rect.top + rect.height / 2 ? "before" : "after" });
+                  }}
+                  onDragLeave={(event) => {
+                    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+                    setDraftDrop((current) => current?.key === group.key ? null : current);
+                  }}
+                  onDrop={(event) => {
+                    if (!canReorderDraft || !dragGroupKey) return;
+                    event.preventDefault();
+                    event.stopPropagation();
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    void saveDraftGroupOrder(group.key, event.clientY < rect.top + rect.height / 2 ? "before" : "after");
+                  }}
+                  className={`relative px-3 py-2.5 transition hover:bg-gray-50 sm:px-5 ${dragGroupKey === group.key ? "opacity-50" : ""}`}
                 >
+                  {draftDrop?.key === group.key ? <div aria-hidden="true" data-draft-drop-line={draftDrop.position}
+                    className={`pointer-events-none absolute inset-x-3 z-40 h-0.5 rounded-full bg-red-500 ${draftDrop.position === "before" ? "top-0" : "bottom-0"}`} /> : null}
                   <div className="flex items-start gap-3">
+                    {canReorderDraft ? <button type="button" draggable
+                      aria-label={`Reorder ${group.displayName}`} title="Drag to reorder"
+                      onDragStart={(event) => {
+                        if (!window.matchMedia("(min-width: 640px)").matches || draftOrderBusy.current) { event.preventDefault(); return; }
+                        event.dataTransfer.effectAllowed = "move";
+                        event.dataTransfer.setData("text/plain", group.key);
+                        setDragGroupKey(group.key);
+                      }}
+                      onDragEnd={clearDraftDrag}
+                      className="hidden sm:flex h-9 w-6 shrink-0 cursor-grab items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-red-500 active:cursor-grabbing">
+                      <GripVertical size={16} aria-hidden="true" />
+                    </button> : null}
                     {photoUrl ? (
                       <img
                         src={photoUrl}
@@ -3302,7 +3399,7 @@ export default function EquipmentListDetailsClient({
             <button
               type="button"
               onClick={() => void submitForApproval()}
-              disabled={submitting || items.length === 0}
+              disabled={submitting || savingDraftOrder || items.length === 0}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-black px-4 py-3 text-[11px] font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {submitting ? (
