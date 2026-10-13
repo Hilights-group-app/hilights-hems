@@ -1,5 +1,7 @@
 "use client";
 
+import KsaStockLink from "@/components/KsaStockLink";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
@@ -540,6 +542,7 @@ export default function LedScreenReportClient({
       .from("equipment_lists")
       .select(ACTIVE_LIST_SELECT)
       .in("status", ["active", "partially_returned"])
+      .neq("list_type", "transfer_in")
       .order("created_at", { ascending: false })
       .limit(200);
 
@@ -2343,10 +2346,11 @@ export default function LedScreenReportClient({
               </Link>
             ))}
 
-            {existingMovementQty > 0 ? (
+            <KsaStockLink quantity={row.in_ksa_qty} search={model?.name || ""} />
+            {Math.max(0,existingMovementQty-clampQty(row.in_ksa_qty)) > 0 ? (
               <span className="max-w-full truncate rounded-lg bg-gray-100 px-2.5 py-1 text-[10px] font-semibold text-gray-600">
                 {formatQty(
-                  toDisplayQty(existingMovementQty, row.size, viewMode),
+                  toDisplayQty(Math.max(0,existingMovementQty-clampQty(row.in_ksa_qty)), row.size, viewMode),
                   viewMode,
                 )}{" "}
                 {unitSuffix(viewMode)} · Existing movement

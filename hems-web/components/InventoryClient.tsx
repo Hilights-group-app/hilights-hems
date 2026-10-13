@@ -148,6 +148,9 @@ export default function InventoryClient() {
             </div>
           </div>
         ))}
+        <Link href="/inventory/ksa" className="flex min-h-12 items-center justify-between rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-bold text-blue-900">
+          Equipment in KSA <span className="text-[11px] font-medium">Open List →</span>
+        </Link>
       </div>
     </div>
   );

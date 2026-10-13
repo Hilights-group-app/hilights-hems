@@ -1,5 +1,7 @@
 "use client";
 
+import KsaStockLink from "@/components/KsaStockLink";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
@@ -612,6 +614,7 @@ export default function SubcategoryClientLighting({
           .from("equipment_lists")
           .select(ACTIVE_LIST_SELECT)
           .in("status", ["active", "partially_returned"])
+        .neq("list_type", "transfer_in")
           .order("created_at", { ascending: false })
           .limit(200);
 
@@ -1395,7 +1398,7 @@ export default function SubcategoryClientLighting({
     );
     const existingMovementQuantity = Math.max(
       0,
-      stats.inUse + stats.inKsa - allocatedQuantity,
+      stats.inUse - allocatedQuantity,
     );
 
     const detailsHref = `/inventory/${category}/${subcategory}/${it.id}`;
@@ -1508,7 +1511,7 @@ export default function SubcategoryClientLighting({
             </div>
           </button>
 
-          {allocations.length > 0 || existingMovementQuantity > 0 ? (
+          {allocations.length > 0 || existingMovementQuantity > 0 || stats.inKsa > 0 ? (
             <div
               data-lighting-active-allocations="true"
               className={`px-2 pb-2 sm:pl-[76px] ${
@@ -1538,6 +1541,7 @@ export default function SubcategoryClientLighting({
                   </Link>
                 ))}
 
+                <KsaStockLink quantity={stats.inKsa} search={it.name} />
                 {existingMovementQuantity > 0 ? (
                   <span className="rounded-lg bg-gray-100 px-2 py-1 text-[9px] font-semibold text-gray-600">
                     {existingMovementQuantity} pcs · Existing movement

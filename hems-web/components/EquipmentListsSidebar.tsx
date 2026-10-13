@@ -38,7 +38,7 @@ import {
   equipmentListStatusLabel,
   equipmentListSummary,
   equipmentListTypeLabel,
-  canAddToEquipmentList,
+  canEditWorkingEquipmentList,
   isSharedEquipmentDraft,
   SHAREABLE_DRAFT_TYPES,
   type EquipmentList,
@@ -188,6 +188,11 @@ function statusClass(status: EquipmentListStatus) {
 }
 
 function sidebarStatusLabel(list: EquipmentList) {
+  if (list.list_type === "transfer_out") {
+    if (["active", "partially_returned"].includes(list.status)) return "Awaiting sync";
+    if (list.status === "closed") return "Delivery note";
+  }
+  if (list.list_type === "transfer_in" && ["active", "partially_returned"].includes(list.status)) return "Incoming";
   if (list.list_type === "internal_use") return "Internal";
   if (list.list_type === "maintenance" && list.status === "active") {
     return "Active Repair";
@@ -257,6 +262,7 @@ export default function EquipmentListsSidebar() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [internalUseOpen, setInternalUseOpen] = useState(false);
   const [maintenanceActiveOpen, setMaintenanceActiveOpen] = useState(false);
+  const [transferOutOpen, setTransferOutOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<EquipmentListType | null>(
     null,
   );
@@ -355,7 +361,23 @@ export default function EquipmentListsSidebar() {
     const channel = supabase.channel(`draft-sidebar:${createBrowserId()}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "equipment_lists" }, scheduleReload)
       .subscribe();
+    function handleActiveListChange(event: Event) {
+      const detail = (event as CustomEvent<{listId?:string|null; list?:EquipmentList}>).detail;
+      if (detail?.list && detail.list.created_by === getUserId()) {
+        const incoming = detail.list;
+        setLists((current) => [incoming, ...current.filter((list) => list.id !== incoming.id)]);
+      }
+      if (detail && "listId" in detail) setActiveListId(detail.listId || null);
+      else {
+        try {setActiveListId(localStorage.getItem(ACTIVE_EQUIPMENT_LIST_KEY));} catch {setActiveListId(null);}
+      }
+    }
+    function handleSelectionStorage(event: StorageEvent) {
+      if (event.key === ACTIVE_EQUIPMENT_LIST_KEY) setActiveListId(event.newValue);
+    }
     void load(true);
+    window.addEventListener(ACTIVE_EQUIPMENT_LIST_EVENT, handleActiveListChange);
+    window.addEventListener("storage", handleSelectionStorage);
     window.addEventListener(EQUIPMENT_LISTS_EVENT, handleListsChange);
     window.addEventListener("focus", focus);
     document.addEventListener("visibilitychange", focus);
@@ -363,6 +385,8 @@ export default function EquipmentListsSidebar() {
     return () => {
       cancelled = true;
       clearTimeout(timer);
+      window.removeEventListener(ACTIVE_EQUIPMENT_LIST_EVENT, handleActiveListChange);
+      window.removeEventListener("storage", handleSelectionStorage);
       window.removeEventListener(EQUIPMENT_LISTS_EVENT, handleListsChange);
       window.removeEventListener("focus", focus);
       document.removeEventListener("visibilitychange", focus);
@@ -390,7 +414,7 @@ export default function EquipmentListsSidebar() {
     () =>
       accessibleLists.find((list) => {
         if (list.id !== activeListId) return false;
-        return canAddToEquipmentList(list, currentUserId, canManageLists);
+        return canEditWorkingEquipmentList(list, currentUserId, canManageLists);
       }) ?? null,
     [accessibleLists, activeListId, canManageLists, currentUserId],
   );
@@ -529,8 +553,12 @@ export default function EquipmentListsSidebar() {
   );
 
   const workflowLists = useMemo(
-    () => visibleLists.filter((list) => list.list_type !== "internal_use"),
+    () => visibleLists.filter((list) => list.list_type !== "internal_use" && list.list_type !== "transfer_out"),
     [visibleLists],
+  );
+
+  const transferOutLists = useMemo(
+    () => accessibleLists.filter((list) => list.list_type === "transfer_out"), [accessibleLists],
   );
 
   const maintenanceActiveLists = useMemo(
@@ -547,7 +575,7 @@ export default function EquipmentListsSidebar() {
     () =>
       accessibleLists.filter(
         (list) =>
-          list.list_type !== "internal_use" &&
+          list.list_type !== "internal_use" && list.list_type !== "transfer_out" &&
           (list.status === "closed" || list.status === "cancelled"),
       ),
     [accessibleLists],
@@ -599,7 +627,7 @@ export default function EquipmentListsSidebar() {
   }
 
   function canEditWorkingList(list: EquipmentList | null) {
-    return canAddToEquipmentList(list, currentUserId, canManageLists);
+    return canEditWorkingEquipmentList(list, currentUserId, canManageLists);
   }
 
   function chooseActiveList(list: EquipmentList) {
@@ -739,7 +767,7 @@ export default function EquipmentListsSidebar() {
         (location) => location.code === form.transferLocationCode,
       );
       const transferLocationName =
-        form.transferLocationCode === "OTHER"
+        selectedType === "transfer_in" ? "KSA" : form.transferLocationCode === "OTHER"
           ? form.otherLocation.trim()
           : transferLocation?.name || form.transferLocationCode;
 
@@ -811,6 +839,7 @@ export default function EquipmentListsSidebar() {
       const created = data as EquipmentList;
       setLists((current) => [created, ...current]);
       chooseActiveList(created);
+      window.dispatchEvent(new CustomEvent(EQUIPMENT_LISTS_EVENT, {detail:{listId:created.id,status:created.status}}));
       setCreateOpen(false);
       setSelectedType(null);
       setForm(EMPTY_FORM);
@@ -1034,8 +1063,7 @@ export default function EquipmentListsSidebar() {
                   </div>
                 ) : activeListItems.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-gray-300 px-3 py-5 text-center text-[10px] leading-4 text-gray-500">
-                    Select equipment from the inventory and add its quantity or
-                    serial numbers here.
+                    {activeList.list_type === "transfer_in" ? "Open Inventory, then tap the blue In KSA badge to select equipment for this draft." : "Select equipment from the inventory and add its quantity or serial numbers here."}
                   </div>
                 ) : (
                   <div className="max-h-[42vh] space-y-1.5 overflow-y-auto overscroll-contain pr-1">
@@ -1222,6 +1250,76 @@ export default function EquipmentListsSidebar() {
                 </section>
                 ) : null,
               )}
+
+              {transferOutLists.length > 0 ? (
+                <section>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setTransferOutOpen((current) => !current)
+                    }
+                    aria-expanded={transferOutOpen}
+                    className="flex w-full items-center justify-between rounded-xl border border-blue-200 bg-blue-50 px-3 py-2.5 text-left transition hover:border-blue-300 hover:bg-blue-100"
+                  >
+                    <span className="flex items-center gap-2">
+                      <ArrowUpFromLine size={13} className="text-blue-700" />
+                      <span className="text-[9px] font-bold uppercase tracking-wider text-blue-800">
+                        Transfer Out
+                      </span>
+                    </span>
+
+                    <span className="flex items-center gap-2">
+                      <span className="rounded-full bg-white px-1.5 py-0.5 text-[9px] font-bold text-blue-700">
+                        {transferOutLists.length}
+                      </span>
+                      <ChevronDown
+                        size={13}
+                        className={`text-blue-700 transition-transform ${
+                          transferOutOpen ? "rotate-180" : ""
+                        }`}
+                      />
+                    </span>
+                  </button>
+
+                  {transferOutOpen ? (
+                    <div className="mt-2 space-y-2">
+                      {transferOutLists.map((list) => (
+                        <Link
+                          key={list.id}
+                          href={`/inventory/lists/${list.id}`}
+                          className="block w-full rounded-xl border border-blue-200 bg-white px-3 py-2.5 text-left transition hover:border-blue-300 hover:shadow-sm"
+                        >
+                          <span className="flex items-start gap-2">
+                            <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-blue-100 text-blue-700">
+                              <ArrowUpFromLine size={13} />
+                            </span>
+
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center gap-1.5">
+                                <span className="truncate text-[11px] font-bold text-gray-900">
+                                  {list.reference}
+                                </span>
+                                <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[8px] font-bold text-blue-800">
+                                  {sidebarStatusLabel(list)}
+                                </span>
+                              </span>
+                              <span className="mt-1 block truncate text-[10px] font-semibold text-gray-700">
+                                {equipmentListSummary(list)}
+                              </span>
+                              {listDates(list) ? (
+                                <span className="mt-1 flex items-center gap-1 text-[9px] text-gray-400">
+                                  <CalendarDays size={9} />
+                                  {listDates(list)}
+                                </span>
+                              ) : null}
+                            </span>
+                          </span>
+                        </Link>
+                      ))}
+                    </div>
+                  ) : null}
+                </section>
+              ) : null}
 
               {maintenanceActiveLists.length > 0 ? (
                 <section>
@@ -1548,14 +1646,15 @@ function ListFields({
             {isOut ? "Destination" : "From Location"}
           </span>
           <select
-            value={form.transferLocationCode}
+            value={isOut ? form.transferLocationCode : "KSA"}
+            disabled={!isOut}
             onChange={(event) =>
               updateForm("transferLocationCode", event.target.value)
             }
             className={inputClass()}
           >
             {externalLocations.length > 0 ? (
-              externalLocations.map((location) => (
+              (isOut ? externalLocations : [{id:"ksa",code:"KSA",name:"KSA"}]).map((location) => (
                 <option key={location.id} value={location.code}>
                   {location.name}
                 </option>
@@ -1570,7 +1669,7 @@ function ListFields({
           </select>
         </label>
 
-        {form.transferLocationCode === "OTHER" ? (
+        {isOut && form.transferLocationCode === "OTHER" ? (
           <TextField
             label={isOut ? "Other Destination" : "Other From Location"}
             value={form.otherLocation}

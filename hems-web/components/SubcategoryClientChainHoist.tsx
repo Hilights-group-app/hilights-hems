@@ -1,6 +1,8 @@
 // components/SubcategoryClientChainHoist.tsx
 "use client";
 
+import KsaStockLink from "@/components/KsaStockLink";
+
 import Link from "next/link";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -1872,7 +1874,8 @@ export default function SubcategoryClientChainHoist({
                     </div>
                   ) : null}
                 </div>
-              </div>
+              {st.inKsa > 0 ? <div className="mt-2"><KsaStockLink quantity={st.inKsa} search={it.name} /></div> : null}
+</div>
             );
           })}
         </div>

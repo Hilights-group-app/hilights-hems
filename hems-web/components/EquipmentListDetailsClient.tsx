@@ -654,6 +654,12 @@ function pdfFileName(list: EquipmentList) {
 }
 
 function displayedStatusLabel(list: EquipmentList) {
+  if (list.list_type === "transfer_out" && list.status === "closed") return "Delivery note";
+  if (list.list_type === "transfer_in") {
+    if (list.status === "active") return "Incoming";
+    if (list.status === "partially_returned") return "Partly received";
+    if (list.status === "closed") return "Received in Dubai";
+  }
   if (list.list_type === "internal_use") return "Internal Use";
   return equipmentListStatusLabel(list.status);
 }
@@ -689,11 +695,17 @@ export default function EquipmentListDetailsClient({
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [approving, setApproving] = useState(false);
+  const [cancellingList,setCancellingList] = useState(false);
+  const cancelBusy = useRef(false);
+  const cancelListScope = useRef(listId);
+  cancelListScope.current=listId;
   const [returningItemId, setReturningItemId] = useState<string | null>(null);
   const [returnDialog, setReturnDialog] = useState<ReturnDialogState | null>(
     null,
   );
   const [returnOkQuantity, setReturnOkQuantity] = useState(0);
+  const [returnToMaintenance, setReturnToMaintenance] = useState(false);
+  const [syncingTransfer, setSyncingTransfer] = useState(false);
   const [removingItemId, setRemovingItemId] = useState<string | null>(null);
   const [reviewPicker, setReviewPicker] = useState<ReviewPickerState | null>(
     null,
@@ -764,12 +776,19 @@ export default function EquipmentListDetailsClient({
     setIsManager(canManageEquipmentLists());
     setCurrentUserId(getUserId());
     setCurrentRole(getUserRole() || "");
-    setCurrentDepartment((getUserDepartment() || "").toLowerCase());
+    setCurrentDepartment((getUserDepartment() || "").trim().toLowerCase());
 
     let cancelled = false;
 
     async function loadManagerAccess() {
-      const managerResult = await supabase.rpc("is_equipment_list_manager");
+      const [managerResult, accessResult] = await Promise.all([
+        supabase.rpc("is_equipment_list_manager"),
+        supabase.rpc("hems_maintenance_user_access"),
+      ]);
+      if (!cancelled && !accessResult.error && accessResult.data) {
+        setCurrentRole(accessResult.data.role || "");
+        setCurrentDepartment(accessResult.data.department || "");
+      }
 
       if (cancelled) return;
 
@@ -882,7 +901,7 @@ export default function EquipmentListDetailsClient({
     if (requestsError) {
       console.error("load maintenance workflow requests error", requestsError);
       setError(
-        "The repair workflow could not be loaded. Run the maintenance SQL migration.",
+        "The repair workflow could not be loaded. Check the maintenance access SQL update.",
       );
       return;
     }
@@ -1043,7 +1062,7 @@ export default function EquipmentListDetailsClient({
   );
   const canReceiveReturns = Boolean(
     isManager &&
-      !isMaintenanceList &&
+      !isMaintenanceList && list?.list_type !== "transfer_out" &&
       (list?.status === "active" || list?.status === "partially_returned"),
   );
   const canReceiveMaintenance = Boolean(
@@ -1116,7 +1135,7 @@ export default function EquipmentListDetailsClient({
         list?.status === "active" &&
         (currentRole === "admin" ||
           (currentRole === "head" &&
-            currentDepartment === request.department.toLowerCase())),
+            currentDepartment.trim().toLowerCase() === (request.department || "").trim().toLowerCase())),
     );
   }
 
@@ -1228,6 +1247,7 @@ export default function EquipmentListDetailsClient({
   async function receiveReturn(
     item: EquipmentListItem,
     okQuantity: number,
+    toMaintenance = false,
   ) {
     if (!list || !canReceiveReturns || returningItemId) return;
 
@@ -1256,11 +1276,11 @@ export default function EquipmentListDetailsClient({
 
     try {
       const { error: returnError } = await supabase.rpc(
-        "return_equipment_list_item",
+        list.list_type === "transfer_in" ? "hems_receive_transfer_in_item" : "return_equipment_list_item",
         {
           p_list_item_id: item.id,
-          p_return_ok_quantity: ok,
-          p_return_maintenance_quantity: 0,
+          p_return_ok_quantity: toMaintenance && list.list_type === "transfer_in" ? 0 : ok,
+          p_return_maintenance_quantity: toMaintenance && list.list_type === "transfer_in" ? ok : 0,
         },
       );
 
@@ -1269,7 +1289,7 @@ export default function EquipmentListDetailsClient({
       await refreshListAndItems();
       setReturnDialog(null);
       setReturnOkQuantity(0);
-      setMessage("Return received. The equipment is Available again.");
+      setMessage(toMaintenance ? "Received in Dubai and moved to Maintenance." : "Return received. The equipment is Available again.");
 
       window.dispatchEvent(
         new CustomEvent(EQUIPMENT_LISTS_EVENT, {
@@ -1381,6 +1401,7 @@ export default function EquipmentListDetailsClient({
   }
 
   function openQuantityReturn(item: EquipmentListItem) {
+    setReturnToMaintenance(false);
     const remaining = remainingQuantity(item);
     if (remaining < 1) return;
 
@@ -2347,12 +2368,47 @@ export default function EquipmentListDetailsClient({
     }
   }
 
+  async function syncTransferOut() {
+    if (!list || !isManager || syncingTransfer) return;
+    if (!window.confirm(`Sync ${list.reference} as a saved delivery note? Outstanding equipment sent to KSA will move from In Use to In KSA. Previously returned or received items will not move again.`)) return;
+    setSyncingTransfer(true); setError("");
+    try {
+      const { error: syncError } = await supabase.rpc("hems_archive_transfer_out", {p_list_id:list.id});
+      if (syncError) throw syncError;
+      await refreshListAndItems();
+      setMessage("Delivery note saved and stock synced.");
+      window.dispatchEvent(new CustomEvent(EQUIPMENT_LISTS_EVENT, {detail:{listId:list.id}}));
+      window.dispatchEvent(new CustomEvent(EQUIPMENT_LIST_ITEMS_EVENT, {detail:{listId:list.id}}));
+    } catch (syncError: any) { setError(syncError?.message || "The transfer could not be synced."); }
+    finally { setSyncingTransfer(false); }
+  }
+
+  async function cancelPendingList() {
+    if (!list || !canReview || cancellingList || approving || cancelBusy.current || savingDraftOrder || pendingCustomEdits) return;
+    if (!window.confirm(`Cancel ${list.reference}? This Pending list and its items will be permanently deleted. This cannot be undone. Any selected KSA equipment will be released for another Transfer In.`)) return;
+    cancelBusy.current=true;setCancellingList(true);setError("");setMessage("");
+    try {
+      const {error:cancelError}=await supabase.rpc("hems_cancel_pending_list",{p_list_id:list.id});
+      if(cancelError)throw cancelError;
+      clearListDetailsCache(list.id);
+      try {if(localStorage.getItem(ACTIVE_EQUIPMENT_LIST_KEY)===list.id){localStorage.removeItem(ACTIVE_EQUIPMENT_LIST_KEY);window.dispatchEvent(new CustomEvent(ACTIVE_EQUIPMENT_LIST_EVENT,{detail:{listId:null}}));}} catch {}
+      window.dispatchEvent(new CustomEvent(EQUIPMENT_LISTS_EVENT,{detail:{listId:list.id,action:"deleted"}}));
+      window.dispatchEvent(new CustomEvent(EQUIPMENT_LIST_ITEMS_EVENT,{detail:{listId:list.id,action:"deleted"}}));
+      if(cancelListScope.current===list.id) {
+        clearDraftDrag();setReviewPicker(null);
+        router.push("/inventory");
+      }
+    } catch(cancelError:any){if(cancelListScope.current===list.id)setError(cancelError?.message || "This list could not be cancelled. Refresh its status and try again.");}
+    finally {cancelBusy.current=false;setCancellingList(false);}
+  }
+
   async function approveAndDispatch() {
-    if (!list || !canReview || approving || items.length === 0) return;
+    if (!list || !canReview || approving || cancellingList || items.length === 0) return;
 
     const confirmed = window.confirm(
       list.list_type === "maintenance"
         ? `Approve and send ${list.reference} to ${list.repair_company || "the repair company"}? The selected items are already in Maintenance and will remain unavailable.`
+        : list.list_type === "transfer_in" ? `Approve ${list.reference} for return to Dubai? Equipment stays In KSA until you mark it Received in Dubai.`
         : `Approve and dispatch ${list.reference}? The selected equipment will become unavailable immediately.`,
     );
     if (!confirmed) return;
@@ -2370,6 +2426,7 @@ export default function EquipmentListDetailsClient({
       if (approvalError) throw approvalError;
 
       const result = (data ?? {}) as {
+        status?: EquipmentListStatus;
         approved_at?: string;
         approved_by?: string;
       };
@@ -2378,7 +2435,7 @@ export default function EquipmentListDetailsClient({
         current
           ? {
               ...current,
-              status: "active",
+              status: result.status || "active",
               approved_at: result.approved_at || new Date().toISOString(),
               approved_by: result.approved_by || null,
             }
@@ -2394,6 +2451,8 @@ export default function EquipmentListDetailsClient({
       setMessage(
         list.list_type === "maintenance"
           ? "Approved and sent for repair. The list is now in Maintenance Active."
+          : list.list_type === "transfer_out" ? "Dispatched. Delivery note saved; KSA stock updated for KSA destinations."
+          : list.list_type === "transfer_in" ? (result.status === "closed" ? "Custom list approved. No inventory receipt is required." : "Approved. Equipment stays In KSA until Received in Dubai.")
           : "Approved and dispatched. Inventory availability has been updated.",
       );
       if (list.list_type === "maintenance") {
@@ -2405,7 +2464,7 @@ export default function EquipmentListDetailsClient({
 
       window.dispatchEvent(
         new CustomEvent(EQUIPMENT_LISTS_EVENT, {
-          detail: { listId: list.id, status: "active" },
+          detail: { listId: list.id, status: result.status || "active" },
         }),
       );
       window.dispatchEvent(
@@ -2480,6 +2539,9 @@ export default function EquipmentListDetailsClient({
           item={returnDialog.item}
           remaining={returnDialog.remaining}
           okQuantity={returnOkQuantity}
+          allowMaintenance={list.list_type === "transfer_in"}
+          toMaintenance={returnToMaintenance}
+          onMaintenanceChange={setReturnToMaintenance}
           saving={returningItemId === returnDialog.item.id}
           onOkQuantityChange={setReturnOkQuantity}
           onClose={() => {
@@ -2489,6 +2551,7 @@ export default function EquipmentListDetailsClient({
             void receiveReturn(
               returnDialog.item,
               returnOkQuantity,
+              returnToMaintenance,
             )
           }
         />
@@ -2605,11 +2668,17 @@ export default function EquipmentListDetailsClient({
               </>
             ) : null}
 
+            {canReview ? <button type="button" onClick={() => void cancelPendingList()}
+              disabled={cancellingList || approving || savingDraftOrder || pendingCustomEdits>0}
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700 disabled:opacity-40">
+              {cancellingList ? <Loader2 size={13} className="animate-spin"/> : <X size={13}/>} {cancellingList ? "Cancelling…" : "Cancel List"}
+            </button> : null}
+
             {canReview ? (
               <button
                 type="button"
                 onClick={() => void approveAndDispatch()}
-                disabled={approving || items.length === 0}
+                disabled={approving || cancellingList || items.length === 0}
                 className="flex items-center justify-center gap-2 rounded-xl bg-green-600 px-4 py-2.5 text-[11px] font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {approving ? (
@@ -2621,7 +2690,7 @@ export default function EquipmentListDetailsClient({
                   ? "Approving..."
                   : isMaintenanceList
                     ? "Approve & Send"
-                    : "Approve & Dispatch"}
+                    : list.list_type === "transfer_in" ? "Approve Transfer In" : "Approve & Dispatch"}
               </button>
             ) : null}
           </div>
@@ -2658,6 +2727,18 @@ export default function EquipmentListDetailsClient({
         </div>
       </div>
 
+      {list.list_type === "transfer_out" && (list.status === "closed" || ["active", "partially_returned"].includes(list.status)) ? (
+        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 text-[11px] text-blue-900">
+          <div className="font-bold">Delivery note</div>
+          <p className="mt-1">Saved shipment history. Select equipment to return through Equipment in KSA and Transfer In.</p>
+          {list.status !== "closed" && isManager ? <button type="button" disabled={syncingTransfer}
+            onClick={() => void syncTransferOut()} className="mt-3 min-h-11 rounded-xl bg-blue-700 px-4 font-semibold text-white disabled:opacity-50">
+            {syncingTransfer ? "Syncing…" : "Sync dispatched stock & save note"}</button> : null}
+        </div>
+      ) : null}
+
+      {list.status === "cancelled" ? <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-xs text-red-800">This list was cancelled before dispatch. Its equipment and notes remain saved for reference.</div> : null}
+
       {list.status === "pending" ? (
         <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900">
           <Clock3 size={17} className="mt-0.5 shrink-0" />
@@ -2689,7 +2770,7 @@ export default function EquipmentListDetailsClient({
         </div>
       ) : null}
 
-      {list.status === "active" || list.status === "partially_returned" ? (
+      {list.list_type !== "transfer_out" && (list.status === "active" || list.status === "partially_returned") ? (
         <div
           className={`flex items-start gap-3 rounded-2xl border px-4 py-3 ${
             isMaintenanceList
@@ -2706,7 +2787,7 @@ export default function EquipmentListDetailsClient({
             <div className="text-[11px] font-bold">
               {isMaintenanceList
                 ? "Maintenance Active"
-                : "Approved equipment list"}
+                : list.list_type === "transfer_in" ? "Incoming from KSA" : "Approved equipment list"}
             </div>
             <div
               className={`mt-0.5 text-[10px] leading-4 ${
@@ -2715,7 +2796,7 @@ export default function EquipmentListDetailsClient({
             >
               {isMaintenanceList
                 ? `Equipment is at ${list.repair_company || "the repair company"}. Warehouse marks it Received, then Admin or the department Head confirms Tested.`
-                : "This list is active and its equipment movement is being tracked."}
+                : list.list_type === "transfer_in" ? "Mark each item Received only when it arrives in Dubai. Its stock stays In KSA until then." : "This list is active and its equipment movement is being tracked."}
             </div>
           </div>
         </div>
@@ -2974,6 +3055,7 @@ export default function EquipmentListDetailsClient({
                 metadataText(firstItem, "item_id") || firstItem.parent_record_id || "";
               const photoUrl = metadataText(firstItem, "photo_url");
               const canPickUnits = Boolean(
+                list.list_type !== "transfer_in" &&
                 canChangeItems &&
                   firstItem.inventory_record_type === "unit" &&
                   category &&
@@ -3440,7 +3522,7 @@ export default function EquipmentListDetailsClient({
                             );
                           }
 
-                          if (canReceiveReturns && remaining > 0) {
+                          if (canReceiveReturns && item.inventory_record_type !== "item" && item.metadata?.custom_item !== true && remaining > 0) {
                             return (
                               <div
                                 key={item.id}
@@ -3468,7 +3550,7 @@ export default function EquipmentListDetailsClient({
                                 ) : (
                                   <button
                                     type="button"
-                                    onClick={() => void receiveReturn(item, 1)}
+                                    onClick={() => list.list_type === "transfer_in" ? openQuantityReturn(item) : void receiveReturn(item, 1)}
                                     disabled={Boolean(returningItemId)}
                                     className="inline-flex items-center gap-1 rounded-lg bg-green-600 px-2 py-1.5 text-[8px] font-bold text-white hover:bg-green-700 disabled:opacity-50"
                                   >
@@ -3542,7 +3624,7 @@ export default function EquipmentListDetailsClient({
             <button
               type="button"
               onClick={() => void approveAndDispatch()}
-              disabled={approving || items.length === 0}
+              disabled={approving || cancellingList || items.length === 0}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 px-4 py-3 text-[11px] font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {approving ? (
@@ -3721,6 +3803,9 @@ function ReturnQuantityDialog({
   remaining,
   okQuantity,
   saving,
+  allowMaintenance = false,
+  toMaintenance = false,
+  onMaintenanceChange,
   onOkQuantityChange,
   onClose,
   onConfirm,
@@ -3729,6 +3814,9 @@ function ReturnQuantityDialog({
   remaining: number;
   okQuantity: number;
   saving: boolean;
+  allowMaintenance?: boolean;
+  toMaintenance?: boolean;
+  onMaintenanceChange?: (value: boolean) => void;
   onOkQuantityChange: (value: number) => void;
   onClose: () => void;
   onConfirm: () => void;
@@ -3741,7 +3829,7 @@ function ReturnQuantityDialog({
   const quantityName =
     item.inventory_record_type === "item"
       ? "item"
-      : genericMatrix
+      : genericMatrix || item.inventory_record_type === "unit"
         ? "unit"
         : "cabinet";
 
@@ -3783,6 +3871,10 @@ function ReturnQuantityDialog({
           </button>
         </div>
 
+        {allowMaintenance ? <label className="mt-4 flex items-center gap-2 rounded-xl bg-amber-50 p-3 text-[11px] text-amber-900">
+          <input type="checkbox" checked={toMaintenance} disabled={saving} onChange={(event) => onMaintenanceChange?.(event.target.checked)} className="h-5 w-5" />
+          Received damaged — move to Maintenance
+        </label> : null}
         <div className="mt-5 grid grid-cols-1 gap-3">
           <label className="rounded-2xl border border-green-200 bg-green-50 p-3">
             <span className="flex items-center gap-1.5 text-[10px] font-bold text-green-800">

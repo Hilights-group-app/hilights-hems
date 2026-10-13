@@ -1,5 +1,7 @@
 "use client";
 
+import KsaStockLink from "@/components/KsaStockLink";
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
@@ -651,6 +653,7 @@ export default function SubcategoryClientLedScreen({
       .from("equipment_lists")
       .select(ACTIVE_LIST_SELECT)
       .in("status", ["active", "partially_returned"])
+        .neq("list_type", "transfer_in")
       .order("created_at", { ascending: false })
       .limit(200);
 
@@ -1907,9 +1910,10 @@ export default function SubcategoryClientLedScreen({
           </div>
         ) : null}
 
-        {selectedCabinetExistingMovementQty > 0 ? (
+        <KsaStockLink quantity={selectedCabinetInfo.row.in_ksa_qty} search={selectedCabinetInfo.model.name} />
+        {Math.max(0,selectedCabinetExistingMovementQty-clampQty(selectedCabinetInfo.row.in_ksa_qty)) > 0 ? (
           <div className="rounded-xl bg-gray-100 px-2.5 py-2 text-[9px] font-semibold text-gray-600">
-            {selectedCabinetExistingMovementQty} pcs · Existing movement
+            {Math.max(0,selectedCabinetExistingMovementQty-clampQty(selectedCabinetInfo.row.in_ksa_qty))} pcs · Existing movement
           </div>
         ) : null}
       </div>
@@ -2832,6 +2836,8 @@ function LedModelCard({
     return total + existingMovementQuantity(row, activeAllocated);
   }, 0);
 
+  const modelKsaQuantity = rows.reduce((total,row) => total+clampQty(row.in_ksa_qty),0);
+
   function handleDragEnd(event: any) {
     if (!reorderable) return;
     const { active, over } = event;
@@ -2928,10 +2934,11 @@ function LedModelCard({
           ))}
         </div>
       ) : null}
-      {modelExistingMovement > 0 ? (
+      <KsaStockLink quantity={modelKsaQuantity} search={model.name} />
+      {Math.max(0,modelExistingMovement-modelKsaQuantity) > 0 ? (
         <div className="mt-2">
           <span className="rounded-lg bg-gray-100 px-2 py-1 text-[9px] font-semibold text-gray-600">
-            {modelExistingMovement} pcs · Existing movement
+            {Math.max(0,modelExistingMovement-modelKsaQuantity)} pcs · Existing movement
           </span>
         </div>
       ) : null}
@@ -3135,21 +3142,11 @@ function LedModelCard({
                               )}
                             </div>
                           ) : null}
-                          {existingMovementQuantity(
-                            r,
-                            movementAllocationQuantity(
-                              allocationsByRow[r.id] ?? [],
-                            ),
-                          ) > 0 ? (
+                          <KsaStockLink quantity={r.in_ksa_qty} search={model.name} />
+                          {Math.max(0,existingMovementQuantity(r,movementAllocationQuantity(allocationsByRow[r.id] ?? []))-clampQty(r.in_ksa_qty)) > 0 ? (
                             <div className="mt-1">
                               <span className="rounded-md bg-gray-100 px-1.5 py-1 text-[8px] font-semibold text-gray-600">
-                                {existingMovementQuantity(
-                                  r,
-                                  movementAllocationQuantity(
-                                    allocationsByRow[r.id] ?? [],
-                                  ),
-                                )}{" "}
-                                pcs · Existing movement
+                                {Math.max(0,existingMovementQuantity(r,movementAllocationQuantity(allocationsByRow[r.id] ?? []))-clampQty(r.in_ksa_qty))} pcs · Existing movement
                               </span>
                             </div>
                           ) : null}
@@ -3317,9 +3314,10 @@ function DesktopEditableCabinetRow({
         ) : (
           legacyMovement === 0 ? <span className="text-gray-300">—</span> : null
         )}
-        {legacyMovement > 0 ? (
+        <KsaStockLink quantity={row.in_ksa_qty} />
+        {Math.max(0,legacyMovement-clampQty(row.in_ksa_qty)) > 0 ? (
           <span className="max-w-full truncate rounded-md bg-gray-100 px-1.5 py-1 text-[8px] font-semibold text-gray-600">
-            {legacyMovement} pcs · Existing movement
+            {Math.max(0,legacyMovement-clampQty(row.in_ksa_qty))} pcs · Existing movement
           </span>
         ) : null}
       </div>

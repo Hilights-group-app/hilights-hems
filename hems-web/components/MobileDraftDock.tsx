@@ -12,7 +12,7 @@ import { canManageEquipmentLists } from "@/lib/authStore";
 import {
   ACTIVE_EQUIPMENT_LIST_EVENT, ACTIVE_EQUIPMENT_LIST_KEY,
   EQUIPMENT_LISTS_EVENT, EQUIPMENT_LIST_ITEMS_EVENT,
-  canAddToEquipmentList, equipmentListSummary, type EquipmentList,
+  canEditWorkingEquipmentList, equipmentListSummary, type EquipmentList,
 } from "@/lib/equipmentLists";
 
 const LAYOUT_KEY = "hems:mobile-layout-v1";
@@ -112,7 +112,7 @@ export default function MobileDraftDock() {
         firstRead = false;
         if (listResult.error) return; // Keep the last good view on a transient failure.
         const next = listResult.data as EquipmentList | null;
-        if (!canAddToEquipmentList(next, session.user.id, canManageEquipmentLists())) {
+        if (!canEditWorkingEquipmentList(next, session.user.id, canManageEquipmentLists())) {
           setList(null); setLines(null); return;
         }
         setList(next);

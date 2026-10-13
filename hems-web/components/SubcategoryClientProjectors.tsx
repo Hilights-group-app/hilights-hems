@@ -1,5 +1,7 @@
 "use client";
 
+import KsaStockLink from "@/components/KsaStockLink";
+
 import Link from "next/link";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -1979,6 +1981,7 @@ function ProjectorItemRow({
           </div>
         ) : null}
       </div>
-    </div>
+    {stats.inKsa > 0 ? <div className="mt-2"><KsaStockLink quantity={stats.inKsa} search={item.name} /></div> : null}
+</div>
   );
 }

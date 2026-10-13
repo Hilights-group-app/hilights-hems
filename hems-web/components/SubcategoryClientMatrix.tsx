@@ -1,5 +1,7 @@
 "use client";
 
+import KsaStockLink from "@/components/KsaStockLink";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
@@ -1123,6 +1125,7 @@ export default function SubcategoryClientMatrix({
           "id,reference,list_type,status,client_company,event_name,venue,purpose,assigned_to,destination_name,repair_company",
         )
         .in("status", ["draft", "active", "partially_returned"])
+        .neq("list_type", "transfer_in")
         .order("created_at", { ascending: false })
         .limit(200);
 
@@ -2314,6 +2317,7 @@ export default function SubcategoryClientMatrix({
                       allocationsByRecordKey[`matrix_model:${it.id}`] || []
                     }
                   />
+                  <KsaStockLink quantity={stats.inKsa} search={it.name} />
 
                   <div className="mt-2 sm:hidden">
                   <div className={`grid gap-x-2 gap-y-1 text-center ${
@@ -2401,6 +2405,7 @@ export default function SubcategoryClientMatrix({
                     title={row.cable_length}
                   >
                     {row.cable_length}
+                    <KsaStockLink quantity={row.in_ksa_qty || 0} search={it.name} />
                   </div>
 
                   <div
@@ -2536,6 +2541,7 @@ export default function SubcategoryClientMatrix({
                       <div className="min-w-0 text-left">
                         <div className="font-bold">{row.cable_length}</div>
                         <AllocationBadges allocations={rowAllocations} />
+                        <KsaStockLink quantity={row.in_ksa_qty || 0} search={it.name} />
                       </div>
 
                       <div className="text-center">
@@ -2685,6 +2691,7 @@ export default function SubcategoryClientMatrix({
                     allocationsByRecordKey[`matrix_model:${it.id}`] || []
                   }
                 />
+                  <KsaStockLink quantity={stats.inKsa} search={it.name} />
 
                 <div className="mt-2 sm:hidden">
                   <div className={`grid gap-x-2 gap-y-1 text-center ${

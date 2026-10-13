@@ -1,5 +1,7 @@
 "use client";
 
+import KsaStockLink from "@/components/KsaStockLink";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
@@ -1221,7 +1223,8 @@ export default function SubcategoryClientSerialized({
             </div>
           ) : null}
         </div>
-      </div>
+      {stats.inKsa > 0 ? <div className="mt-2"><KsaStockLink quantity={stats.inKsa} search={it.name} /></div> : null}
+</div>
     );
   }
 

@@ -64,6 +64,9 @@ export type EquipmentListItem = {
   metadata: Record<string, unknown> | null;
   draft_sort_order?: number | null;
   draft_category?: string | null;
+  transfer_received_quantity?: number;
+  transfer_received_at?: string | null;
+  transfer_received_by?: string | null;
   created_at: string;
 };
 
@@ -100,12 +103,19 @@ export function canEditEquipmentDraft(
   return list.created_by === userId || isSharedEquipmentDraft(list, userId);
 }
 
+// Selecting/editing a Transfer In is allowed; ordinary Dubai-stock pickers
+// still use canAddToEquipmentList and direct incoming selections to KSA.
+export function canEditWorkingEquipmentList(list: EquipmentList | null, userId: string | null, manager: boolean) {
+  return Boolean(list && userId && ((list.status === "pending" && manager)
+    || canEditEquipmentDraft(list, userId, manager)));
+}
+
 export function canAddToEquipmentList(
   list: EquipmentList | null,
   userId: string | null,
   manager: boolean,
 ) {
-  return Boolean(list && userId && ((list.status === "pending" && manager)
+  return Boolean(list && userId && list.list_type !== "transfer_in" && ((list.status === "pending" && manager)
     || canEditEquipmentDraft(list, userId, manager)));
 }
 
@@ -117,6 +127,7 @@ export const EQUIPMENT_LIST_TYPE_OPTIONS: Array<{
   { value: "dry_hire", label: "Dry Hire", shortLabel: "DH" },
   { value: "local_event", label: "Local Event", shortLabel: "EV" },
   { value: "transfer_out", label: "Transfer Out", shortLabel: "TO" },
+  { value: "transfer_in", label: "Transfer In", shortLabel: "TI" },
   { value: "internal_use", label: "Internal Use", shortLabel: "IU" },
   {
     value: "maintenance",

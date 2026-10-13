@@ -255,7 +255,7 @@ export default function AccountManagementClient() {
       <div className={styles.panel}>
         <h2 className="text-sm font-bold text-gray-900 mb-4">Create User</h2>
 
-        <form onSubmit={onSubmit} className={styles.createGrid}>
+        <form onSubmit={onSubmit} className={styles.createGrid} autoComplete="off">
           <input
             ref={avatarInputRef}
             type="file"
@@ -298,10 +298,11 @@ export default function AccountManagementClient() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="create-user-name" className="block text-sm font-medium text-gray-700 mb-1">
               Full Name
             </label>
             <input
+              id="create-user-name" name="new_user_name" autoComplete="off"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               placeholder="e.g. Ahmed Ali"
@@ -310,11 +311,13 @@ export default function AccountManagementClient() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="create-user-email" className="block text-sm font-medium text-gray-700 mb-1">
               Email
             </label>
             <input
+              id="create-user-email" name="new_user_email" autoComplete="off" autoCapitalize="none" spellCheck={false}
               value={email}
+              onInput={(e) => setEmail(e.currentTarget.value)}
               onChange={(e) => setEmail(e.target.value)}
               type="email"
               placeholder="e.g. ahmed@company.com"
@@ -323,11 +326,13 @@ export default function AccountManagementClient() {
           </div>
 
           <div className={styles.fullRow}>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
+            <label htmlFor="create-user-password" className="block text-sm font-medium text-gray-700 mb-1">
               Password
             </label>
             <input
+              id="create-user-password" name="new_user_password" autoComplete="new-password"
               value={password}
+              onInput={(e) => setPassword(e.currentTarget.value)}
               onChange={(e) => setPassword(e.target.value)}
               type="password"
               placeholder="Enter temporary password"
