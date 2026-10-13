@@ -1,5 +1,7 @@
 "use client";
 
+import { getAppLayout } from "@/lib/appLayout";
+
 import KsaStockLink from "@/components/KsaStockLink";
 
 import Link from "next/link";
@@ -1189,7 +1191,7 @@ export default function SubcategoryClientProjectors({
     ) : null;
 
   const sidebarAddPanel = editable && !selectedItem ? (
-    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
+    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm hems-wide:p-5">
       <div className="mb-4">
         <h2 className="text-[13px] font-semibold leading-tight text-gray-900">
           Add Projector
@@ -1366,7 +1368,7 @@ export default function SubcategoryClientProjectors({
       {editable && mobileMenuItemId && selectedItem ? (
         <div
           data-mobile-projector-tools="true"
-          className="fixed inset-0 z-[9998] sm:hidden"
+          className="fixed inset-0 z-[9998] hems-wide:hidden"
           role="dialog"
           aria-modal="true"
           aria-label={`${selectedItem.name} tools`}
@@ -1480,13 +1482,13 @@ export default function SubcategoryClientProjectors({
             type="button"
             aria-label="Add projector"
             onClick={() => setMobileAddOpen(true)}
-            className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl active:scale-95 sm:hidden"
+            className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl active:scale-95 hems-wide:hidden"
           >
             +
           </button>
 
           {mobileAddOpen ? (
-            <div className="fixed inset-0 z-[9998] sm:hidden">
+            <div className="fixed inset-0 z-[9998] hems-wide:hidden">
               <button
                 type="button"
                 aria-label="Close add projector form"
@@ -1523,13 +1525,13 @@ export default function SubcategoryClientProjectors({
           )
         : null}
 
-      <div className="hidden sm:block xl:hidden">
+      <div className="hidden">
         {editItemPanel}
         {selectedPhotoSearchPanel}
       </div>
 
       {editable && !selectedItem && (
-        <div className="hidden rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:block sm:p-5 xl:hidden">
+        <div className="hidden rounded-2xl border border-gray-200 bg-white p-4 shadow-sm hems-wide:block hems-wide:p-5 hems-desktop:hidden">
           <div className="mb-4">
             <h1 className="text-[13px] font-semibold leading-tight text-gray-900">
               Add Projector
@@ -1688,7 +1690,7 @@ export default function SubcategoryClientProjectors({
               ) : null}
 
               {imageResults.length > 0 ? (
-                <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-6">
+                <div className="mt-3 grid grid-cols-3 gap-2 hems-wide:grid-cols-5 md:grid-cols-6">
                   {imageResults.map((img, index) => {
                     const imageUrl = img.original || img.image || img.thumbnail;
                     const thumb = img.thumbnail || imageUrl;
@@ -1734,7 +1736,7 @@ export default function SubcategoryClientProjectors({
         </div>
       ) : (
         projectorGroups.map((group) => (
-        <div key={group.block} className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-6">
+        <div key={group.block} className="rounded-2xl border border-gray-200 bg-white p-4 hems-wide:p-6">
           <div data-hems-block-header className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
             <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
             <h2>{group.block}</h2>
@@ -1835,15 +1837,16 @@ function ProjectorItemRow({
       <div
         data-projector-item-id={item.id}
         data-projector-item-row="true"
-        className={`relative flex flex-col gap-3 rounded-xl transition sm:flex-row sm:items-start sm:justify-between ${
+        className={`relative flex flex-col gap-3 rounded-xl transition hems-wide:flex-row hems-wide:items-start hems-wide:justify-between ${
           selected ? "bg-gray-50 ring-2 ring-black" : "hover:bg-gray-50"
         }`}
       >
         <div className="flex items-start gap-2 min-w-0 flex-[1.45]">
-          <button
+          <div className="min-w-0 w-full flex-1">
+<button
             type="button"
             onClick={() => {
-              if (window.matchMedia("(min-width: 640px)").matches) {
+              if (getAppLayout() !== "compact") {
                 onSelect();
               } else {
                 window.location.href = detailsHref;
@@ -1856,14 +1859,14 @@ function ProjectorItemRow({
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 min-w-0">
                 <h2
-                  className="truncate text-[10px] sm:text-[11px] font-semibold text-gray-900 group-hover:text-black"
+                  className="truncate text-[10px] hems-wide:text-[11px] font-semibold text-gray-900 group-hover:text-black"
                   style={{ lineHeight: 1.1 }}
                 >
                   {item.name}
                 </h2>
               </div>
 
-              <div className="mt-2 sm:hidden">
+              <div className="mt-2 hems-wide:hidden">
                 <div className={`grid gap-x-2 gap-y-1 text-center ${
                   stats.maintenance > 0 ? "grid-cols-3" : "grid-cols-2"
                 }`}>
@@ -1893,7 +1896,7 @@ function ProjectorItemRow({
                 </div>
               </div>
 
-              <div className="mt-1 hidden sm:block">
+              <div className="mt-1 hidden hems-wide:block">
                 <div className="flex flex-wrap gap-2">
                   <StatPill label="Total Qty" value={stats.total} />
                   <StatPill
@@ -1911,12 +1914,14 @@ function ProjectorItemRow({
                 </div>
               </div>
 
-              <MaintenanceRepairBadge itemId={item.id} />
+              
             </div>
           </button>
+<div className="pl-[76px]"><MaintenanceRepairBadge itemId={item.id} /></div>
+</div>
         </div>
 
-        <div className="flex items-center sm:items-start sm:justify-end gap-2 shrink-0 w-full sm:w-auto">
+        <div className="flex items-center hems-wide:items-start hems-wide:justify-end gap-2 shrink-0 w-full hems-wide:w-auto">
           {editable && (
             <div className="hidden items-center gap-2">
               <button
@@ -1931,7 +1936,7 @@ function ProjectorItemRow({
         </div>
 
         <div
-          className={`absolute top-2 z-20 sm:hidden ${
+          className={`absolute top-2 z-20 hems-wide:hidden ${
             editable ? "right-10" : "right-2"
           }`}
         >
@@ -1943,7 +1948,7 @@ function ProjectorItemRow({
           />
         </div>
 
-        <div className="absolute right-2 top-2 hidden items-center gap-1.5 sm:flex">
+        <div className="absolute right-2 top-2 hidden items-center gap-1.5 hems-wide:flex">
           <EquipmentListAddUnitsAction
             item={item}
             category={category}
@@ -1962,7 +1967,7 @@ function ProjectorItemRow({
         {editable ? (
           <div
             data-mobile-projector-menu="true"
-            className="absolute right-2 top-2 z-30 sm:hidden"
+            className="absolute right-2 top-2 z-30 hems-wide:hidden"
           >
             <button
               type="button"

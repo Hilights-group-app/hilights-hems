@@ -1,6 +1,8 @@
 // components/SubcategoryClientChainHoist.tsx
 "use client";
 
+import { getAppLayout } from "@/lib/appLayout";
+
 import KsaStockLink from "@/components/KsaStockLink";
 
 import Link from "next/link";
@@ -1036,7 +1038,7 @@ export default function SubcategoryClientChainHoist({
   }
 
   const addItemPanel = editable && !selectedItem ? (
-    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
+    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm hems-wide:p-5">
       <div className="mb-4">
         <h1 className="text-[13px] font-semibold leading-tight text-gray-900">
           Add Chain Hoist
@@ -1487,7 +1489,7 @@ export default function SubcategoryClientChainHoist({
       {editable && mobileMenuItemId && selectedItem ? (
         <div
           data-mobile-chain-hoist-tools="true"
-          className="fixed inset-0 z-[9998] sm:hidden"
+          className="fixed inset-0 z-[9998] hems-wide:hidden"
           role="dialog"
           aria-modal="true"
           aria-label={`${selectedItem.name} tools`}
@@ -1595,7 +1597,7 @@ export default function SubcategoryClientChainHoist({
         </div>
       ) : null}
 
-      <div className="hidden sm:block xl:hidden">
+      <div className="hidden">
         {editItemPanel}
         {addItemPanel}
       </div>
@@ -1607,13 +1609,13 @@ export default function SubcategoryClientChainHoist({
             aria-label="Add chain hoist"
             aria-expanded={mobileAddOpen}
             onClick={() => setMobileAddOpen(true)}
-            className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl transition active:scale-95 sm:hidden"
+            className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl transition active:scale-95 hems-wide:hidden"
           >
             +
           </button>
 
           {mobileAddOpen ? (
-            <div className="fixed inset-0 z-[9998] sm:hidden">
+            <div className="fixed inset-0 z-[9998] hems-wide:hidden">
               <button
                 type="button"
                 aria-label="Close add chain hoist form"
@@ -1651,7 +1653,7 @@ export default function SubcategoryClientChainHoist({
           )
         : null}
 
-      <div className="hidden sm:block xl:hidden">
+      <div className="hidden">
         {editItemPanel}
         {selectedPhotoSearchPanel}
       </div>
@@ -1695,10 +1697,11 @@ export default function SubcategoryClientChainHoist({
                       : "hover:bg-gray-50"
                   }`}
                 >
-                  <button
+                  <div className="min-w-0 w-full flex-1">
+<button
                     type="button"
                     onClick={async () => {
-                      if (window.matchMedia("(min-width: 640px)").matches) {
+                      if (getAppLayout() !== "compact") {
                         if (selectedItemId === it.id) {
                           await saveSelectedHoistName();
                           await saveSelectedBlockName();
@@ -1713,7 +1716,7 @@ export default function SubcategoryClientChainHoist({
                         window.location.href = detailsHref;
                       }
                     }}
-                    className="flex w-full items-start gap-3 p-2 pr-10 text-left sm:pr-20"
+                    className="flex w-full items-start gap-3 p-2 pr-10 text-left hems-wide:pr-20"
                   >
                     <ItemPhoto
                       photo={it.photo_url}
@@ -1724,7 +1727,7 @@ export default function SubcategoryClientChainHoist({
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 min-w-0">
                         <h2
-                          className="truncate text-[10px] sm:text-[11px] font-semibold text-gray-900"
+                          className="truncate text-[10px] hems-wide:text-[11px] font-semibold text-gray-900"
                           style={{ lineHeight: 1.1 }}
                         >
                           {hoistDetails.mainName}
@@ -1747,7 +1750,7 @@ export default function SubcategoryClientChainHoist({
                       ) : null}
 
                       {/* Mobile stats */}
-                      <div className="mt-2 sm:hidden">
+                      <div className="mt-2 hems-wide:hidden">
                         <div className={`grid gap-x-2 gap-y-1 text-center ${
                           st.maintenance > 0 ? "grid-cols-4" : "grid-cols-3"
                         }`}>
@@ -1784,7 +1787,7 @@ export default function SubcategoryClientChainHoist({
                       </div>
 
                       {/* Desktop stats */}
-                      <div className="mt-1 hidden sm:block">
+                      <div className="mt-1 hidden hems-wide:block">
                         <div className="flex flex-wrap gap-2">
                           <StatPill label="Total Qty" value={st.total} />
                           <StatPill
@@ -1807,12 +1810,14 @@ export default function SubcategoryClientChainHoist({
                         </div>
                       </div>
 
-                      <MaintenanceRepairBadge itemId={it.id} />
+                      
                     </div>
                   </button>
+<div className="pl-[76px]"><MaintenanceRepairBadge itemId={it.id} /></div>
+</div>
 
                   <div
-                    className={`absolute top-2 z-20 sm:hidden ${
+                    className={`absolute top-2 z-20 hems-wide:hidden ${
                       editable ? "right-10" : "right-2"
                     }`}
                   >
@@ -1824,7 +1829,7 @@ export default function SubcategoryClientChainHoist({
                     />
                   </div>
 
-                  <div className="absolute right-2 top-2 hidden items-center gap-1.5 sm:flex">
+                  <div className="absolute right-2 top-2 hidden items-center gap-1.5 hems-wide:flex">
                     <EquipmentListAddUnitsAction
                       item={it}
                       category={category}
@@ -1843,7 +1848,7 @@ export default function SubcategoryClientChainHoist({
                   {editable ? (
                     <div
                       data-mobile-hoist-menu="true"
-                      className="absolute right-2 top-2 z-30 sm:hidden"
+                      className="absolute right-2 top-2 z-30 hems-wide:hidden"
                     >
                       <button
                         type="button"

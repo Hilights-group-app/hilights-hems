@@ -1,4 +1,5 @@
 import "./globals.css";
+import { APP_LAYOUT_BOOTSTRAP } from "@/lib/appLayout";
 import type { Viewport } from "next";
 import AppStartup from "@/components/AppStartup";
 import TopBar from "@/components/TopBar";
@@ -48,7 +49,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head><script dangerouslySetInnerHTML={{ __html: APP_LAYOUT_BOOTSTRAP }} /></head>
       <body className="bg-white text-black">
         <AppStartup>
         <TopBar />

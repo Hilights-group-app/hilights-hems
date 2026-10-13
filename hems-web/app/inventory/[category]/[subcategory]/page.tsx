@@ -7,5 +7,5 @@ export default async function Page({
 }) {
   const { category, subcategory } = await params;
 
-  return <SubcategoryRouterClient category={category} subcategory={subcategory} />;
+  return <SubcategoryRouterClient key={`${category}:${subcategory}`} category={category} subcategory={subcategory} />;
 }

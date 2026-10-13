@@ -2066,7 +2066,7 @@ export default function SubcategoryClientLedScreen({
     searchPanelOpen && photoTarget?.type !== "addCabinet" ? (
       <div
         data-led-sidebar-tools="true"
-        className="mb-4 hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm xl:block"
+        className="mb-4 hidden rounded-2xl border border-gray-200 bg-white p-3 shadow-sm hems-desktop:block"
       >
         <div className="mb-3 flex items-center justify-between gap-2">
           <div className="text-[12px] font-semibold text-gray-900">
@@ -2216,7 +2216,7 @@ export default function SubcategoryClientLedScreen({
       {(selectedModel || selectedCabinetInfo) ? (
         <div
           data-mobile-led-tools="true"
-          className="fixed inset-0 z-[9998] sm:hidden"
+          className="fixed inset-0 z-[9998] hems-wide:hidden"
           role="dialog"
           aria-modal="true"
           aria-label="LED screen tools"
@@ -2331,13 +2331,13 @@ export default function SubcategoryClientLedScreen({
             type="button"
             aria-label="Add LED screen"
             onClick={() => setMobileAddOpen(true)}
-            className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl active:scale-95 sm:hidden"
+            className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl active:scale-95 hems-wide:hidden"
           >
             +
           </button>
 
           {mobileAddOpen ? (
-            <div className="fixed inset-0 z-[9998] sm:hidden">
+            <div className="fixed inset-0 z-[9998] hems-wide:hidden">
               <button
                 type="button"
                 aria-label="Close add LED screen form"
@@ -2377,14 +2377,14 @@ export default function SubcategoryClientLedScreen({
           )
         : null}
 
-      <div className="hidden sm:block xl:hidden">{selectedModelPanel}</div>
-      <div className="hidden sm:block xl:hidden">{selectedCabinetPanel}</div>
+      <div className="hidden">{selectedModelPanel}</div>
+      <div className="hidden">{selectedCabinetPanel}</div>
       {!selectedModelId && !selectedRowId ? (
-        <div className="hidden sm:block xl:hidden">{addLedScreenPanel}</div>
+        <div className="hidden">{addLedScreenPanel}</div>
       ) : null}
 
       {searchPanelOpen && photoTarget?.type !== "addCabinet" ? (
-        <div className="relative z-50 hidden rounded-2xl border border-gray-200 bg-white p-3 sm:block xl:hidden">
+        <div className="relative z-50 hidden rounded-2xl border border-gray-200 bg-white p-3">
           <div className="mb-3 flex items-center justify-between gap-2">
             <div className="text-[12px] font-semibold text-gray-900">
               Search photo online
@@ -2432,7 +2432,7 @@ export default function SubcategoryClientLedScreen({
           ) : null}
 
           {imageResults.length > 0 ? (
-            <div className="mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-6">
+            <div className="mt-3 grid grid-cols-3 gap-2 hems-wide:grid-cols-5 md:grid-cols-6">
               {imageResults.map((img, index) => {
                 const imageUrl = img.original || img.image || img.thumbnail;
                 const thumb = img.thumbnail || imageUrl;
@@ -2632,7 +2632,7 @@ export default function SubcategoryClientLedScreen({
                   ) : null}
 
                   {imageResults.length > 0 ? (
-                    <div className="mt-3 grid max-h-[260px] grid-cols-3 gap-2 overflow-y-auto pr-1 sm:grid-cols-4">
+                    <div className="mt-3 grid max-h-[260px] grid-cols-3 gap-2 overflow-y-auto pr-1 hems-wide:grid-cols-4">
                       {imageResults.map((img, index) => {
                         const imageUrl = img.original || img.image || img.thumbnail;
                         const thumb = img.thumbnail || imageUrl;
@@ -2730,7 +2730,7 @@ function SortableLedModel({
   };
 
   return (
-    <div ref={setNodeRef} style={style} className="relative pl-2 sm:pl-3">
+    <div ref={setNodeRef} style={style} className="relative pl-2 hems-wide:pl-3">
       {!disabled ? (
         <button
           type="button"
@@ -2848,7 +2848,7 @@ function LedModelCard({
   return (
     <div
       data-led-model-card="true"
-      className={`rounded-2xl border bg-white p-3 transition sm:p-4 ${
+      className={`rounded-2xl border bg-white p-3 transition hems-wide:p-4 ${
         selectedModel
           ? "border-black ring-2 ring-black"
           : "border-gray-200"
@@ -2862,7 +2862,7 @@ function LedModelCard({
           className="relative min-w-0 flex-1 cursor-pointer text-left"
         >
           <h2
-            className="truncate text-[13px] sm:text-[15px] text-gray-900"
+            className="truncate text-[13px] hems-wide:text-[15px] text-gray-900"
             style={{ lineHeight: 1.1 }}
           >
             <span className="font-bold">{brand}</span>
@@ -2880,18 +2880,18 @@ function LedModelCard({
               event.stopPropagation();
               onSelectModel();
             }}
-            className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm sm:hidden"
+            className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm hems-wide:hidden"
           >
             ⋮
           </button>
         ) : null}
       </div>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="flex flex-col gap-3 hems-wide:flex-row hems-wide:items-start hems-wide:justify-between">
   <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
     <div className="min-w-0 flex-1">
 
 
-      <div className="mt-2 sm:hidden">
+      <div className="mt-2 hems-wide:hidden">
         <div className={`grid gap-x-1.5 gap-y-1 text-center ${
           maintenanceDisplay > 0 ? "grid-cols-3" : "grid-cols-2"
         }`}>
@@ -2903,7 +2903,7 @@ function LedModelCard({
         </div>
       </div>
 
-      <div className="mt-1 hidden sm:block">
+      <div className="mt-1 hidden hems-wide:block">
         <div className="flex flex-wrap gap-2">
           <SmallStat label="Total" value={totalDisplay} tone="gray" />
           <SmallStat label="Available" value={availableDisplay} tone="green" />
@@ -2947,7 +2947,7 @@ function LedModelCard({
 </div>
 
       <div className="mt-4 overflow-visible rounded-2xl border border-gray-200 bg-white">
-        <div className="hidden sm:block">
+        <div className="hidden hems-wide:block">
           <div className="grid grid-cols-[64px_1.1fr_1.1fr_90px_90px_90px_minmax(150px,1fr)_52px_28px] bg-gray-100 px-3 py-2 text-[10px] font-bold text-gray-600 items-center gap-1">
             <div>Photo</div>
             <div>Cabinet Model</div>
@@ -2992,7 +2992,7 @@ function LedModelCard({
           )}
         </div>
 
-        <div className="space-y-2 p-2 sm:hidden">
+        <div className="space-y-2 p-2 hems-wide:hidden">
           {rows.length === 0 ? (
             <div className="px-2 py-3 text-[10px] text-gray-400">
               No cabinet sizes yet.

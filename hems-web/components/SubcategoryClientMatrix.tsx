@@ -1,5 +1,7 @@
 "use client";
 
+import { useAppLayout } from "@/lib/useAppLayout";
+
 import KsaStockLink from "@/components/KsaStockLink";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -465,7 +467,7 @@ function AllocationBadges({
           href={`/inventory/lists/${allocation.listId}`}
           onClick={(event) => event.stopPropagation()}
           title={`${allocation.reference} · ${allocation.label}`}
-          className={`max-w-full truncate rounded-md px-1.5 py-0.5 text-[7px] font-semibold transition hover:opacity-80 lg:text-[8px] ${
+          className={`max-w-full truncate rounded-md px-1.5 py-0.5 text-[7px] font-semibold transition hover:opacity-80 hems-desktop:text-[8px] ${
             allocation.listType === "maintenance"
               ? "bg-amber-100 text-amber-800"
               : allocation.status === "partially_returned"
@@ -641,7 +643,7 @@ export default function SubcategoryClientMatrix({
   const [movingMatrixItem, setMovingMatrixItem] = useState(false);
   const matrixMovePendingRef = useRef(false);
   const [sidebarTarget, setSidebarTarget] = useState<HTMLElement | null>(null);
-  const [desktopSidebarActive, setDesktopSidebarActive] = useState(false);
+  const desktopSidebarActive = useAppLayout() === "desktop";
   const [selectedBlockName, setSelectedBlockName] = useState<string | null>(
     null,
   );
@@ -1337,14 +1339,6 @@ export default function SubcategoryClientMatrix({
     const observer = new MutationObserver(syncSidebarTarget);
     observer.observe(document.body, { childList: true, subtree: true });
     return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const media = window.matchMedia("(min-width: 1280px)");
-    const sync = () => setDesktopSidebarActive(media.matches);
-    sync();
-    media.addEventListener("change", sync);
-    return () => media.removeEventListener("change", sync);
   }, []);
 
   useEffect(() => {
@@ -2264,13 +2258,13 @@ export default function SubcategoryClientMatrix({
                 setSelectedBlockName(null);
                 setSelectedCableRow(null);
               }}
-              className="absolute right-2 top-2 z-30 flex h-[26px] w-[26px] items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm sm:hidden"
+              className="absolute right-2 top-2 z-30 flex h-[26px] w-[26px] items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm hems-wide:hidden"
             >
               ⋮
             </button>
           ) : null}
 
-          <div className="absolute right-10 top-2 z-20 sm:right-2">
+          <div className="absolute right-10 top-2 z-20 hems-wide:right-2">
             <EquipmentListMatrixQuantityAction
               target={{
                 id: it.id,
@@ -2292,7 +2286,7 @@ export default function SubcategoryClientMatrix({
             />
           </div>
 
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex flex-col gap-3 hems-wide:flex-row hems-wide:items-start hems-wide:justify-between">
             <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
               <div className="flex items-start gap-3 min-w-0 flex-1">
                 <ItemPhoto
@@ -2305,7 +2299,7 @@ export default function SubcategoryClientMatrix({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 min-w-0">
                     <h2
-                      className="truncate text-[10px] sm:text-[11px] text-gray-900"
+                      className="truncate text-[10px] hems-wide:text-[11px] text-gray-900"
                       style={{ lineHeight: 1.1 }}
                     >
                       <span className="font-bold">{it.name}</span>
@@ -2319,7 +2313,7 @@ export default function SubcategoryClientMatrix({
                   />
                   <KsaStockLink quantity={stats.inKsa} search={it.name} />
 
-                  <div className="mt-2 sm:hidden">
+                  <div className="mt-2 hems-wide:hidden">
                   <div className={`grid gap-x-2 gap-y-1 text-center ${
                     stats.maintenance > 0 ? "grid-cols-3" : "grid-cols-2"
                   }`}>
@@ -2349,7 +2343,7 @@ export default function SubcategoryClientMatrix({
                     </div>
                   </div>
 
-                  <div className="mt-1 hidden sm:block">
+                  <div className="mt-1 hidden hems-wide:block">
                     <div className="flex flex-wrap gap-2">
                       <StatPill
                         label="Total Qty"
@@ -2375,7 +2369,7 @@ export default function SubcategoryClientMatrix({
 
           </div>
 
-          <div className="mt-4 w-full sm:w-[410px] rounded-2xl border border-gray-200 overflow-hidden bg-white">
+          <div className="mt-4 w-full hems-wide:w-[410px] rounded-2xl border border-gray-200 overflow-hidden bg-white">
             {(cableRowsByItem[it.id] || []).length === 0 ? (
               <div className="px-4 py-3 text-[11px] text-gray-400">
                 No rack items yet.
@@ -2392,7 +2386,7 @@ export default function SubcategoryClientMatrix({
                     setSelectedItemId(null);
                     setSelectedBlockName(null);
                   }}
-                  className={`grid grid-cols-[1fr_64px] items-center gap-2 border-t border-gray-100 px-4 py-2 text-[6px] first:border-t-0 sm:text-[8px] ${
+                  className={`grid grid-cols-[1fr_64px] items-center gap-2 border-t border-gray-100 px-4 py-2 text-[6px] first:border-t-0 hems-wide:text-[8px] ${
                     selectedCableRow?.rowId === row.id
                       ? "ring-2 ring-inset ring-black"
                       : editable
@@ -2461,7 +2455,7 @@ export default function SubcategoryClientMatrix({
                 setSelectedBlockName(null);
                 setSelectedCableRow(null);
               }}
-              className="absolute right-2 top-2 z-30 flex h-[26px] w-[26px] items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm sm:hidden"
+              className="absolute right-2 top-2 z-30 flex h-[26px] w-[26px] items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm hems-wide:hidden"
             >
               ⋮
             </button>
@@ -2478,7 +2472,7 @@ export default function SubcategoryClientMatrix({
 
               <div className="relative min-w-0">
                 <h2
-                  className="truncate text-[12px] sm:text-[18px] font-black uppercase tracking-tight text-gray-900"
+                  className="truncate text-[12px] hems-wide:text-[18px] font-black uppercase tracking-tight text-gray-900"
                   style={{ lineHeight: 1.05 }}
                 >
                   {renderItemName(it.name, it.item_type)}
@@ -2491,10 +2485,10 @@ export default function SubcategoryClientMatrix({
 
           <div className="mt-5 overflow-x-auto pr-0">
             <div className="rounded-2xl border border-gray-200 overflow-hidden min-w-0">
-              <div className={`grid items-center gap-[1px] bg-gray-100 px-2 py-1 text-[7px] font-bold text-gray-600 lg:px-6 lg:py-2 lg:text-[9px] ${
+              <div className={`grid items-center gap-[1px] bg-gray-100 px-2 py-1 text-[7px] font-bold text-gray-600 hems-desktop:px-6 hems-desktop:py-2 hems-desktop:text-[9px] ${
                 showCableMaintenance
-                  ? "grid-cols-[74px_45px_45px_45px_76px] md:grid-cols-[160px_130px_130px_130px_76px]"
-                  : "grid-cols-[74px_45px_45px_76px] md:grid-cols-[160px_130px_130px_76px]"
+                  ? "grid-cols-[74px_45px_45px_45px_76px] hems-wide:grid-cols-[minmax(74px,1.2fr)_repeat(3,minmax(45px,1fr))_76px]"
+                  : "grid-cols-[74px_45px_45px_76px] hems-wide:grid-cols-[minmax(74px,1.2fr)_repeat(2,minmax(45px,1fr))_76px]"
               }`}>
                 <div className="text-left">Length</div>
                 <div className="text-center">Total</div>
@@ -2506,7 +2500,7 @@ export default function SubcategoryClientMatrix({
               </div>
 
               {cableRows.length === 0 ? (
-                <div className="px-2 lg:px-6 py-3 text-[10px] lg:text-[12px] text-gray-400">
+                <div className="px-2 hems-desktop:px-6 py-3 text-[10px] hems-desktop:text-[12px] text-gray-400">
                   No cable lengths yet.
                 </div>
               ) : (
@@ -2526,10 +2520,10 @@ export default function SubcategoryClientMatrix({
                         setSelectedItemId(null);
                         setSelectedBlockName(null);
                       }}
-                      className={`grid items-center gap-[1px] border-t border-gray-100 px-2 py-[1px] text-[7px] text-gray-900 lg:px-6 lg:py-[2px] lg:text-[9px] ${
+                      className={`grid items-center gap-[1px] border-t border-gray-100 px-2 py-[1px] text-[7px] text-gray-900 hems-desktop:px-6 hems-desktop:py-[2px] hems-desktop:text-[9px] ${
                         showCableMaintenance
-                          ? "grid-cols-[74px_45px_45px_45px_76px] md:grid-cols-[160px_130px_130px_130px_76px]"
-                          : "grid-cols-[74px_45px_45px_76px] md:grid-cols-[160px_130px_130px_76px]"
+                          ? "grid-cols-[74px_45px_45px_45px_76px] hems-wide:grid-cols-[minmax(74px,1.2fr)_repeat(3,minmax(45px,1fr))_76px]"
+                          : "grid-cols-[74px_45px_45px_76px] hems-wide:grid-cols-[minmax(74px,1.2fr)_repeat(2,minmax(45px,1fr))_76px]"
                       } ${
                         selectedCableRow?.rowId === row.id
                           ? "ring-2 ring-inset ring-black"
@@ -2549,7 +2543,7 @@ export default function SubcategoryClientMatrix({
                       </div>
 
                       <div className="text-center">
-                        <span className="inline-flex min-w-5 lg:min-w-7 justify-center rounded-md lg:rounded-lg bg-green-100 px-1 lg:px-1.5 py-0 lg:py-[2px] font-bold">
+                        <span className="inline-flex min-w-5 hems-desktop:min-w-7 justify-center rounded-md hems-desktop:rounded-lg bg-green-100 px-1 hems-desktop:px-1.5 py-0 hems-desktop:py-[2px] font-bold">
                           {s.available}
                         </span>
                       </div>
@@ -2557,7 +2551,7 @@ export default function SubcategoryClientMatrix({
                       {showCableMaintenance ? (
                         <div className="text-center">
                           {s.maintenance > 0 ? (
-                            <span className="inline-flex min-w-5 justify-center rounded-md bg-yellow-100 px-1 py-0 font-bold lg:min-w-7 lg:rounded-lg lg:px-1.5 lg:py-[2px]">
+                            <span className="inline-flex min-w-5 justify-center rounded-md bg-yellow-100 px-1 py-0 font-bold hems-desktop:min-w-7 hems-desktop:rounded-lg hems-desktop:px-1.5 hems-desktop:py-[2px]">
                               {s.maintenance}
                             </span>
                           ) : (
@@ -2638,13 +2632,13 @@ export default function SubcategoryClientMatrix({
               setSelectedBlockName(null);
               setSelectedCableRow(null);
             }}
-            className="absolute right-2 top-2 z-30 flex h-[26px] w-[26px] items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm sm:hidden"
+            className="absolute right-2 top-2 z-30 flex h-[26px] w-[26px] items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm hems-wide:hidden"
           >
             ⋮
           </button>
         ) : null}
 
-        <div className="absolute right-10 top-2 z-20 sm:right-2">
+        <div className="absolute right-10 top-2 z-20 hems-wide:right-2">
           <EquipmentListMatrixQuantityAction
             target={{
               id: it.id,
@@ -2666,7 +2660,7 @@ export default function SubcategoryClientMatrix({
           />
         </div>
 
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex flex-col gap-3 hems-wide:flex-row hems-wide:items-start hems-wide:justify-between">
           <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
             <div className="flex items-start gap-3 min-w-0 flex-1">
               <ItemPhoto
@@ -2678,7 +2672,7 @@ export default function SubcategoryClientMatrix({
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 min-w-0">
                   <h2
-                    className="truncate text-[10px] sm:text-[11px] text-gray-900"
+                    className="truncate text-[10px] hems-wide:text-[11px] text-gray-900"
                     style={{ lineHeight: 1.1 }}
                   >
                     {renderItemName(it.name, it.item_type)}
@@ -2693,7 +2687,7 @@ export default function SubcategoryClientMatrix({
                 />
                   <KsaStockLink quantity={stats.inKsa} search={it.name} />
 
-                <div className="mt-2 sm:hidden">
+                <div className="mt-2 hems-wide:hidden">
                   <div className={`grid gap-x-2 gap-y-1 text-center ${
                     stats.maintenance > 0 ? "grid-cols-3" : "grid-cols-2"
                   }`}>
@@ -2723,7 +2717,7 @@ export default function SubcategoryClientMatrix({
                   </div>
                 </div>
 
-                <div className="mt-1 hidden sm:block">
+                <div className="mt-1 hidden hems-wide:block">
                   <div className="flex flex-wrap gap-2">
                     <StatPill
                       label="Total Qty"
@@ -2802,7 +2796,7 @@ export default function SubcategoryClientMatrix({
       {(selectedBlockName || selectedItem || selectedCableRowInfo) ? (
         <div
           data-mobile-matrix-tools="true"
-          className="fixed inset-0 z-[9998] sm:hidden"
+          className="fixed inset-0 z-[9998] hems-wide:hidden"
           role="dialog"
           aria-modal="true"
           aria-label="Matrix tools"
@@ -2840,7 +2834,7 @@ export default function SubcategoryClientMatrix({
         </div>
       ) : null}
 
-      {sidebarTarget
+      {sidebarTarget && desktopSidebarActive
         ? createPortal(
             <div>
               {selectedBlockPanel}
@@ -2852,10 +2846,10 @@ export default function SubcategoryClientMatrix({
           )
         : null}
 
-      <div className="hidden sm:block xl:hidden">{selectedBlockPanel}</div>
-      <div className="hidden sm:block xl:hidden">{selectedItemPanel}</div>
-      <div className="hidden sm:block xl:hidden">{selectedCableRowPanel}</div>
-      <div className="hidden sm:block xl:hidden">
+      <div className="hidden">{selectedBlockPanel}</div>
+      <div className="hidden">{selectedItemPanel}</div>
+      <div className="hidden">{selectedCableRowPanel}</div>
+      <div className="hidden">
         {selectedPhotoSearchPanel}
       </div>
 
@@ -2868,7 +2862,7 @@ export default function SubcategoryClientMatrix({
         <div
           data-matrix-tools="true"
           className={`bg-white border border-gray-200 rounded-2xl shadow-sm ${
-            desktopSidebarActive ? "mb-4 p-3" : "p-4 sm:p-5"
+            desktopSidebarActive ? "mb-4 p-3" : "p-4 hems-wide:p-5"
           }`}
         >
           <div className="mb-4">
@@ -3129,7 +3123,7 @@ export default function SubcategoryClientMatrix({
                   className={
                     desktopSidebarActive
                       ? "mt-3 grid grid-cols-2 gap-2"
-                      : "mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-6"
+                      : "mt-3 grid grid-cols-3 gap-2 hems-wide:grid-cols-5 md:grid-cols-6"
                   }
                 >
                   {imageResults.map((img, index) => {
@@ -3178,7 +3172,7 @@ export default function SubcategoryClientMatrix({
                 aria-label="Add matrix item"
                 aria-expanded={mobileAddOpen}
                 onClick={() => setMobileAddOpen(true)}
-                className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl transition active:scale-95 xl:hidden"
+                className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl transition active:scale-95 hems-desktop:hidden"
               >
                 +
               </button>
@@ -3186,7 +3180,7 @@ export default function SubcategoryClientMatrix({
               {mobileAddOpen ? (
                 <div
                   data-mobile-matrix-add="true"
-                  className="fixed inset-0 z-[9998] xl:hidden"
+                  className="fixed inset-0 z-[9998] hems-desktop:hidden"
                   role="dialog"
                   aria-modal="true"
                   aria-label="Add matrix item"
@@ -3254,7 +3248,7 @@ export default function SubcategoryClientMatrix({
                 dropBlockOnBlock(group.brand);
               }
             }}
-            className={`relative bg-white border rounded-2xl p-2 sm:p-4 ${
+            className={`relative bg-white border rounded-2xl p-2 hems-wide:p-4 ${
               selectedBlockName?.toLowerCase() === group.brand.toLowerCase()
                 ? "border-black ring-2 ring-black"
                 : dragItemId || dragBlockName
@@ -3307,7 +3301,7 @@ export default function SubcategoryClientMatrix({
               <div
                 aria-hidden="true"
                 data-matrix-drop-line="block-end"
-                className="pointer-events-none absolute inset-x-2 bottom-2 z-40 h-0.5 rounded-full bg-red-500 sm:inset-x-4"
+                className="pointer-events-none absolute inset-x-2 bottom-2 z-40 h-0.5 rounded-full bg-red-500 hems-wide:inset-x-4"
               />
             ) : null}
           </div>

@@ -1,5 +1,7 @@
 "use client";
 
+import { getAppLayout } from "@/lib/appLayout";
+
 import KsaStockLink from "@/components/KsaStockLink";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -1070,17 +1072,18 @@ export default function SubcategoryClientSerialized({
         <div
           data-serialized-item-row="true"
           data-serialized-item-id={it.id}
-          className={`relative flex flex-col gap-3 rounded-xl transition sm:flex-row sm:items-start sm:justify-between ${
+          className={`relative flex flex-col gap-3 rounded-xl transition hems-wide:flex-row hems-wide:items-start hems-wide:justify-between ${
             selectedItemId === it.id
               ? "bg-gray-50 ring-2 ring-black"
               : "hover:bg-gray-50"
           }`}
         >
           <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
-            <Link
+            <div className="min-w-0 w-full flex-1">
+<Link
               href={detailsHref}
               onClick={async (event) => {
-                if (window.matchMedia("(min-width: 640px)").matches) {
+                if (getAppLayout() !== "compact") {
                   event.preventDefault();
                   if (selectedItemId === it.id) {
                     await saveSelectedItemName();
@@ -1100,7 +1103,7 @@ export default function SubcategoryClientSerialized({
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 min-w-0">
                   <h2
-                    className="truncate text-[10px] sm:text-[11px] text-gray-900"
+                    className="truncate text-[10px] hems-wide:text-[11px] text-gray-900"
                     style={{ lineHeight: 1.1 }}
                   >
                     {renderItemName(it.name)}
@@ -1108,7 +1111,7 @@ export default function SubcategoryClientSerialized({
 
                 </div>
 
-                <div className="mt-2 sm:hidden">
+                <div className="mt-2 hems-wide:hidden">
                   <div className={`grid gap-x-2 gap-y-1 text-center ${
                     stats.maintenance > 0 ? "grid-cols-3" : "grid-cols-2"
                   }`}>
@@ -1138,7 +1141,7 @@ export default function SubcategoryClientSerialized({
                   </div>
                 </div>
 
-                <div className="mt-1 hidden sm:block">
+                <div className="mt-1 hidden hems-wide:block">
                   <div className="flex flex-wrap gap-2">
                     <StatPill label="Total Qty" value={stats.total} />
                     <StatPill
@@ -1156,13 +1159,15 @@ export default function SubcategoryClientSerialized({
                   </div>
                 </div>
 
-                <MaintenanceRepairBadge itemId={it.id} />
+                
               </div>
             </Link>
+<div className="pl-[76px]"><MaintenanceRepairBadge itemId={it.id} /></div>
+</div>
           </div>
 
           <div
-            className={`absolute top-2 z-20 sm:hidden ${
+            className={`absolute top-2 z-20 hems-wide:hidden ${
               editable ? "right-10" : "right-2"
             }`}
           >
@@ -1174,7 +1179,7 @@ export default function SubcategoryClientSerialized({
             />
           </div>
 
-          <div className="absolute right-2 top-2 hidden items-center gap-1.5 sm:flex">
+          <div className="absolute right-2 top-2 hidden items-center gap-1.5 hems-wide:flex">
             <EquipmentListAddUnitsAction
               item={it}
               category={category}
@@ -1193,7 +1198,7 @@ export default function SubcategoryClientSerialized({
           {editable ? (
             <div
               data-mobile-serialized-menu="true"
-              className="absolute right-2 top-2 z-30 sm:hidden"
+              className="absolute right-2 top-2 z-30 hems-wide:hidden"
             >
               <button
                 type="button"
@@ -1640,7 +1645,7 @@ export default function SubcategoryClientSerialized({
       {editable && mobileMenuItemId && selectedItem ? (
         <div
           data-mobile-serialized-tools="true"
-          className="fixed inset-0 z-[9998] sm:hidden"
+          className="fixed inset-0 z-[9998] hems-wide:hidden"
           role="dialog"
           aria-modal="true"
           aria-label={`${selectedItem.name} tools`}
@@ -1682,13 +1687,13 @@ export default function SubcategoryClientSerialized({
             type="button"
             aria-label="Add item"
             onClick={() => setMobileAddOpen(true)}
-            className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl active:scale-95 sm:hidden"
+            className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl active:scale-95 hems-wide:hidden"
           >
             +
           </button>
 
           {mobileAddOpen ? (
-            <div className="fixed inset-0 z-[9998] sm:hidden">
+            <div className="fixed inset-0 z-[9998] hems-wide:hidden">
               <button
                 type="button"
                 aria-label="Close add item form"
@@ -1725,11 +1730,11 @@ export default function SubcategoryClientSerialized({
           )
         : null}
 
-      <div className="hidden sm:block xl:hidden">
+      <div className="hidden">
         {editItemPanel}
         {selectedPhotoSearchPanel}
       </div>
-      <div className="hidden sm:block xl:hidden">{sidebarAddPanel}</div>
+      <div className="hidden">{sidebarAddPanel}</div>
 
       {items.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">

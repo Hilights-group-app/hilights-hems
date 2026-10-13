@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { titleFromSlug } from "@/lib/catalogHelpers";
 
+import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 import SubcategoryShellClient from "@/components/SubcategoryShellClient";
 import SubcategoryClientSerialized from "@/components/SubcategoryClientSerialized";
 import SubcategoryClientMatrix from "@/components/SubcategoryClientMatrix";
@@ -153,9 +154,7 @@ export default function SubcategoryRouterClient({
   if (routeInfo === null) {
     return (
       <SubcategoryShellClient title={title}>
-        <div className="rounded-xl border border-gray-200 bg-white px-5 py-6 text-gray-900">
-          Loading...
-        </div>
+        <InventoryRouteLoading />
       </SubcategoryShellClient>
     );
   }

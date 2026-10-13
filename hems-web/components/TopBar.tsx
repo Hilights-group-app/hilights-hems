@@ -1,5 +1,8 @@
 "use client";
 
+import { getAppLayout } from "@/lib/appLayout";
+import { useAppLayout } from "@/lib/useAppLayout";
+
 import Link from "next/link";
 import { IMPORTANT_ACTIVITY_FILTER, isImportantActivity } from "@/lib/importantActivity";
 import { readWorkspaceProfile } from "@/lib/workspaceStartup";
@@ -113,6 +116,7 @@ function matchScore(value: unknown, query: string) {
 }
 
 export default function TopBar() {
+  const appLayout = useAppLayout();
   const pathname = usePathname();
   const router = useRouter();
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -181,16 +185,15 @@ export default function TopBar() {
   }, [pathname]);
 
   useEffect(() => {
-    const desktop = window.matchMedia("(min-width: 1280px)");
     const closeDesktopDrawer = () => {
-      if (desktop.matches) setSidebarOpen(false);
+      if (getAppLayout() === "desktop") setSidebarOpen(false);
     };
     const closeAfterListSelection = () => setSidebarOpen(false);
     const openMobileLists = () => setSidebarOpen(true);
     window.addEventListener("hems:open-mobile-lists", openMobileLists);
 
     closeDesktopDrawer();
-    desktop.addEventListener("change", closeDesktopDrawer);
+    window.addEventListener("resize", closeDesktopDrawer);
     window.addEventListener(
       ACTIVE_EQUIPMENT_LIST_EVENT,
       closeAfterListSelection,
@@ -198,13 +201,15 @@ export default function TopBar() {
 
     return () => {
       window.removeEventListener("hems:open-mobile-lists", openMobileLists);
-      desktop.removeEventListener("change", closeDesktopDrawer);
+      window.removeEventListener("resize", closeDesktopDrawer);
       window.removeEventListener(
         ACTIVE_EQUIPMENT_LIST_EVENT,
         closeAfterListSelection,
       );
     };
   }, []);
+
+  useEffect(() => { if (appLayout === "desktop") setSidebarOpen(false); }, [appLayout]);
 
   useEffect(() => {
     function invalidateSearchCatalog() {
@@ -654,13 +659,13 @@ if (!notifCache) {
   return (
     <>
       <header ref={topbarRef} data-hems-topbar className="bg-white shadow-sm">
-        <div data-hems-header-row className="flex w-full items-center gap-2 px-2 py-2 sm:px-4">
+        <div data-hems-header-row className="flex w-full items-center gap-2 px-2 py-2 hems-wide:px-4">
           <div className="flex shrink-0 items-center gap-2">
             {showPrivateNav ? (
               <button
                 type="button"
                 onClick={() => setSidebarOpen(true)}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-700 transition hover:bg-gray-100 active:scale-95 xl:hidden"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-gray-700 transition hover:bg-gray-100 active:scale-95 hems-desktop:hidden"
                 aria-label="Open navigation and equipment lists"
                 title="Menu"
               >
@@ -672,14 +677,14 @@ if (!notifCache) {
               <img
                 src="/logo-icon.png"
                 alt="Logo"
-                className="h-6 w-6 rounded-md bg-white object-contain p-[2px] sm:h-7 sm:w-7"
+                className="h-6 w-6 rounded-md bg-white object-contain p-[2px] hems-wide:h-7 hems-wide:w-7"
               />
             </Link>
 
-            <span data-hems-brand-divider className="h-3 w-px shrink-0 bg-black/30 sm:h-5" />
+            <span data-hems-brand-divider className="h-3 w-px shrink-0 bg-black/30 hems-wide:h-5" />
             <span data-hems-mobile-brand className="hidden text-sm font-bold tracking-tight">HEMS</span>
 
-            <span className="hidden truncate text-xs font-semibold tracking-wide text-gray-900 lg:block">
+            <span className="hidden truncate text-xs font-semibold tracking-wide text-gray-900 hems-desktop:block">
               Equipment Management System
             </span>
           </div>
@@ -688,7 +693,7 @@ if (!notifCache) {
             <div
               ref={searchRef}
               data-hems-search
-              className="relative min-w-0 flex-1 sm:mx-2 sm:max-w-md lg:max-w-xl"
+              className="relative min-w-0 flex-1 hems-wide:mx-2 hems-wide:max-w-md lg:max-w-xl"
             >
               <Search
                 size={14}
@@ -707,7 +712,7 @@ if (!notifCache) {
                 }}
                 placeholder="Search inventory..."
                 autoComplete="off"
-                className="h-8 w-full rounded-full border border-gray-200 bg-gray-50 pl-8 pr-8 text-[11px] text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-gray-400 focus:bg-white focus:ring-2 focus:ring-gray-100 sm:text-xs"
+                className="h-8 w-full rounded-full border border-gray-200 bg-gray-50 pl-8 pr-8 text-[11px] text-gray-900 outline-none transition placeholder:text-gray-400 focus:border-gray-400 focus:bg-white focus:ring-2 focus:ring-gray-100 hems-wide:text-xs"
                 aria-label="Search inventory"
               />
 
@@ -731,7 +736,7 @@ if (!notifCache) {
               ) : null}
 
               {searchFocused && normalizeSearch(searchQuery).length > 0 ? (
-                <div className="fixed left-2 right-2 top-[50px] z-[100] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl sm:absolute sm:left-0 sm:right-0 sm:top-full sm:mt-2">
+                <div className="fixed left-2 right-2 top-[50px] z-[100] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl hems-wide:absolute hems-wide:left-0 hems-wide:right-0 hems-wide:top-full hems-wide:mt-2">
                   {normalizeSearch(searchQuery).length < 2 ? (
                     <div className="px-4 py-4 text-xs text-gray-500">
                       Type at least 2 characters.
@@ -772,7 +777,7 @@ if (!notifCache) {
                             <div className="truncate text-xs font-semibold text-gray-900">
                               {result.title}
                             </div>
-                            <div className="mt-0.5 truncate text-[10px] text-gray-500 sm:text-[11px]">
+                            <div className="mt-0.5 truncate text-[10px] text-gray-500 hems-wide:text-[11px]">
                               {result.subtitle}
                             </div>
                           </div>
@@ -811,7 +816,7 @@ if (!notifCache) {
 
                     <Link
                       href="/inventory"
-                      className={`hidden h-6 w-6 items-center justify-center rounded-full transition sm:flex ${
+                      className={`hidden h-6 w-6 items-center justify-center rounded-full transition hems-wide:flex ${
                         pathname.startsWith("/inventory")
                           ? "bg-gray-900 text-white"
                           : "text-gray-700 hover:bg-gray-100"
@@ -934,7 +939,7 @@ if (!notifCache) {
                       )}
                     </div>
 
-                    <span className="hidden text-left leading-none sm:block">
+                    <span className="hidden text-left leading-none hems-wide:block">
                       <span className="block max-w-[120px] truncate text-[10px] font-semibold leading-3 text-gray-900">
                         {userName}
                       </span>
@@ -979,7 +984,7 @@ if (!notifCache) {
                       <button type="button" onClick={() => {
                         window.dispatchEvent(new CustomEvent("hems:toggle-mobile-layout"));
                         setOpen(false);
-                      }} className="mb-1 w-full rounded-lg px-2 py-3 text-left text-sm font-medium text-gray-700 sm:hidden">
+                      }} className="mb-1 w-full rounded-lg px-2 py-3 text-left text-sm font-medium text-gray-700 hems-wide:hidden">
                         Switch mobile layout
                       </button>
                       <button
@@ -1009,14 +1014,14 @@ if (!notifCache) {
       {showPrivateNav ? (
         <>
           <div
-            className={`fixed inset-0 z-[9998] bg-black/30 transition-opacity duration-200 xl:hidden ${
+            className={`fixed inset-0 z-[9998] bg-black/30 transition-opacity duration-200 hems-desktop:hidden ${
               sidebarOpen ? "opacity-100" : "pointer-events-none opacity-0"
             }`}
             onClick={() => setSidebarOpen(false)}
           />
 
           <aside
-            className={`fixed left-0 top-0 z-[9999] flex h-full w-[min(88vw,360px)] flex-col bg-white shadow-2xl transition-transform duration-300 ease-out xl:hidden ${
+            className={`fixed left-0 top-0 z-[9999] flex h-full w-[min(88vw,360px)] flex-col bg-white shadow-2xl transition-transform duration-300 ease-out hems-desktop:hidden ${
               sidebarOpen ? "translate-x-0" : "-translate-x-full"
             }`}
           >

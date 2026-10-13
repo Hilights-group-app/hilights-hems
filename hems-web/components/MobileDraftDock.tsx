@@ -1,5 +1,6 @@
 "use client";
 
+import { useAppLayout } from "@/lib/useAppLayout";
 import { createBrowserId } from "@/lib/browserId";
 
 import Link from "next/link";
@@ -21,7 +22,7 @@ export default function MobileDraftDock() {
   const pathname = usePathname();
   const isLogin = pathname === "/login";
   const supabase = useMemo(() => createClient(), []);
-  const [mobile, setMobile] = useState(false);
+  const mobile = useAppLayout() === "compact";
   const [enabled, setEnabled] = useState(true);
   const [signedIn, setSignedIn] = useState(false);
   const [list, setList] = useState<EquipmentList | null>(null);
@@ -31,9 +32,6 @@ export default function MobileDraftDock() {
   const activeId = useRef<string | null>(null);
 
   useEffect(() => {
-    const media = window.matchMedia("(max-width: 639px)");
-    const sync = () => setMobile(media.matches);
-    sync(); media.addEventListener("change", sync);
     let initial = true;
     try { initial = localStorage.getItem(LAYOUT_KEY) !== "classic"; } catch {}
     setEnabled(initial);
@@ -44,7 +42,6 @@ export default function MobileDraftDock() {
     });
     window.addEventListener("hems:toggle-mobile-layout", toggle);
     return () => {
-      media.removeEventListener("change", sync);
       window.removeEventListener("hems:toggle-mobile-layout", toggle);
     };
   }, []);

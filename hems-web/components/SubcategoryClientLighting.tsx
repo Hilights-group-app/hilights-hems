@@ -1,5 +1,7 @@
 "use client";
 
+import { getAppLayout } from "@/lib/appLayout";
+
 import KsaStockLink from "@/components/KsaStockLink";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -1420,7 +1422,7 @@ export default function SubcategoryClientLighting({
           <button
             type="button"
             onClick={async () => {
-              if (window.matchMedia("(min-width: 640px)").matches) {
+              if (getAppLayout() !== "compact") {
                 if (selectedFixtureId === it.id) {
                   await saveSelectedFixtureName();
                   setSelectedFixtureId(null);
@@ -1433,8 +1435,8 @@ export default function SubcategoryClientLighting({
                 window.location.href = detailsHref;
               }
             }}
-            className={`flex w-full flex-col gap-3 p-2 pr-10 text-left sm:flex-row sm:items-start ${
-              editable && activeDraftList ? "sm:pr-36" : "sm:pr-20"
+            className={`flex w-full flex-col gap-3 p-2 pr-10 text-left hems-wide:flex-row hems-wide:items-start ${
+              editable && activeDraftList ? "hems-wide:pr-36" : "hems-wide:pr-20"
             }`}
           >
             <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
@@ -1448,14 +1450,14 @@ export default function SubcategoryClientLighting({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 min-w-0">
                     <h2
-                      className="truncate text-[10px] sm:text-[11px] text-gray-900"
+                      className="truncate text-[10px] hems-wide:text-[11px] text-gray-900"
                       style={{ lineHeight: 1.1 }}
                     >
                       {renderFixtureName(it.name)}
                     </h2>
                   </div>
 
-                  <div className="mt-2 sm:hidden">
+                  <div className="mt-2 hems-wide:hidden">
                     <div
                       className={`grid gap-x-2 gap-y-1 text-center ${
                         stats.maintenance > 0
@@ -1489,7 +1491,7 @@ export default function SubcategoryClientLighting({
                     </div>
                   </div>
 
-                  <div className="mt-1 hidden sm:block">
+                  <div className="mt-1 hidden hems-wide:block">
                     <div className="flex flex-wrap gap-2">
                       <StatPill label="Total Qty" value={stats.total} />
                       <StatPill
@@ -1514,8 +1516,8 @@ export default function SubcategoryClientLighting({
           {allocations.length > 0 || existingMovementQuantity > 0 || stats.inKsa > 0 ? (
             <div
               data-lighting-active-allocations="true"
-              className={`px-2 pb-2 sm:pl-[76px] ${
-                editable && activeDraftList ? "sm:pr-36" : "sm:pr-20"
+              className={`px-2 pb-2 hems-wide:pl-[76px] ${
+                editable && activeDraftList ? "hems-wide:pr-36" : "hems-wide:pr-20"
               }`}
             >
               <div className="mb-1 text-[8px] font-bold uppercase tracking-wider text-gray-400">
@@ -1561,7 +1563,7 @@ export default function SubcategoryClientLighting({
               }}
               title={`Add units to ${activeDraftList.reference}`}
               data-hems-mobile-add="units"
-              className={`absolute top-2 z-20 rounded-full bg-black px-2.5 py-1 text-[9px] font-semibold text-white shadow-sm sm:hidden ${
+              className={`absolute top-2 z-20 rounded-full bg-black px-2.5 py-1 text-[9px] font-semibold text-white shadow-sm hems-wide:hidden ${
                 editable ? "right-10" : "right-2"
               }`}
             >
@@ -1569,7 +1571,7 @@ export default function SubcategoryClientLighting({
             </button>
           ) : null}
 
-          <div className="absolute right-2 top-2 hidden items-center gap-1.5 sm:flex">
+          <div className="absolute right-2 top-2 hidden items-center gap-1.5 hems-wide:flex">
             {activeDraftList ? (
               <button
                 type="button"
@@ -1597,7 +1599,7 @@ export default function SubcategoryClientLighting({
           {editable ? (
             <div
               data-mobile-fixture-menu="true"
-              className="absolute right-2 top-2 z-30 sm:hidden"
+              className="absolute right-2 top-2 z-30 hems-wide:hidden"
             >
               <button
                 type="button"
@@ -1660,7 +1662,7 @@ export default function SubcategoryClientLighting({
   }
 
   const addFixturePanel = editable ? (
-    <div className="bg-white border border-gray-200 rounded-2xl p-4 sm:p-5 shadow-sm">
+    <div className="bg-white border border-gray-200 rounded-2xl p-4 hems-wide:p-5 shadow-sm">
       <div className="mb-4">
         <h1 className="text-[13px] font-semibold leading-tight text-gray-900">
           Add Fixtures
@@ -1842,7 +1844,7 @@ export default function SubcategoryClientLighting({
           ) : null}
 
           {imageResults.length > 0 ? (
-            <div className="fixture-image-grid mt-3 grid grid-cols-3 gap-2 sm:grid-cols-5 md:grid-cols-6">
+            <div className="fixture-image-grid mt-3 grid grid-cols-3 gap-2 hems-wide:grid-cols-5 md:grid-cols-6">
               {imageResults.map((img, index) => {
                 const imageUrl = img.original || img.image || img.thumbnail;
                 const thumb = img.thumbnail || imageUrl;
@@ -2053,7 +2055,7 @@ export default function SubcategoryClientLighting({
       {editable && mobileMenuItemId && selectedFixture ? (
         <div
           data-mobile-lighting-tools="true"
-          className="fixed inset-0 z-[9998] sm:hidden"
+          className="fixed inset-0 z-[9998] hems-wide:hidden"
           role="dialog"
           aria-modal="true"
           aria-label={`${selectedFixture.name} tools`}
@@ -2173,7 +2175,7 @@ export default function SubcategoryClientLighting({
         </div>
       ) : null}
 
-      <div className="hidden sm:block xl:hidden">
+      <div className="hidden">
         {editFixturePanel}
         {selectedPhotoSearchPanel}
         {!selectedFixtureId ? addFixturePanel : null}
@@ -2186,13 +2188,13 @@ export default function SubcategoryClientLighting({
             aria-label="Add fixture"
             aria-expanded={mobileAddFixtureOpen}
             onClick={() => setMobileAddFixtureOpen(true)}
-            className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl transition active:scale-95 sm:hidden"
+            className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl transition active:scale-95 hems-wide:hidden"
           >
             +
           </button>
 
           {mobileAddFixtureOpen ? (
-            <div className="fixed inset-0 z-[9998] sm:hidden">
+            <div className="fixed inset-0 z-[9998] hems-wide:hidden">
               <button
                 type="button"
                 aria-label="Close add fixture form"
