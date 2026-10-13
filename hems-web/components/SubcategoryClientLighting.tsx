@@ -1,5 +1,7 @@
 "use client";
 
+import InventoryRouteLoading from "@/components/InventoryRouteLoading";
+
 import { getAppLayout } from "@/lib/appLayout";
 
 import KsaStockLink from "@/components/KsaStockLink";
@@ -1633,13 +1635,7 @@ export default function SubcategoryClientLighting({
   }
 
   if (loading) {
-    return (
-      <div className="w-full">
-        <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
-          Loading fixtures...
-        </div>
-      </div>
-    );
+    return <InventoryRouteLoading />;
   }
 
   if (err) {

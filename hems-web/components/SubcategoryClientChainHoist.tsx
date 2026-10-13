@@ -1,6 +1,8 @@
 // components/SubcategoryClientChainHoist.tsx
 "use client";
 
+import InventoryRouteLoading from "@/components/InventoryRouteLoading";
+
 import { getAppLayout } from "@/lib/appLayout";
 
 import KsaStockLink from "@/components/KsaStockLink";
@@ -1028,13 +1030,7 @@ export default function SubcategoryClientChainHoist({
   ]);
 
   if (loading) {
-    return (
-      <div className="w-full mx-auto">
-        <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
-          Loading chain hoist items...
-        </div>
-      </div>
-    );
+    return <InventoryRouteLoading />;
   }
 
   const addItemPanel = editable && !selectedItem ? (

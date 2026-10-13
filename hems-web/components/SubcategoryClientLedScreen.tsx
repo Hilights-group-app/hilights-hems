@@ -1,5 +1,7 @@
 "use client";
 
+import InventoryRouteLoading from "@/components/InventoryRouteLoading";
+
 import KsaStockLink from "@/components/KsaStockLink";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -2146,13 +2148,7 @@ export default function SubcategoryClientLedScreen({
     ) : null;
 
   if (loading) {
-    return (
-      <div className="mx-auto w-full">
-        <div className="rounded-xl border border-gray-200 bg-white px-5 py-6 text-gray-900">
-          Loading LED screen models...
-        </div>
-      </div>
-    );
+    return <InventoryRouteLoading />;
   }
 
   return (

@@ -1,5 +1,7 @@
 "use client";
 
+import InventoryRouteLoading from "@/components/InventoryRouteLoading";
+
 import { useAppLayout } from "@/lib/useAppLayout";
 
 import KsaStockLink from "@/components/KsaStockLink";
@@ -2747,12 +2749,8 @@ export default function SubcategoryClientMatrix({
   }
 
   if (loading) {
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white px-5 py-6 text-gray-900">
-      Loading...
-    </div>
-  );
-}
+    return <InventoryRouteLoading />;
+  }
 
   if (err) {
     return (

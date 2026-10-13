@@ -1,5 +1,7 @@
 "use client";
 
+import InventoryRouteLoading from "@/components/InventoryRouteLoading";
+
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
@@ -27,29 +29,7 @@ function getCachedCatalog(): Category[] {
 }
 
 function InventorySkeleton() {
-  return (
-    <div className="min-h-screen bg-gray-50 p-3">
-      <div className="mx-auto w-full space-y-3">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <div
-            key={i}
-            className="rounded-2xl border border-gray-200 bg-white px-4 py-4 shadow-sm"
-          >
-            <div className="mb-4 h-4 w-32 animate-pulse rounded bg-gray-200" />
-
-            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-              {Array.from({ length: 6 }).map((_, j) => (
-                <div
-                  key={j}
-                  className="h-9 animate-pulse rounded-xl bg-gray-200 sm:h-7 sm:w-24 sm:rounded-full"
-                />
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  return <InventoryRouteLoading />;
 }
 
 export default function InventoryClient() {
