@@ -1,6 +1,7 @@
 import "./globals.css";
 import { APP_LAYOUT_BOOTSTRAP } from "@/lib/appLayout";
 import type { Viewport } from "next";
+import ActionNotificationsProvider from "@/components/ActionNotificationsProvider";
 import AppStartup from "@/components/AppStartup";
 import TopBar from "@/components/TopBar";
 import MobileDraftDock from "@/components/MobileDraftDock";
@@ -53,9 +54,11 @@ export default function RootLayout({
       <head><script dangerouslySetInnerHTML={{ __html: APP_LAYOUT_BOOTSTRAP }} /></head>
       <body className="bg-white text-black">
         <AppStartup>
+        <ActionNotificationsProvider>
         <TopBar />
         <AppShellClient>{children}</AppShellClient>
         <MobileDraftDock />
+        </ActionNotificationsProvider>
         </AppStartup>
       </body>
     </html>

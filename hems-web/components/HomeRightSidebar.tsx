@@ -1,5 +1,6 @@
 "use client";
 
+import ActionRequiredAlerts from "@/components/ActionRequiredAlerts";
 import Link from "next/link";
 import { IMPORTANT_ACTIVITY_FILTER, isImportantActivity } from "@/lib/importantActivity";
 import { usePathname } from "next/navigation";
@@ -17,6 +18,7 @@ import {
   canImportInventory,
   getUserDepartment,
   getUserRole,
+  getUserId,
 } from "@/lib/authStore";
 
 type Activity = {
@@ -26,6 +28,7 @@ type Activity = {
   link: string | null;
   created_at: string;
   actor_name: string | null;
+  actor_id: string | null;
 };
 
 type Alert = {
@@ -53,7 +56,7 @@ type MaintenanceRequest = {
 };
 
 const ALERTS_CACHE_KEY = "hems:home-sidebar:alerts";
-const ACTIVITY_CACHE_KEY = "hems:home-sidebar:important-activity-v2";
+const ACTIVITY_CACHE_KEY = "hems:home-sidebar:important-activity-v3";
 
 function readCache<T>(key: string): T | null {
   try {
@@ -181,14 +184,21 @@ export default function HomeRightSidebar() {
     if (showInventoryTools) return;
 
     let cancelled = false;
+    let readVersion=0;
+    let refreshTimer:ReturnType<typeof setTimeout>|undefined;
 
-    const cachedAlerts = readCache<Alert[]>(ALERTS_CACHE_KEY);
-    const cachedActivity = readCache<Activity[]>(ACTIVITY_CACHE_KEY);
+    const userId=getUserId();
+    if(!userId){setAlerts([]);setActivity([]);return;}
+    const alertsCacheKey=`${ALERTS_CACHE_KEY}:${userId}:${getUserRole()}:${getUserDepartment()}`;
+    const activityCacheKey=`${ACTIVITY_CACHE_KEY}:${userId}`;
+    const cachedAlerts = readCache<Alert[]>(alertsCacheKey);
+    const cachedActivity = readCache<Activity[]>(activityCacheKey);
 
     if (cachedAlerts !== null) setAlerts(cachedAlerts);
-    if (cachedActivity !== null) setActivity(cachedActivity.filter(isImportantActivity));
+    if (cachedActivity !== null) setActivity(cachedActivity.filter(entry=>entry.actor_id!==userId && isImportantActivity(entry)));
 
     async function load() {
+      const version=++readVersion;
       const role = getUserRole() ?? "";
       const department = getUserDepartment() ?? "";
 
@@ -199,7 +209,7 @@ export default function HomeRightSidebar() {
           .select(
             "id,display_name,serial_number,quantity,department,source_reference,source_type,source_summary,report_href,status,created_at",
           )
-          .in("status", ["pending_report", "sent", "received"])
+          .in("status", ["pending_report", "sent"])
           .order("created_at", { ascending: false })
           .limit(20);
 
@@ -212,7 +222,7 @@ export default function HomeRightSidebar() {
         await Promise.all([
           supabase
             .from("notifications")
-            .select("id,title,message,link,created_at,actor_name")
+            .select("id,title,message,link,created_at,actor_name,actor_id")
             .or(IMPORTANT_ACTIVITY_FILTER)
             .order("created_at", { ascending: false })
             .limit(8),
@@ -225,12 +235,12 @@ export default function HomeRightSidebar() {
           maintenanceQuery ?? Promise.resolve({ data: [], error: null }),
         ]);
 
-      if (cancelled) return;
+      if (cancelled || version!==readVersion || userId!==getUserId()) return;
 
       if (!notificationResult.error) {
-        const nextActivity = ((notificationResult.data ?? []) as Activity[]).filter(isImportantActivity);
+        const nextActivity = ((notificationResult.data ?? []) as Activity[]).filter(entry=>entry.actor_id!==userId && isImportantActivity(entry));
         setActivity(nextActivity);
-        writeCache(ACTIVITY_CACHE_KEY, nextActivity);
+        writeCache(activityCacheKey, nextActivity);
       }
 
       const maintenanceAlerts = maintenanceResult.error
@@ -270,7 +280,7 @@ export default function HomeRightSidebar() {
 
       if (unitResult.error) {
         setAlerts(maintenanceAlerts);
-        writeCache(ALERTS_CACHE_KEY, maintenanceAlerts);
+        writeCache(alertsCacheKey, maintenanceAlerts);
         return;
       }
 
@@ -285,7 +295,7 @@ export default function HomeRightSidebar() {
           .from("items")
           .select("id,name,subcategory_id")
           .in("id", itemIds);
-        if (cancelled) return;
+        if (cancelled || version!==readVersion || userId!==getUserId()) return;
 
         if (!itemResult.error) {
           const items = (itemResult.data ?? []) as any[];
@@ -299,7 +309,7 @@ export default function HomeRightSidebar() {
                 .in("id", subIds)
             : { data: [], error: null };
 
-          if (cancelled) return;
+          if (cancelled || version!==readVersion || userId!==getUserId()) return;
 
           if (!subResult.error) {
             const subs = (subResult.data ?? []) as any[];
@@ -313,7 +323,7 @@ export default function HomeRightSidebar() {
                   .in("id", categoryIds)
               : { data: [], error: null };
 
-            if (cancelled) return;
+            if (cancelled || version!==readVersion || userId!==getUserId()) return;
 
             if (!categoryResult.error) {
               const itemMap = new Map(items.map((item) => [item.id, item]));
@@ -371,23 +381,24 @@ export default function HomeRightSidebar() {
 
       const next = [...maintenanceAlerts, ...certificateAlerts].slice(0, 8);
       setAlerts(next);
-      writeCache(ALERTS_CACHE_KEY, next);
+      writeCache(alertsCacheKey, next);
     }
 
     void load();
 
     function refreshInBackground() {
-      void load();
+      clearTimeout(refreshTimer);
+      refreshTimer=setTimeout(()=>void load(),250);
     }
 
-    window.addEventListener("focus", refreshInBackground);
+    window.addEventListener("hems:notification-inbox-change", refreshInBackground);
     window.addEventListener(
       "hems:maintenance-requests-change",
       refreshInBackground,
     );
     return () => {
-      cancelled = true;
-      window.removeEventListener("focus", refreshInBackground);
+      cancelled = true;++readVersion;clearTimeout(refreshTimer);
+      window.removeEventListener("hems:notification-inbox-change", refreshInBackground);
       window.removeEventListener(
         "hems:maintenance-requests-change",
         refreshInBackground,
@@ -421,6 +432,7 @@ export default function HomeRightSidebar() {
 
     return (
       <div className="p-4">
+        <ActionRequiredAlerts />
         <div className="mb-3">
           <h2 className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
             {toolsTitle}
@@ -435,6 +447,7 @@ export default function HomeRightSidebar() {
 
   return (
     <div className="space-y-5 p-4">
+      <ActionRequiredAlerts />
       {showInventoryImport && canImportInventory() ? (
         <>
           <section>

@@ -3,6 +3,8 @@
 import { getAppLayout } from "@/lib/appLayout";
 import { useAppLayout } from "@/lib/useAppLayout";
 
+import ActionRequiredAlerts from "@/components/ActionRequiredAlerts";
+import { useActionNotifications } from "@/components/ActionNotificationsProvider";
 import Link from "next/link";
 import { IMPORTANT_ACTIVITY_FILTER, isImportantActivity } from "@/lib/importantActivity";
 import { readWorkspaceProfile } from "@/lib/workspaceStartup";
@@ -22,6 +24,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
   getUserName,
+  getUserId,
   logout,
   setUserDepartment,
   setUserId,
@@ -40,6 +43,7 @@ type NotificationRow = {
   is_read: boolean;
   created_at: string;
   actor_name: string | null;
+  actor_id: string | null;
 };
 
 type CategoryRow = {
@@ -117,6 +121,8 @@ function matchScore(value: unknown, query: string) {
 
 export default function TopBar() {
   const appLayout = useAppLayout();
+  const actionInbox = useActionNotifications();
+  const notificationReadVersion = useRef(0);
   const pathname = usePathname();
   const router = useRouter();
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -227,15 +233,20 @@ export default function TopBar() {
   }, []);
 
   async function loadNotifications() {
+    const version=++notificationReadVersion.current;
+    const userId=getUserId();
+    if(!userId){setNotifications([]);return;}
     const { data, error } = await supabase
       .from("notifications")
-      .select("id, title, message, link, is_read, created_at, actor_name")
-            .or(IMPORTANT_ACTIVITY_FILTER)
+      .select("id, title, message, link, is_read, created_at, actor_name, actor_id")
+      .or(IMPORTANT_ACTIVITY_FILTER)
       .order("created_at", { ascending: false })
       .limit(10);
 
-    if (!error) setNotifications(((data ?? []) as NotificationRow[]).filter(isImportantActivity));
+    if (!error && version===notificationReadVersion.current && userId===getUserId()) setNotifications(((data ?? []) as NotificationRow[]).filter(entry=>entry.actor_id!==userId && isImportantActivity(entry)));
   }
+
+  useEffect(() => { void loadNotifications(); }, [actionInbox.revision]);
 
   async function markNotificationsRead() {
     const unreadIds = notifications.filter((n) => !n.is_read).map((n) => n.id);
@@ -619,7 +630,7 @@ if (!notifCache) {
     }
   }
 
-  const unreadCount = notifications.filter((n) => !n.is_read).length;
+  const unreadCount = notifications.filter((n) => !n.is_read).length + actionInbox.tasks.length;
 
   const userInitials = useMemo(() => {
     if (!userName) return "U";
@@ -868,7 +879,8 @@ if (!notifCache) {
                           </div>
 
                           <div className="max-h-72 overflow-y-auto">
-                            {notifications.length === 0 ? (
+                            <div className="px-1"><ActionRequiredAlerts compact onOpen={() => setNotifOpen(false)} /></div>
+                            {notifications.length === 0 && actionInbox.tasks.length === 0 ? (
                               <div className="px-2 py-4 text-xs text-gray-500">
                                 No notifications yet.
                               </div>
