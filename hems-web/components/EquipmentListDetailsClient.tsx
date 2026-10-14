@@ -1,4 +1,5 @@
 "use client";
+import { useRepairRefresh } from "@/lib/useRepairStatus";
 
 import { createBrowserId } from "@/lib/browserId";
 import { draftGroupRank, moveDraftGroup } from "@/lib/draftItemOrder";
@@ -882,6 +883,13 @@ export default function EquipmentListDetailsClient({
       cancelled = true;
     };
   }, [listId, supabase]);
+
+  useRepairRefresh(()=>{
+    if(list?.list_type==="maintenance"){
+      void refreshMaintenanceRequests();
+      void refreshListAndItems();
+    }
+  });
 
   async function refreshMaintenanceRequests() {
     if (list?.list_type !== "maintenance") {

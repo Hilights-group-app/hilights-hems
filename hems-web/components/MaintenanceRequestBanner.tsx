@@ -1,4 +1,5 @@
 "use client";
+import { useRepairStatus } from "@/lib/useRepairStatus";
 
 import { CheckCircle2, Loader2, Wrench } from "lucide-react";
 import { usePathname } from "next/navigation";
@@ -23,6 +24,7 @@ type MaintenanceRequest = {
 
 export default function MaintenanceRequestBanner() {
   const pathname = usePathname();
+  const repairSnapshot=useRepairStatus();
   const supabase = useMemo(() => createClient(), []);
   const [requestId, setRequestId] = useState("");
   const [request, setRequest] = useState<MaintenanceRequest | null>(null);
@@ -33,8 +35,8 @@ export default function MaintenanceRequestBanner() {
   const [department, setDepartment] = useState("");
 
   useEffect(() => {
-    setRole(getUserRole() || "");
-    setDepartment((getUserDepartment() || "").toLowerCase());
+    setRole((getUserRole() || "").trim().toLowerCase());
+    setDepartment((getUserDepartment() || "").trim().toLowerCase());
   }, []);
 
   useEffect(() => {
@@ -83,7 +85,7 @@ export default function MaintenanceRequestBanner() {
     return () => {
       cancelled = true;
     };
-  }, [requestId, supabase]);
+  }, [requestId, supabase, repairSnapshot.epoch]);
 
   async function markReportCompleted() {
     if (
@@ -107,7 +109,7 @@ export default function MaintenanceRequestBanner() {
     setSaving(true);
     setError("");
 
-    const { error: updateError } = await supabase.rpc(
+    const { data: result, error: updateError } = await supabase.rpc(
       repairWorkflow
         ? "test_maintenance_list_item"
         : "mark_maintenance_request_reported",
@@ -125,9 +127,9 @@ export default function MaintenanceRequestBanner() {
       current
         ? {
             ...current,
-            status: repairWorkflow ? "resolved" : "reported",
+            status: repairWorkflow ? result.status : "reported",
             tested_quantity: repairWorkflow
-              ? current.quantity
+              ? result.tested_quantity
               : current.tested_quantity,
           }
         : current,

@@ -1,6 +1,8 @@
 // components/SubcategoryClientChainHoist.tsx
 "use client";
 
+import { useRepairRefresh } from "@/lib/useRepairStatus";
+
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 
 import { getAppLayout } from "@/lib/appLayout";
@@ -353,6 +355,8 @@ export default function SubcategoryClientChainHoist({
       option.toLowerCase().startsWith(query),
     );
   }, [blockOptions, selectedBlockDraft, selectedItem]);
+
+  useRepairRefresh(()=>{if (subcategoryId) void loadItems(subcategoryId, false);});
 
   useEffect(() => {
     const details = selectedItem

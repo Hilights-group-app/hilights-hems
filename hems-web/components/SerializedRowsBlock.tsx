@@ -1,5 +1,8 @@
 "use client";
 
+import { useRepairStatus } from "@/lib/useRepairStatus";
+import { mergeRepairMovements, repairMovementClass } from "@/lib/repairWorkflow";
+
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -45,6 +48,8 @@ type UnitMovement = {
   listId: string;
   reference: string;
   label: string;
+  repairPhase?: "sent" | "received";
+  stockConflict?: boolean;
 };
 
 const ACTIVE_LIST_SELECT = `
@@ -157,9 +162,16 @@ export function SerializedRowsBlock({
   const supabase = createClient();
   const [units, setUnits] = useState<Unit[]>([]);
   const unitsRef = useRef<Unit[]>([]);
-  const [movementByUnit, setMovementByUnit] = useState<
+  const [baseMovementByUnit, setMovementByUnit] = useState<
     Record<string, UnitMovement>
   >({});
+  const loadVersion=useRef(0);
+  useEffect(()=>()=>{++loadVersion.current;},[]);
+  const repairSnapshot=useRepairStatus();
+  const movementByUnit=useMemo(()=>mergeRepairMovements(baseMovementByUnit,repairSnapshot.rows),[baseMovementByUnit,repairSnapshot.rows]);
+  const repairEpoch=useRef(repairSnapshot.epoch);
+  useEffect(()=>{if(repairEpoch.current!==repairSnapshot.epoch){repairEpoch.current=repairSnapshot.epoch;void loadUnits();}},[repairSnapshot.epoch]);
+
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
   const [statusFilter, setStatusFilter] =
@@ -188,9 +200,9 @@ export function SerializedRowsBlock({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemId, workflowControlledStatus]);
 
-  async function loadUnitMovements(unitIds: string[]) {
+  async function loadUnitMovements(unitIds: string[], version = loadVersion.current) {
     if (!workflowControlledStatus || unitIds.length === 0) {
-      setMovementByUnit({});
+      if(version===loadVersion.current)setMovementByUnit({});
       return;
     }
 
@@ -198,12 +210,13 @@ export function SerializedRowsBlock({
       .from("equipment_lists")
       .select(ACTIVE_LIST_SELECT)
       .in("status", ["active", "partially_returned"])
+      .not("list_type", "in", "(maintenance,transfer_in)")
       .order("created_at", { ascending: false })
       .limit(200);
 
     if (activeListsResult.error) {
       console.error("load serialized active lists error", activeListsResult.error);
-      setMovementByUnit({});
+      if(version===loadVersion.current)setMovementByUnit({});
       return;
     }
 
@@ -211,7 +224,7 @@ export function SerializedRowsBlock({
     const activeListIds = activeLists.map((list) => list.id);
 
     if (activeListIds.length === 0) {
-      setMovementByUnit({});
+      if(version===loadVersion.current)setMovementByUnit({});
       return;
     }
 
@@ -226,7 +239,7 @@ export function SerializedRowsBlock({
 
     if (error) {
       console.error("load serialized unit movements error", error);
-      setMovementByUnit({});
+      if(version===loadVersion.current)setMovementByUnit({});
       return;
     }
 
@@ -259,16 +272,18 @@ export function SerializedRowsBlock({
       };
     }
 
-    setMovementByUnit(nextMovements);
+    if(version===loadVersion.current)setMovementByUnit(nextMovements);
   }
 
   async function loadUnits() {
+    const version=++loadVersion.current;
     const { data, error } = await supabase
       .from("units")
       .select("id, unit_no, serial, status, notes, testing_date, damage_photos")
       .eq("item_id", itemId)
       .order("unit_no", { ascending: true });
 
+    if(version!==loadVersion.current)return;
     if (error) {
       console.error("loadUnits error:", error);
       return;
@@ -277,7 +292,7 @@ export function SerializedRowsBlock({
     const nextUnits = (data ?? []) as Unit[];
     unitsRef.current = nextUnits;
     setUnits(nextUnits);
-    await loadUnitMovements(nextUnits.map((unit) => unit.id));
+    await loadUnitMovements(nextUnits.map((unit) => unit.id),version);
   }
 
   useEffect(() => {
@@ -756,7 +771,7 @@ function UnitStatusField({
   onChange: (status: UnitStatus) => void;
 }) {
   const lockedByMovement =
-    workflowControlledStatus && isMovementStatus(status);
+    workflowControlledStatus && (isMovementStatus(status) || Boolean(movement));
   const widthClass = wide ? "w-full min-w-0" : "w-full";
 
   if (lockedByMovement) {
@@ -765,7 +780,7 @@ function UnitStatusField({
         <Link
           href={`/inventory/lists/${movement.listId}`}
           title={`${movement.reference} · ${movement.label}`}
-          className={`${widthClass} block truncate rounded-lg bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 transition hover:bg-blue-100`}
+          className={`${widthClass} block truncate rounded-lg px-2 py-1 text-[11px] font-semibold transition ${repairMovementClass(movement)}`}
         >
           {movement.label}
         </Link>
@@ -807,7 +822,7 @@ function UnitStatusField({
       style={{ color: getStatusTextColor(status) }}
       className={`${widthClass} rounded-lg bg-white px-1 py-1 text-[12px] font-semibold`}
     >
-      {statusLabel(status)}
+      {movement?.repairPhase ? movement.label : statusLabel(status)}
     </div>
   );
 }
@@ -856,6 +871,8 @@ function SerializedUnitRow({
       didInitRef.current = true;
     }
   }, [unit]);
+
+  useEffect(() => { setStatus(unit.status || "available"); }, [unit.status]);
 
   const photos = unit.damage_photos ?? [];
   const lockedByMovement =
@@ -919,7 +936,7 @@ function SerializedUnitRow({
                   : undefined
               }
             >
-              {workflowControlledStatus && isMovementStatus(status)
+              {lockedByMovement
                 ? movement?.label || "Existing movement"
                 : statusLabel(status)}
             </span>

@@ -1,4 +1,7 @@
 "use client";
+import MaintenanceRepairBadge from "@/components/MaintenanceRepairBadge";
+
+import { useRepairRefresh } from "@/lib/useRepairStatus";
 
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 
@@ -455,15 +458,15 @@ function StatPill({
 }
 
 function AllocationBadges({
-  allocations,
+  allocations,recordId,
 }: {
-  allocations: ActiveAllocation[];
+  allocations: ActiveAllocation[];recordId:string;
 }) {
-  if (allocations.length === 0) return null;
 
   return (
     <div className="mt-1 flex min-w-0 flex-wrap gap-1">
-      {allocations.map((allocation) => (
+      <MaintenanceRepairBadge recordId={recordId} />
+      {allocations.filter(allocation=>allocation.listType!=="maintenance").map((allocation) => (
         <Link
           key={allocation.listId}
           href={`/inventory/lists/${allocation.listId}`}
@@ -689,6 +692,8 @@ export default function SubcategoryClientMatrix({
     );
     return item && row ? { item, row } : null;
   }, [items, cableRowsByItem, selectedCableRow]);
+
+  useRepairRefresh(()=>{void load(true, true);});
 
   useEffect(() => {
     if (!selectedItem) return;
@@ -1307,10 +1312,6 @@ export default function SubcategoryClientMatrix({
       EQUIPMENT_LIST_ITEMS_EVENT,
       refreshEquipmentMovements,
     );
-    window.addEventListener(
-      "hems:maintenance-requests-change",
-      refreshEquipmentMovements,
-    );
 
     return () => {
       window.removeEventListener(
@@ -1319,10 +1320,6 @@ export default function SubcategoryClientMatrix({
       );
       window.removeEventListener(
         EQUIPMENT_LIST_ITEMS_EVENT,
-        refreshEquipmentMovements,
-      );
-      window.removeEventListener(
-        "hems:maintenance-requests-change",
         refreshEquipmentMovements,
       );
     };
@@ -2308,7 +2305,7 @@ export default function SubcategoryClientMatrix({
                     </h2>
                   </div>
 
-                  <AllocationBadges
+                  <AllocationBadges recordId={it.id}
                     allocations={
                       allocationsByRecordKey[`matrix_model:${it.id}`] || []
                     }
@@ -2401,6 +2398,7 @@ export default function SubcategoryClientMatrix({
                     title={row.cable_length}
                   >
                     {row.cable_length}
+                    <MaintenanceRepairBadge recordId={row.id} />
                     <KsaStockLink quantity={row.in_ksa_qty || 0} search={it.name} />
                   </div>
 
@@ -2536,7 +2534,7 @@ export default function SubcategoryClientMatrix({
                     >
                       <div className="min-w-0 text-left">
                         <div className="font-bold">{row.cable_length}</div>
-                        <AllocationBadges allocations={rowAllocations} />
+                        <AllocationBadges recordId={row.id} allocations={rowAllocations} />
                         <KsaStockLink quantity={row.in_ksa_qty || 0} search={it.name} />
                       </div>
 
@@ -2682,7 +2680,7 @@ export default function SubcategoryClientMatrix({
 
                 </div>
 
-                <AllocationBadges
+                <AllocationBadges recordId={it.id}
                   allocations={
                     allocationsByRecordKey[`matrix_model:${it.id}`] || []
                   }

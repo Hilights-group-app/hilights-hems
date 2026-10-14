@@ -1,5 +1,7 @@
 "use client";
 
+import { useRepairRefresh } from "@/lib/useRepairStatus";
+
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 
 import { getAppLayout } from "@/lib/appLayout";
@@ -309,6 +311,8 @@ export default function SubcategoryClientProjectors({
     );
   }, [blockOptions, selectedBlockDraft, selectedItem?.fixture_type]);
 
+  useRepairRefresh(()=>{if (resolvedSubcategoryId) void loadItems(resolvedSubcategoryId, true);});
+
   useEffect(() => {
     const parsed = splitProjectorName(selectedItem?.name ?? "");
     setSelectedBrandDraft(parsed.brand);
@@ -436,8 +440,8 @@ export default function SubcategoryClientProjectors({
     return subRes.data.id as string;
   }
 
-  async function loadItems(subId: string) {
-    setLoading(true);
+  async function loadItems(subId: string, quiet = false) {
+    if (!quiet) setLoading(true);
     setErrorMsg(null);
 
     const { data, error } = await supabase

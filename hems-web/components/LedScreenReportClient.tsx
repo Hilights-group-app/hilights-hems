@@ -1,5 +1,10 @@
 "use client";
 
+import InventoryRouteLoading from "@/components/InventoryRouteLoading";
+
+import MaintenanceRepairBadge from "@/components/MaintenanceRepairBadge";
+import { useRepairRefresh, useRepairStatus } from "@/lib/useRepairStatus";
+
 import KsaStockLink from "@/components/KsaStockLink";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -408,7 +413,10 @@ export default function LedScreenReportClient({
   rowId: string;
 }) {
   const supabase = useMemo(() => createClient(), []);
-  const loadingRef = useRef(false);
+  const repairSnapshot=useRepairStatus();
+  const allocationReadVersion = useRef(0);
+  const stockReadVersion = useRef(0);
+  useEffect(()=>()=>{++stockReadVersion.current;},[]);
   const editPhotoInputRef = useRef<HTMLInputElement | null>(null);
   const editable = canEditReportForRoute(category, subcategory);
 
@@ -474,12 +482,16 @@ export default function LedScreenReportClient({
     : 0;
   const trackedMovementQty = activeAllocatedQuantity + existingMovementQty;
 
+  useRepairRefresh(()=>{void loadData(()=>true, true);});
+
   useEffect(() => {
+    let cancelled = false;
     if (!rowId) {
       setLoading(false);
       return;
     }
-    void loadData();
+    void loadData(() => !cancelled);
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rowId]);
 
@@ -537,15 +549,19 @@ export default function LedScreenReportClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rowId]);
 
-  async function loadActiveAllocations(targetRowId: string) {
+  async function loadActiveAllocations(targetRowId: string, isCurrent: () => boolean = () => true) {
+    const version = ++allocationReadVersion.current;
+    const current = () => isCurrent() && version === allocationReadVersion.current;
     const activeListsResult = await supabase
       .from("equipment_lists")
       .select(ACTIVE_LIST_SELECT)
       .in("status", ["active", "partially_returned"])
+      .not("list_type", "in", "(maintenance,transfer_in)")
       .neq("list_type", "transfer_in")
       .order("created_at", { ascending: false })
       .limit(200);
 
+    if (!current()) return;
     if (activeListsResult.error) {
       console.error(
         "load LED report active lists error",
@@ -571,6 +587,7 @@ export default function LedScreenReportClient({
       .eq("inventory_record_id", targetRowId)
       .in("list_id", activeListIds);
 
+    if (!current()) return;
     if (itemsResult.error) {
       console.error(
         "load LED report active allocations error",
@@ -619,10 +636,11 @@ export default function LedScreenReportClient({
     setActiveAllocations(Array.from(allocationsByList.values()));
   }
 
-  async function loadData() {
-    if (loadingRef.current) return;
-    loadingRef.current = true;
-    setLoading(true);
+  async function loadData(isCurrent: () => boolean = () => true, quiet = false) {
+    const version=++stockReadVersion.current;
+    const routeCurrent=isCurrent;
+    isCurrent=()=>version===stockReadVersion.current && routeCurrent();
+    if (!quiet) setLoading(true);
 
     try {
       const { data: rowData, error: rowError } = await supabase
@@ -633,6 +651,7 @@ export default function LedScreenReportClient({
         .eq("id", rowId)
         .single();
 
+      if (!isCurrent()) return;
       if (rowError || !rowData) {
         console.error("load row error", rowError);
         setRow(null);
@@ -643,27 +662,20 @@ export default function LedScreenReportClient({
         return;
       }
 
-      const { data: modelData, error: modelError } = await supabase
-        .from("matrix_models")
-        .select("id, name")
-        .eq("id", rowData.model_id)
-        .single();
-
-      if (modelError) {
-        console.error("load model error", modelError);
-      }
-
-      const { data: issueRows, error: issueError } = await supabase
-        .from("led_maintenance_logs")
-        .select(
-          "id, matrix_row_id, problem_type, qty, team_name, event_name, event_date, note, photo_data, photo_data_list, created_at, created_by"
-        )
-        .eq("matrix_row_id", rowId)
-        .order("created_at", { ascending: false });
-
-      if (issueError) {
-        console.error("load issues error", issueError);
-      }
+      // Model, maintenance logs and movement badges are independent after
+      // resolving the cabinet row. Read them concurrently, not in a waterfall.
+      const [modelResult, issueResult] = await Promise.all([
+        supabase.from("matrix_models").select("id, name").eq("id", rowData.model_id).single(),
+        supabase.from("led_maintenance_logs")
+          .select("id, matrix_row_id, problem_type, qty, team_name, event_name, event_date, note, photo_data, photo_data_list, created_at, created_by")
+          .eq("matrix_row_id", rowId).order("created_at", { ascending: false }),
+        loadActiveAllocations(rowId, isCurrent),
+      ]);
+      if (!isCurrent()) return;
+      const { data: modelData, error: modelError } = modelResult;
+      const { data: issueRows, error: issueError } = issueResult;
+      if (modelError) console.error("load model error", modelError);
+      if (issueError) console.error("load issues error", issueError);
 
       const normalizedIssues = ((issueRows ?? []) as any[]).map((item) => ({
         ...item,
@@ -673,62 +685,28 @@ export default function LedScreenReportClient({
       setRow(rowData as MatrixRow);
       setModel((modelData ?? null) as MatrixModel | null);
       setIssues(normalizedIssues);
-      await loadActiveAllocations(rowId);
     } catch (error) {
+      if (!isCurrent()) return;
       console.error("loadData unexpected error", error);
       setRow(null);
       setModel(null);
       setIssues([]);
       setActiveAllocations([]);
     } finally {
-      loadingRef.current = false;
-      setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }
 
   async function syncMaintenance(nextIssues: MaintenanceLog[]) {
     if (!row || !editable) return;
 
-    const maintenanceQty = nextIssues
-      .filter(
-        (item) =>
-          item.problem_type !== "damaged_housing" &&
-          item.problem_type !== "hub_card_problem"
-      )
-      .reduce((sum, item) => sum + clampQty(item.qty), 0);
-
-    const nextAvailable = rowAvailableFromTotal(
-      clampQty(row.qty),
-      trackedMovementQty,
-      maintenanceQty,
-    );
-
-    const { error } = await supabase
-      .from("matrix_rows")
-      .update({
-        maintenance_qty: maintenanceQty,
-        available_qty: nextAvailable,
-        in_use_qty: trackedMovementQty,
-        in_ksa_qty: 0,
-      })
-      .eq("id", row.id);
-
-    if (error) {
-      console.error("sync maintenance error", error);
-      return;
-    }
-
-    setRow((prev) =>
-      prev
-        ? {
-            ...prev,
-            maintenance_qty: maintenanceQty,
-            available_qty: nextAvailable,
-            in_use_qty: trackedMovementQty,
-            in_ksa_qty: 0,
-          }
-        : prev
-    );
+    // The database trigger applies issue quantity changes atomically with the issue save.
+    // Read back current stock; historical issue totals must not overwrite tested stock.
+    const {data,error}=await supabase.from("matrix_rows")
+      .select("id, model_id, size, cabinet_model, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data")
+      .eq("id",row.id).single();
+    if(error){console.error("refresh LED report stock",error);return;}
+    if(data)setRow(data as MatrixRow);
   }
 
   function resetAddForm() {
@@ -1438,6 +1416,14 @@ export default function LedScreenReportClient({
           text: `Maintenance: ${formatQty(maintenanceDisplay, viewMode)} ${unitSuffix(viewMode)}`,
           fill: [254, 249, 195],
           color: [161, 98, 7],
+        });
+      }
+
+      for(const repair of repairSnapshot.rows.filter(repair=>repair.inventory_record_id===row.id)){
+        quantityChips.push({
+          text:`${formatQty(toDisplayQty(repair.quantity,row.size,viewMode),viewMode)} ${unitSuffix(viewMode)} - ${repair.label.replaceAll("·","-")}`,
+          fill:repair.phase==="received"?[243,232,255]:[254,249,195],
+          color:repair.phase==="received"?[107,33,168]:[161,98,7],
         });
       }
 
@@ -2161,17 +2147,7 @@ export default function LedScreenReportClient({
     </div>
   );
 
-  if (loading) {
-    return (
-      <div className="min-h-screen min-w-0 overflow-x-hidden bg-gray-50 p-3">
-        <div className="w-full mx-auto space-y-3">
-          <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
-            Loading...
-          </div>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <InventoryRouteLoading />;
 
   if (!rowId || !row) {
     return (
@@ -2346,6 +2322,7 @@ export default function LedScreenReportClient({
               </Link>
             ))}
 
+            <MaintenanceRepairBadge recordId={row.id} />
             <KsaStockLink quantity={row.in_ksa_qty} search={model?.name || ""} />
             {Math.max(0,existingMovementQty-clampQty(row.in_ksa_qty)) > 0 ? (
               <span className="max-w-full truncate rounded-lg bg-gray-100 px-2.5 py-1 text-[10px] font-semibold text-gray-600">

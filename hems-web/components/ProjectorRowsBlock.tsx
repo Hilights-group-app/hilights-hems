@@ -1,5 +1,8 @@
 "use client";
 
+import { useRepairStatus } from "@/lib/useRepairStatus";
+import { mergeRepairMovements, repairMovementClass } from "@/lib/repairWorkflow";
+
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -48,6 +51,8 @@ type UnitMovement = {
   listId: string;
   reference: string;
   label: string;
+  repairPhase?: "sent" | "received";
+  stockConflict?: boolean;
 };
 
 export type UnitPatch = Partial<
@@ -192,9 +197,16 @@ export function ProjectorRowsBlock({
   const supabase = createClient();
   const [units, setUnits] = useState<Unit[]>([]);
   const unitsRef = useRef<Unit[]>([]);
-  const [movementByUnit, setMovementByUnit] = useState<
+  const [baseMovementByUnit, setMovementByUnit] = useState<
     Record<string, UnitMovement>
   >({});
+  const loadVersion=useRef(0);
+  useEffect(()=>()=>{++loadVersion.current;},[]);
+  const repairSnapshot=useRepairStatus();
+  const movementByUnit=useMemo(()=>mergeRepairMovements(baseMovementByUnit,repairSnapshot.rows),[baseMovementByUnit,repairSnapshot.rows]);
+  const repairEpoch=useRef(repairSnapshot.epoch);
+  useEffect(()=>{if(repairEpoch.current!==repairSnapshot.epoch){repairEpoch.current=repairSnapshot.epoch;void loadUnits();}},[repairSnapshot.epoch]);
+
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
   const [statusFilter, setStatusFilter] =
@@ -208,7 +220,7 @@ export function ProjectorRowsBlock({
   }, [itemId, showTestingDate]);
 
   useEffect(() => {
-    if (!reloadOnFocus) return;
+    if (!reloadOnFocus || workflowControlledStatus) return;
 
     const handleFocus = () => void loadUnits();
     const handleVisibility = () => {
@@ -223,7 +235,7 @@ export function ProjectorRowsBlock({
       document.removeEventListener("visibilitychange", handleVisibility);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reloadOnFocus, itemId, showTestingDate]);
+  }, [reloadOnFocus, itemId, showTestingDate, workflowControlledStatus]);
 
   useEffect(() => {
     if (!workflowControlledStatus) return;
@@ -258,9 +270,9 @@ export function ProjectorRowsBlock({
     }
   }
 
-  async function loadUnitMovements(unitIds: string[]) {
+  async function loadUnitMovements(unitIds: string[], version = loadVersion.current) {
     if (!workflowControlledStatus || unitIds.length === 0) {
-      setMovementByUnit({});
+      if(version===loadVersion.current)setMovementByUnit({});
       return;
     }
 
@@ -268,12 +280,13 @@ export function ProjectorRowsBlock({
       .from("equipment_lists")
       .select(ACTIVE_LIST_SELECT)
       .in("status", ["active", "partially_returned"])
+      .not("list_type", "in", "(maintenance,transfer_in)")
       .order("created_at", { ascending: false })
       .limit(200);
 
     if (activeListsResult.error) {
       console.error("load projector active lists error", activeListsResult.error);
-      setMovementByUnit({});
+      if(version===loadVersion.current)setMovementByUnit({});
       return;
     }
 
@@ -281,7 +294,7 @@ export function ProjectorRowsBlock({
     const activeListIds = activeLists.map((list) => list.id);
 
     if (activeListIds.length === 0) {
-      setMovementByUnit({});
+      if(version===loadVersion.current)setMovementByUnit({});
       return;
     }
 
@@ -296,7 +309,7 @@ export function ProjectorRowsBlock({
 
     if (error) {
       console.error("load projector unit movements error", error);
-      setMovementByUnit({});
+      if(version===loadVersion.current)setMovementByUnit({});
       return;
     }
 
@@ -329,16 +342,18 @@ export function ProjectorRowsBlock({
       };
     }
 
-    setMovementByUnit(nextMovements);
+    if(version===loadVersion.current)setMovementByUnit(nextMovements);
   }
 
   async function loadUnits() {
+    const version=++loadVersion.current;
     const { data, error } = await supabase
       .from("units")
       .select(showTestingDate ? PROJECTOR_SELECT_WITH_TESTING : PROJECTOR_SELECT_WITHOUT_TESTING)
       .eq("item_id", itemId)
       .order("unit_no", { ascending: true });
 
+    if(version!==loadVersion.current)return;
     if (error) {
       console.error("loadUnits error:", error);
       return;
@@ -349,7 +364,7 @@ export function ProjectorRowsBlock({
     const nextUnits = (data ?? []) as unknown as Unit[];
     unitsRef.current = nextUnits;
     setUnits(nextUnits);
-    await loadUnitMovements(nextUnits.map((unit) => unit.id));
+    await loadUnitMovements(nextUnits.map((unit) => unit.id),version);
   }
 
   useEffect(() => {
@@ -416,23 +431,10 @@ export function ProjectorRowsBlock({
     unitsRef.current = optimisticUnits;
     setUnits(optimisticUnits);
 
-    const payload: Partial<Unit> = {
-      unit_no: nextPatch.unit_no ?? current.unit_no,
-      serial: nextPatch.serial ?? current.serial ?? "",
-      status: nextPatch.status ?? current.status ?? "available",
-      notes: nextPatch.notes ?? current.notes ?? "",
-      lamp_hours: nextPatch.lamp_hours ?? current.lamp_hours ?? 0,
-      damage_photos: nextPatch.damage_photos ?? current.damage_photos ?? [],
-      updated_by: nextPatch.updated_by,
-      updated_at: nextPatch.updated_at,
-    };
-
-    if (showTestingDate) {
-      payload.testing_date =
-        nextPatch.testing_date !== undefined
-          ? nextPatch.testing_date
-          : current.testing_date;
-    }
+    // Send only edited fields. A stale report must never write an old
+    // Available status while the unit is dispatched or awaiting testing.
+    const payload: Partial<Unit> = { ...nextPatch };
+    if (!showTestingDate) delete payload.testing_date;
 
     const { data, error } = await supabase
       .from("units")
@@ -948,7 +950,7 @@ function ProjectorStatusField({
         <Link
           href={`/inventory/lists/${movement.listId}`}
           title={`${movement.reference} · ${movement.label}`}
-          className={`${widthClass} block truncate rounded-lg bg-blue-50 px-2 py-1 text-[11px] font-semibold text-blue-700 transition hover:bg-blue-100`}
+          className={`${widthClass} block truncate rounded-lg px-2 py-1 text-[11px] font-semibold transition ${repairMovementClass(movement)}`}
         >
           {movement.label}
         </Link>
@@ -986,7 +988,7 @@ function ProjectorStatusField({
       style={{ color: getStatusTextColor(status) }}
       className={`${widthClass} rounded-lg bg-white px-1 py-1 text-[12px] font-semibold`}
     >
-      {statusLabel(status)}
+      {movement?.repairPhase ? movement.label : statusLabel(status)}
     </div>
   );
 }

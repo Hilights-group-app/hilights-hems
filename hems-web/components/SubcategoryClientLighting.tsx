@@ -1,4 +1,7 @@
 "use client";
+import MaintenanceRepairBadge from "@/components/MaintenanceRepairBadge";
+
+import { useRepairRefresh } from "@/lib/useRepairStatus";
 
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 
@@ -492,6 +495,8 @@ export default function SubcategoryClientLighting({
   );
 
   const activeDraftList = activeEquipmentList;
+
+  useRepairRefresh(()=>{void load(true, true);});
 
   useEffect(() => {
     const parsed = splitBrandModel(selectedFixture?.name ?? "");
@@ -1515,6 +1520,7 @@ export default function SubcategoryClientLighting({
             </div>
           </button>
 
+          <div className="pl-[76px]"><MaintenanceRepairBadge itemId={it.id} /></div>
           {allocations.length > 0 || existingMovementQuantity > 0 || stats.inKsa > 0 ? (
             <div
               data-lighting-active-allocations="true"
@@ -1527,7 +1533,7 @@ export default function SubcategoryClientLighting({
               </div>
 
               <div className="flex flex-wrap gap-1.5">
-                {allocations.map((allocation) => (
+                {allocations.filter(allocation=>allocation.listType!=="maintenance").map((allocation) => (
                   <Link
                     key={allocation.listId}
                     href={`/inventory/lists/${allocation.listId}`}

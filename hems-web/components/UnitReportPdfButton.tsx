@@ -4,6 +4,8 @@ import { Download } from "lucide-react";
 import { useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
+import { mergeRepairMovements, type RepairStatus } from "@/lib/repairWorkflow";
+
 type ReportVariant = "serialized" | "projector" | "chain_hoist";
 
 type SummaryItem = {
@@ -13,6 +15,7 @@ type SummaryItem = {
 
 type UnitRow = {
   id: string;
+  repair_label?:string;
   unit_no: string | number | null;
   serial: string | null;
   status: string | null;
@@ -155,7 +158,7 @@ function unitTable(variant: ReportVariant, rows: UnitRow[]) {
       body: rows.map((row) => [
         String(row.unit_no ?? "-"),
         row.serial || "-",
-        statusLabel(row.status),
+        row.repair_label || statusLabel(row.status),
         row.cert_date || "-",
         row.expiry_date || "-",
         row.notes || "-",
@@ -178,7 +181,7 @@ function unitTable(variant: ReportVariant, rows: UnitRow[]) {
       body: rows.map((row) => [
         String(row.unit_no ?? "-"),
         row.serial || "-",
-        statusLabel(row.status),
+        row.repair_label || statusLabel(row.status),
         String(row.lamp_hours ?? 0),
         row.testing_date || "-",
         row.notes || "-",
@@ -200,7 +203,7 @@ function unitTable(variant: ReportVariant, rows: UnitRow[]) {
     body: rows.map((row) => [
       String(row.unit_no ?? "-"),
       row.serial || "-",
-      statusLabel(row.status),
+      row.repair_label || statusLabel(row.status),
       row.testing_date || "-",
       row.notes || "-",
       String(normalizePhotos(row.damage_photos).length),
@@ -236,7 +239,7 @@ export default function UnitReportPdfButton({
     setExporting(true);
 
     try {
-      const [{ data, error }, { jsPDF }, { autoTable }, logo, itemPhoto] =
+      const [{ data, error }, { jsPDF }, { autoTable }, logo, itemPhoto, repairResult] =
         await Promise.all([
           supabase
             .from("units")
@@ -249,11 +252,16 @@ export default function UnitReportPdfButton({
           import("jspdf-autotable"),
           loadPdfImage("/logo.png", 1600),
           loadPdfImage(itemPhotoUrl, 1000),
+          supabase.rpc("hems_repair_status"),
         ]);
 
       if (error) throw error;
 
-      const rows = (data ?? []) as UnitRow[];
+      if(repairResult.error)throw repairResult.error;
+      const repairs=mergeRepairMovements({},(repairResult.data ?? []) as RepairStatus[]);
+      const rows = ((data ?? []) as UnitRow[]).map(row=>({...row,
+        repair_label:repairs[row.id]?.label.replaceAll("·","-"),
+      }));
       const pdf = new jsPDF({
         orientation: "portrait",
         unit: "mm",

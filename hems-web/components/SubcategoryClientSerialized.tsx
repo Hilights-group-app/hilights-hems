@@ -1,5 +1,7 @@
 "use client";
 
+import { useRepairRefresh } from "@/lib/useRepairStatus";
+
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 
 import { getAppLayout } from "@/lib/appLayout";
@@ -390,6 +392,8 @@ export default function SubcategoryClientSerialized({
     );
   }, [blockOptions, selectedBlockDraft, selectedItem?.fixture_type]);
 
+  useRepairRefresh(()=>{void load(true, true);});
+
   useEffect(() => {
     const parsed = splitBrandModel(selectedItem?.name ?? "");
     setSelectedBrandDraft(parsed.brand);
@@ -491,7 +495,7 @@ export default function SubcategoryClientSerialized({
     return subRes.data.id as string;
   }
 
-  async function load(forceRefresh = false) {
+  async function load(forceRefresh = false, quiet = false) {
     setErr(null);
 
     const cacheKey = cacheKeyFor(category, subcategory);
@@ -510,7 +514,7 @@ export default function SubcategoryClientSerialized({
       }
     }
 
-    setLoading(items.length === 0);
+    if (!quiet) setLoading(items.length === 0);
     await refreshData(cacheKey);
   }
   async function refreshData(cacheKey: string) {

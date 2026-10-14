@@ -1,4 +1,7 @@
 "use client";
+import MaintenanceRepairBadge from "@/components/MaintenanceRepairBadge";
+
+import { useRepairRefresh } from "@/lib/useRepairStatus";
 
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 
@@ -602,6 +605,8 @@ export default function SubcategoryClientLedScreen({
   function rowMaintenanceRepairQuantity(rowId: string) {
     return maintenanceAllocationQuantity(allocationsByRow[rowId] ?? []);
   }
+
+  useRepairRefresh(()=>{if (subcategoryId) void loadModels(subcategoryId, true);});
 
   useEffect(() => {
     const parsed = parseLedName(selectedModel?.name ?? "");
@@ -1892,7 +1897,7 @@ export default function SubcategoryClientLedScreen({
               Active Movements
             </div>
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {selectedCabinetAllocations.map((allocation) => (
+              {selectedCabinetAllocations.filter(allocation=>allocation.listType!=="maintenance").map((allocation) => (
                 <Link
                   key={allocation.listId}
                   href={`/inventory/lists/${allocation.listId}`}
@@ -1912,6 +1917,7 @@ export default function SubcategoryClientLedScreen({
           </div>
         ) : null}
 
+        <MaintenanceRepairBadge recordId={selectedCabinetInfo.row.id} />
         <KsaStockLink quantity={selectedCabinetInfo.row.in_ksa_qty} search={selectedCabinetInfo.model.name} />
         {Math.max(0,selectedCabinetExistingMovementQty-clampQty(selectedCabinetInfo.row.in_ksa_qty)) > 0 ? (
           <div className="rounded-xl bg-gray-100 px-2.5 py-2 text-[9px] font-semibold text-gray-600">
@@ -2911,7 +2917,7 @@ function LedModelCard({
 
       {modelMovements.length > 0 ? (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {modelMovements.map((allocation) => (
+          {modelMovements.filter(allocation=>allocation.listType!=="maintenance").map((allocation) => (
             <Link
               key={allocation.listId}
               href={`/inventory/lists/${allocation.listId}`}
@@ -2930,6 +2936,7 @@ function LedModelCard({
           ))}
         </div>
       ) : null}
+      <MaintenanceRepairBadge itemId={model.id} />
       <KsaStockLink quantity={modelKsaQuantity} search={model.name} />
       {Math.max(0,modelExistingMovement-modelKsaQuantity) > 0 ? (
         <div className="mt-2">
@@ -3119,7 +3126,7 @@ function LedModelCard({
 
                           {(allocationsByRow[r.id] ?? []).length > 0 ? (
                             <div className="mt-2 flex flex-wrap gap-1">
-                              {(allocationsByRow[r.id] ?? []).map(
+                              {(allocationsByRow[r.id] ?? []).filter(allocation=>allocation.listType!=="maintenance").map(
                                 (allocation) => (
                                   <span
                                     key={allocation.listId}
@@ -3138,6 +3145,7 @@ function LedModelCard({
                               )}
                             </div>
                           ) : null}
+                          <MaintenanceRepairBadge recordId={r.id} />
                           <KsaStockLink quantity={r.in_ksa_qty} search={model.name} />
                           {Math.max(0,existingMovementQuantity(r,movementAllocationQuantity(allocationsByRow[r.id] ?? []))-clampQty(r.in_ksa_qty)) > 0 ? (
                             <div className="mt-1">
@@ -3290,7 +3298,7 @@ function DesktopEditableCabinetRow({
 
       <div className="flex min-w-0 flex-wrap gap-1">
         {allocations.length > 0 ? (
-          allocations.map((allocation) => (
+          allocations.filter(allocation=>allocation.listType!=="maintenance").map((allocation) => (
             <Link
               key={allocation.listId}
               href={`/inventory/lists/${allocation.listId}`}
@@ -3310,6 +3318,7 @@ function DesktopEditableCabinetRow({
         ) : (
           legacyMovement === 0 ? <span className="text-gray-300">—</span> : null
         )}
+        <MaintenanceRepairBadge recordId={row.id} />
         <KsaStockLink quantity={row.in_ksa_qty} />
         {Math.max(0,legacyMovement-clampQty(row.in_ksa_qty)) > 0 ? (
           <span className="max-w-full truncate rounded-md bg-gray-100 px-1.5 py-1 text-[8px] font-semibold text-gray-600">

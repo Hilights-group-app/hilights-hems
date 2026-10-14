@@ -1,5 +1,7 @@
 "use client";
 
+import InventoryRouteLoading from "@/components/InventoryRouteLoading";
+
 
 
 import Link from "next/link";
@@ -355,27 +357,7 @@ export default function ItemEditClientChainHoistUnits({
 
 
 
-  if (loading) {
-
-    return (
-
-      <div className="min-h-screen overflow-x-hidden bg-gray-50 px-[2px] py-2 sm:p-3">
-
-        <div className="w-full min-w-0 max-w-none sm:w-full mx-auto space-y-3 px-0">
-
-          <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 text-gray-900">
-
-            Loading chain hoist...
-
-          </div>
-
-        </div>
-
-      </div>
-
-    );
-
-  }
+  if (loading) return <InventoryRouteLoading />;
 
 
 
