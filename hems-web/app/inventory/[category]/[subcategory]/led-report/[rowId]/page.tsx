@@ -19,6 +19,7 @@ export default function Page({
 
   return (
     <LedScreenReportClient
+      key={`${p.category}:${p.subcategory}:${p.rowId}`}
       category={p.category}
       subcategory={p.subcategory}
       rowId={p.rowId}

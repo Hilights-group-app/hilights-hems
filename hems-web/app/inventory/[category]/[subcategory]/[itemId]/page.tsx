@@ -13,6 +13,7 @@ export default function Page({
 
   return (
     <ItemEditRouterClient
+      key={`${p.category}:${p.subcategory}:${p.itemId}`}
       category={p.category}
       subcategory={p.subcategory}
       itemId={p.itemId}
