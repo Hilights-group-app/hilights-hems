@@ -1,4 +1,5 @@
 "use client";
+import EquipmentListPickerOverlay from "@/components/EquipmentListPickerOverlay";
 
 import { Loader2, PackagePlus, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -491,13 +492,7 @@ export default function EquipmentListMatrixQuantityAction({
   }
 
   const quantityDialog = open ? (
-    <div
-      className="fixed inset-0 z-[10020] flex items-end justify-center sm:items-center sm:p-5"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Add ${target.displayName} to ${activeList.reference}`}
-      onClick={(event) => event.stopPropagation()}
-    >
+    <EquipmentListPickerOverlay label={`Add ${target.displayName} to ${activeList.reference}`}>
       <button
         type="button"
         aria-label="Close quantity picker"
@@ -507,7 +502,7 @@ export default function EquipmentListMatrixQuantityAction({
         className="absolute inset-0 bg-black/50"
       />
 
-      <div className="relative w-full rounded-t-3xl bg-white shadow-2xl sm:max-w-md sm:rounded-3xl">
+      <div className="relative max-h-[calc(100dvh-12px)] w-full overflow-y-auto rounded-t-3xl bg-white shadow-2xl sm:max-w-md sm:rounded-3xl">
         <div className="flex items-start gap-3 border-b border-gray-200 px-4 py-4 sm:px-5">
           {target.photoUrl ? (
             <img
@@ -629,7 +624,7 @@ export default function EquipmentListMatrixQuantityAction({
           </button>
         </div>
       </div>
-    </div>
+    </EquipmentListPickerOverlay>
   ) : null;
 
   if (compact) {

@@ -1,5 +1,6 @@
 // components/SubcategoryClientChainHoist.tsx
 "use client";
+import {useInventoryPickingMode} from "@/lib/inventoryPickingMode";
 
 import { useRepairRefresh } from "@/lib/useRepairStatus";
 
@@ -357,6 +358,9 @@ export default function SubcategoryClientChainHoist({
   }, [blockOptions, selectedBlockDraft, selectedItem]);
 
   useRepairRefresh(()=>{if (subcategoryId) void loadItems(subcategoryId, false);});
+
+  const inventoryPicking=useInventoryPickingMode();
+  useEffect(()=>{if(inventoryPicking){setMobileMenuItemId(null);setMobileAddOpen(false);}},[inventoryPicking]);
 
   useEffect(() => {
     const details = selectedItem
@@ -1486,7 +1490,7 @@ export default function SubcategoryClientChainHoist({
         ))}
       </datalist>
 
-      {editable && mobileMenuItemId && selectedItem ? (
+      {!inventoryPicking && editable && mobileMenuItemId && selectedItem ? (
         <div
           data-mobile-chain-hoist-tools="true"
           className="fixed inset-0 z-[9998] hems-wide:hidden"
@@ -1606,6 +1610,7 @@ export default function SubcategoryClientChainHoist({
         <>
           <button
             type="button"
+            data-hems-inventory-add="true"
             aria-label="Add chain hoist"
             aria-expanded={mobileAddOpen}
             onClick={() => setMobileAddOpen(true)}
@@ -1852,6 +1857,7 @@ export default function SubcategoryClientChainHoist({
                     >
                       <button
                         type="button"
+                        data-hems-inventory-tools="true"
                         aria-label={`Edit ${it.name}`}
                         aria-expanded={mobileMenuItemId === it.id}
                         onClick={(event) => {

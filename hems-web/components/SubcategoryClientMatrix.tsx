@@ -1,4 +1,5 @@
 "use client";
+import {useInventoryPickingMode} from "@/lib/inventoryPickingMode";
 import MaintenanceRepairBadge from "@/components/MaintenanceRepairBadge";
 
 import { useRepairRefresh } from "@/lib/useRepairStatus";
@@ -694,6 +695,9 @@ export default function SubcategoryClientMatrix({
   }, [items, cableRowsByItem, selectedCableRow]);
 
   useRepairRefresh(()=>{void load(true, true);});
+
+  const inventoryPicking=useInventoryPickingMode();
+  useEffect(()=>{if(inventoryPicking){setMobileAddOpen(false);}},[inventoryPicking]);
 
   useEffect(() => {
     if (!selectedItem) return;
@@ -2249,6 +2253,7 @@ export default function SubcategoryClientMatrix({
           {editable ? (
             <button
               type="button"
+              data-hems-inventory-tools="true"
               aria-label={`Open ${it.name} tools`}
               onClick={(event) => {
                 event.preventDefault();
@@ -2447,6 +2452,7 @@ export default function SubcategoryClientMatrix({
           {editable ? (
             <button
               type="button"
+              data-hems-inventory-tools="true"
               aria-label={`Open ${it.name} tools`}
               onClick={(event) => {
                 event.preventDefault();
@@ -2624,6 +2630,7 @@ export default function SubcategoryClientMatrix({
         {editable ? (
           <button
             type="button"
+            data-hems-inventory-tools="true"
             aria-label={`Open ${it.name} tools`}
             onClick={(event) => {
               event.preventDefault();
@@ -2789,7 +2796,7 @@ export default function SubcategoryClientMatrix({
         onChange={onPickListItemPhoto}
       />
 
-      {(selectedBlockName || selectedItem || selectedCableRowInfo) ? (
+      {!inventoryPicking && (selectedBlockName || selectedItem || selectedCableRowInfo) ? (
         <div
           data-mobile-matrix-tools="true"
           className="fixed inset-0 z-[9998] hems-wide:hidden"
@@ -3165,6 +3172,7 @@ export default function SubcategoryClientMatrix({
             <>
               <button
                 type="button"
+                data-hems-inventory-add="true"
                 aria-label="Add matrix item"
                 aria-expanded={mobileAddOpen}
                 onClick={() => setMobileAddOpen(true)}
@@ -3179,6 +3187,7 @@ export default function SubcategoryClientMatrix({
                   className="fixed inset-0 z-[9998] hems-desktop:hidden"
                   role="dialog"
                   aria-modal="true"
+                  data-hems-inventory-add="true"
                   aria-label="Add matrix item"
                 >
                   <button

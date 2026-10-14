@@ -1,5 +1,6 @@
 "use client";
 
+import { ledIssueRemaining, ledIssueRepairLabel, tracksLedStock, validLedRepairQuantity } from "@/lib/ledIssueRepair";
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 
 import MaintenanceRepairBadge from "@/components/MaintenanceRepairBadge";
@@ -13,7 +14,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { canEditReportForRoute, getUserName } from "@/lib/authStore";
 import { logActivity } from "@/lib/activityStore";
-import { Download, Pencil, Plus, Trash2 } from "lucide-react";
+import { CheckCircle2, Download, Pencil, Plus, Trash2 } from "lucide-react";
 import {
   EQUIPMENT_LIST_ITEMS_EVENT,
   EQUIPMENT_LISTS_EVENT,
@@ -54,6 +55,9 @@ type MaintenanceLog = {
   matrix_row_id: string;
   problem_type: IssueType;
   qty: number;
+  stock_quantity: number;
+  repaired_quantity: number;
+  repaired_at: string | null;
   team_name: string | null;
   event_name: string | null;
   event_date: string | null;
@@ -62,6 +66,11 @@ type MaintenanceLog = {
   photo_data_list: string[] | null;
   created_at: string;
   created_by: string | null;
+};
+
+type LedRepairEntry={
+  id:string;issue_id:string;quantity:number;released_quantity:number;
+  action:"repaired"|"tested";note:string;actor_name:string;created_at:string;
 };
 
 type ActiveAllocation = {
@@ -463,6 +472,30 @@ export default function LedScreenReportClient({
   const [sidebarTarget, setSidebarTarget] = useState<HTMLElement | null>(null);
   const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
   const [pdfExporting, setPdfExporting] = useState(false);
+  const [repairOpen,setRepairOpen]=useState(false);
+  const [repairQty,setRepairQty]=useState(1);
+  const [repairNote,setRepairNote]=useState("");
+  const [repairSaving,setRepairSaving]=useState(false);
+  const [repairMessage,setRepairMessage]=useState("");
+  const [repairHistory,setRepairHistory]=useState<LedRepairEntry[]>([]);
+  const [repairHistoryError,setRepairHistoryError]=useState("");
+  const [repairHistoryRevision,setRepairHistoryRevision]=useState(0);
+  const repairBusy=useRef(false);
+  useEffect(()=>{
+    let cancelled=false;
+    setRepairHistory([]);setRepairHistoryError("");
+    if(editIssueId){
+      void (async()=>{
+        const {data,error}=await supabase.from("led_issue_repairs")
+          .select("id,issue_id,quantity,released_quantity,action,note,actor_name,created_at")
+          .eq("issue_id",editIssueId).order("created_at",{ascending:false}).limit(50);
+        if(cancelled)return;
+        if(error){setRepairHistoryError("Repair history could not be loaded.");return;}
+        setRepairHistory((data ?? []) as LedRepairEntry[]);
+      })();
+    }
+    return()=>{cancelled=true;};
+  },[editIssueId,repairHistoryRevision,repairSnapshot.epoch,supabase]);
 
   const activeAllocatedQuantity = useMemo(
     () =>
@@ -667,7 +700,7 @@ export default function LedScreenReportClient({
       const [modelResult, issueResult] = await Promise.all([
         supabase.from("matrix_models").select("id, name").eq("id", rowData.model_id).single(),
         supabase.from("led_maintenance_logs")
-          .select("id, matrix_row_id, problem_type, qty, team_name, event_name, event_date, note, photo_data, photo_data_list, created_at, created_by")
+          .select("id, matrix_row_id, problem_type, qty, stock_quantity, repaired_quantity, repaired_at, team_name, event_name, event_date, note, photo_data, photo_data_list, created_at, created_by")
           .eq("matrix_row_id", rowId).order("created_at", { ascending: false }),
         loadActiveAllocations(rowId, isCurrent),
       ]);
@@ -802,89 +835,6 @@ export default function LedScreenReportClient({
 
     try {
       if (isTechnicalIssue(issueType)) {
-        const existingTechnicalList = issues.filter(
-          (item) =>
-            item.matrix_row_id === row.id &&
-            item.problem_type === issueType &&
-            isTechnicalIssue(item.problem_type)
-        );
-
-        if (existingTechnicalList.length > 0) {
-          const baseIssue = existingTechnicalList[0];
-          const duplicatedIssues = existingTechnicalList.slice(1);
-
-          const mergedQty =
-            existingTechnicalList.reduce(
-              (sum, item) => sum + clampQty(item.qty),
-              0
-            ) + cleanQty;
-
-          const { error: updateError } = await supabase
-            .from("led_maintenance_logs")
-            .update({
-              qty: mergedQty,
-              team_name: null,
-              event_name: null,
-              event_date: null,
-              note: null,
-              photo_data: null,
-              photo_data_list: null,
-              created_by: getUserName?.() || baseIssue.created_by || null,
-            })
-            .eq("id", baseIssue.id);
-
-          if (updateError) {
-            console.error("merge technical issue error", updateError);
-            alert(updateError.message || "Failed to update issue qty");
-            setSaving(false);
-            return;
-          }
-
-          if (duplicatedIssues.length > 0) {
-            const duplicateIds = duplicatedIssues.map((item) => item.id);
-
-            const { error: deleteDuplicatesError } = await supabase
-              .from("led_maintenance_logs")
-              .delete()
-              .in("id", duplicateIds);
-
-            if (deleteDuplicatesError) {
-              console.error(
-                "delete duplicate technical issues error",
-                deleteDuplicatesError
-              );
-            }
-          }
-
-          const normalizedUpdated: MaintenanceLog = {
-            ...baseIssue,
-            qty: mergedQty,
-            team_name: null,
-            event_name: null,
-            event_date: null,
-            note: null,
-            photo_data: null,
-            photo_data_list: null,
-            created_by: getUserName?.() || baseIssue.created_by || null,
-          };
-
-          const remainingIssues = issues.filter(
-            (item) => !existingTechnicalList.some((x) => x.id === item.id)
-          );
-
-          const nextIssues = [normalizedUpdated, ...remainingIssues];
-          setIssues(nextIssues);
-          await syncMaintenance(nextIssues);
-          await logActivity({
-            title: `updated LED report for ${model?.name || "LED Screen"}`,
-            message: `${getIssueLabel(issueType)} quantity changed to ${mergedQty}`,
-            link: activityLink,
-          });
-          setSaving(false);
-          closeAddIssue();
-          return;
-        }
-
         const technicalPayload = {
           matrix_row_id: row.id,
           problem_type: issueType,
@@ -902,7 +852,7 @@ export default function LedScreenReportClient({
           .from("led_maintenance_logs")
           .insert(technicalPayload)
           .select(
-            "id, matrix_row_id, problem_type, qty, team_name, event_name, event_date, note, photo_data, photo_data_list, created_at, created_by"
+            "id, matrix_row_id, problem_type, qty, stock_quantity, repaired_quantity, repaired_at, team_name, event_name, event_date, note, photo_data, photo_data_list, created_at, created_by"
           );
 
         if (
@@ -954,7 +904,7 @@ export default function LedScreenReportClient({
         .from("led_maintenance_logs")
         .insert(payload)
         .select(
-          "id, matrix_row_id, problem_type, qty, team_name, event_name, event_date, note, photo_data, photo_data_list, created_at, created_by"
+          "id, matrix_row_id, problem_type, qty, stock_quantity, repaired_quantity, repaired_at, team_name, event_name, event_date, note, photo_data, photo_data_list, created_at, created_by"
         );
 
       if (error || !insertedRows || insertedRows.length === 0) {
@@ -1009,6 +959,8 @@ export default function LedScreenReportClient({
     setShowAddModal(false);
     resetAddForm();
     setEditIssueId(issueId);
+    setRepairOpen(false);setRepairMessage("");setRepairNote("");
+    setRepairQty(Math.max(1,ledIssueRemaining(issue)));
     setEditQty(issue.qty);
     setEditTeamName(issue.team_name || "");
     setEditEventName(issue.event_name || "");
@@ -1098,10 +1050,9 @@ export default function LedScreenReportClient({
           created_by: editorName,
         };
 
-    const { error } = await supabase
-      .from("led_maintenance_logs")
-      .update(patch)
-      .eq("id", editIssueId);
+    const { data: savedIssue, error } = await supabase
+      .from("led_maintenance_logs").update(patch).eq("id",editIssueId)
+      .select("id, matrix_row_id, problem_type, qty, stock_quantity, repaired_quantity, repaired_at, team_name, event_name, event_date, note, photo_data, photo_data_list, created_at, created_by").single();
 
     if (error) {
       alert("Update failed");
@@ -1114,6 +1065,7 @@ export default function LedScreenReportClient({
         ? {
             ...x,
             ...patch,
+            ...savedIssue,
             photo_data_list: isCrewDamage(editedIssue.problem_type)
               ? [...editPhotoList]
               : x.photo_data_list,
@@ -1134,6 +1086,39 @@ export default function LedScreenReportClient({
         link: activityLink,
       });
     }
+  }
+
+  async function markIssueRepaired() {
+    if(!editable || !selectedIssue || repairBusy.current)return;
+    const issue=selectedIssue,remaining=ledIssueRemaining(issue);
+    if(!validLedRepairQuantity(repairQty,remaining)){
+      setRepairMessage(`Enter between 1 and ${remaining} whole cabinets.`);return;
+    }
+    if(repairNote.trim().length>2000){setRepairMessage("Repair note must be 2000 characters or fewer.");return;}
+    repairBusy.current=true;setRepairSaving(true);setRepairMessage("");
+    try{
+      const {data,error}=await supabase.rpc("hems_repair_led_issue",{
+        p_issue_id:issue.id,p_quantity:repairQty,p_expected_remaining:remaining,p_note:repairNote.trim(),
+      });
+      if(error)throw error;
+      if(!data?.issue || !data?.row)throw new Error("The repair response was incomplete. Refresh this report before retrying.");
+      ++stockReadVersion.current;
+      setIssues(current=>current.map(item=>item.id===issue.id?data.issue as MaintenanceLog:item));
+      setRow(data.row as MatrixRow);
+      setRepairHistoryRevision(current=>current+1);
+      setRepairOpen(false);setRepairNote("");
+      setRepairMessage(data.already_repaired?"This issue has already been repaired or cleared.":
+        Number(data.released_quantity)>0?`${data.released_quantity} cabinets returned to Available.`:
+        "Repair recorded. This damage report did not reserve stock.");
+      window.dispatchEvent(new CustomEvent("hems:maintenance-requests-change"));
+      if(!data.already_repaired)void logActivity({
+        title:`repaired LED panels for ${model?.name || "LED Screen"}`,
+        message:`${getIssueLabel(issue.problem_type)}: ${repairQty} cabinets repaired`,link:activityLink,
+      }).catch(error=>console.error("repair activity error",error));
+    }catch(error){
+      console.error("repair LED issue",error);
+      setRepairMessage(error instanceof Error?error.message:(error as {message?:string})?.message || "Repair could not be confirmed.");
+    }finally{repairBusy.current=false;setRepairSaving(false);}
   }
 
   async function deleteIssue(issueId: string) {
@@ -1581,7 +1566,7 @@ export default function LedScreenReportClient({
           pdf.text(
             fitPdfText(
               pdf,
-              `${getIssueLabel(issue.problem_type)}: ${issue.qty} Cabinet`,
+              `${getIssueLabel(issue.problem_type)}: ${issue.qty} Cabinet - ${ledIssueRepairLabel(issue).replaceAll("·","-")}`,
               technicalCardWidth - 6,
             ),
             x + 3,
@@ -1722,7 +1707,7 @@ export default function LedScreenReportClient({
           pdf.setTextColor(65, 65, 65);
           let lineY = damageCardY + 13;
           const damageDetails = [
-            `Qty by Cabinet: ${issue.qty}`,
+            `Qty: ${issue.qty} - ${ledIssueRepairLabel(issue).replaceAll("·","-")}`,
             `Team: ${issue.team_name || "-"}`,
             `Event: ${issue.event_name || "-"}`,
             `Date: ${issue.event_date || "-"}`,
@@ -1951,6 +1936,54 @@ export default function LedScreenReportClient({
               </div>
             </>
           ) : null}
+
+          <div className="rounded-xl border border-green-200 bg-green-50 p-3">
+            <div className="text-[11px] font-semibold text-green-800">{ledIssueRepairLabel(selectedIssue)}</div>
+            {ledIssueRemaining(selectedIssue)>0 ? (
+              repairOpen ? <div className="mt-2 space-y-2">
+                <label className="block text-[10px] font-medium text-gray-700">
+                  Repaired cabinets
+                  <input type="number" min={1} max={ledIssueRemaining(selectedIssue)} step={1}
+                    value={repairQty} disabled={repairSaving}
+                    onChange={event=>setRepairQty(Number(event.target.value))}
+                    className="mt-1 h-10 w-full rounded-xl border border-gray-300 bg-white px-3 text-[12px]" />
+                </label>
+                <label className="block text-[10px] font-medium text-gray-700">
+                  Repair note
+                  <textarea value={repairNote} maxLength={2000} disabled={repairSaving}
+                    onChange={event=>setRepairNote(event.target.value)}
+                    placeholder="How were the panels repaired? E.g. replaced IC or LED module."
+                    className="mt-1 min-h-20 w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-[12px]" />
+                </label>
+                <div className="text-[10px] text-green-800">{tracksLedStock(selectedIssue)?
+                  "The confirmed quantity returns to Available. The original issue stays saved.":
+                  "Record the repair; this damage report does not reserve stock."}</div>
+                <div className="flex gap-2">
+                  <button type="button" disabled={repairSaving} onClick={()=>setRepairOpen(false)}
+                    className="min-h-11 flex-1 rounded-xl border border-green-200 bg-white px-3 text-[11px]">Cancel</button>
+                  <button type="button" disabled={repairSaving} onClick={()=>void markIssueRepaired()}
+                    className="min-h-11 flex-1 rounded-xl bg-green-700 px-3 text-[11px] font-semibold text-white disabled:opacity-50">
+                    {repairSaving?"Saving...":"Confirm Repaired"}
+                  </button>
+                </div>
+              </div> : <button type="button" disabled={repairSaving} onClick={()=>{
+                  setRepairQty(ledIssueRemaining(selectedIssue));setRepairNote("");setRepairMessage("");setRepairOpen(true);
+                }} className="mt-2 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-green-700 px-3 text-[11px] font-semibold text-white">
+                <CheckCircle2 size={14} /> Repaired
+              </button>
+            ) : null}
+            {repairMessage?<div role="status" className="mt-2 text-[11px] text-gray-800">{repairMessage}</div>:null}
+          </div>
+          <details className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+            <summary className="cursor-pointer text-[11px] font-semibold text-gray-700">Recent repair history</summary>
+            {repairHistoryError?<div className="mt-2 text-[10px] text-red-700">{repairHistoryError}</div>:null}
+            {!repairHistoryError && !repairHistory.length?<div className="mt-2 text-[10px] text-gray-500">No recorded repairs yet.</div>:null}
+            {repairHistory.map(entry=><div key={entry.id} className="mt-2 border-t border-gray-200 pt-2 text-[10px] text-gray-700">
+              <div className="font-semibold">{entry.quantity} cabinets · {entry.action==="tested"?"Tested":"Repaired"}</div>
+              <div>{new Date(entry.created_at).toLocaleString()} · {entry.actor_name}</div>
+              {entry.note?<div className="mt-1 whitespace-pre-wrap break-words">{entry.note}</div>:null}
+            </div>)}
+          </details>
 
           <button
             type="button"
@@ -2374,6 +2407,7 @@ export default function LedScreenReportClient({
                     <div className="min-w-0">
                       <div className="font-semibold text-[14px] text-gray-900">
                         {getIssueLabel(log.problem_type)} : {log.qty} Cabinet
+                        <div className="mt-1 text-[11px] font-medium text-green-700">{ledIssueRepairLabel(log)}</div>
                       </div>
                       <div className="text-[11px] text-gray-500 mt-1">
                         Saved: {new Date(log.created_at).toLocaleString()} added by{" "}
@@ -2436,6 +2470,7 @@ export default function LedScreenReportClient({
 
                         <div className="mt-2 space-y-1 text-[12px] text-gray-700 leading-snug">
                           <div>Qty by Cabinet : {log.qty}</div>
+                          <div className="font-semibold text-green-700">{ledIssueRepairLabel(log)}</div>
                           <div>Team : {log.team_name || "-"}</div>
                           <div>Event : {log.event_name || "-"}</div>
                           <div>Date : {log.event_date || "-"}</div>

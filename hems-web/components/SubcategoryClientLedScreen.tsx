@@ -1,4 +1,5 @@
 "use client";
+import {useInventoryPickingMode} from "@/lib/inventoryPickingMode";
 import MaintenanceRepairBadge from "@/components/MaintenanceRepairBadge";
 
 import { useRepairRefresh } from "@/lib/useRepairStatus";
@@ -607,6 +608,9 @@ export default function SubcategoryClientLedScreen({
   }
 
   useRepairRefresh(()=>{if (subcategoryId) void loadModels(subcategoryId, true);});
+
+  const inventoryPicking=useInventoryPickingMode();
+  useEffect(()=>{if(inventoryPicking){setMobileAddOpen(false);}},[inventoryPicking]);
 
   useEffect(() => {
     const parsed = parseLedName(selectedModel?.name ?? "");
@@ -2215,7 +2219,7 @@ export default function SubcategoryClientLedScreen({
         />
       ) : null}
 
-      {(selectedModel || selectedCabinetInfo) ? (
+      {!inventoryPicking && (selectedModel || selectedCabinetInfo) ? (
         <div
           data-mobile-led-tools="true"
           className="fixed inset-0 z-[9998] hems-wide:hidden"
@@ -2331,6 +2335,7 @@ export default function SubcategoryClientLedScreen({
         <>
           <button
             type="button"
+            data-hems-inventory-add="true"
             aria-label="Add LED screen"
             onClick={() => setMobileAddOpen(true)}
             className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl active:scale-95 hems-wide:hidden"
@@ -2876,6 +2881,7 @@ function LedModelCard({
           <button
             type="button"
             data-led-model-select="true"
+            data-hems-inventory-tools="true"
             aria-label={`Open ${model.name} tools`}
             onClick={(event) => {
               event.preventDefault();
@@ -3022,6 +3028,7 @@ function LedModelCard({
                         <button
                           type="button"
                           data-led-cabinet-row="true"
+                          data-hems-inventory-tools="true"
                           aria-label={`Open ${r.cabinet_model || r.size} tools`}
                           onClick={(event) => {
                             event.preventDefault();
@@ -3043,12 +3050,13 @@ function LedModelCard({
                             onAddToList(r);
                           }}
                           data-hems-mobile-add="cabinets"
+                          aria-label={`Add cabinets to ${activeDraftList.reference}`}
                           title={`Add cabinets to ${activeDraftList.reference}`}
                           className={`absolute top-2 z-20 inline-flex h-[26px] min-w-[26px] items-center justify-center rounded-full bg-black px-2 text-[9px] font-semibold text-white shadow-sm ${
                             editable ? "right-10" : "right-2"
                           }`}
                         >
-                          + List
+                          <span aria-hidden="true">+</span><span className="hidden hems-wide:inline"> List</span>
                         </button>
                       ) : null}
 
@@ -3347,6 +3355,7 @@ function DesktopEditableCabinetRow({
               onAddToList();
             }}
             data-hems-mobile-add="cabinets"
+                          aria-label={`Add cabinets to ${activeDraftList.reference}`}
                           title={`Add cabinets to ${activeDraftList.reference}`}
             className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-black text-xs font-bold text-white hover:bg-gray-800"
           >

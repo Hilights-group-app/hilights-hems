@@ -1,5 +1,6 @@
 "use client";
 
+import {inventoryPickingActive,setInventoryPickingMode} from "@/lib/inventoryPickingMode";
 import { useAppLayout } from "@/lib/useAppLayout";
 import { createBrowserId } from "@/lib/browserId";
 
@@ -30,6 +31,10 @@ export default function MobileDraftDock() {
   const [toast, setToast] = useState("");
   const [keyboard, setKeyboard] = useState(false);
   const activeId = useRef<string | null>(null);
+
+  const picking=inventoryPickingActive(mobile && enabled,Boolean(list),pathname);
+  useEffect(()=>{setInventoryPickingMode(picking);},[picking]);
+  useEffect(()=>()=>setInventoryPickingMode(false),[]);
 
   useEffect(() => {
     let initial = true;
@@ -152,11 +157,15 @@ export default function MobileDraftDock() {
   const openLists = () => window.dispatchEvent(new CustomEvent("hems:open-mobile-lists"));
   return <div data-hems-dock className="fixed inset-x-0 bottom-0 z-[80] border-t border-gray-200 bg-white/95 shadow-[0_-8px_30px_rgba(0,0,0,0.06)] backdrop-blur-xl">
     {toast ? <div role="status" className="pointer-events-none absolute inset-x-4 -top-12 flex items-center justify-center gap-2 rounded-2xl bg-gray-900 px-4 py-3 text-xs font-semibold text-white shadow-lg"><Check size={15} />{toast}</div> : null}
-    {list ? <Link href={`/inventory/lists/${encodeURIComponent(list.id)}`} className="flex min-h-14 items-center gap-3 border-b border-gray-100 px-4 py-2">
+    {list ? <div className="flex items-center border-b border-gray-100"><Link href={`/inventory/lists/${encodeURIComponent(list.id)}`} className="flex min-h-14 min-w-0 flex-1 items-center gap-3 px-4 py-2">
       <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-red-50 text-red-600"><ClipboardList size={18} /></span>
       <span className="min-w-0 flex-1"><span className="block truncate text-xs font-bold text-gray-900">{list.reference} <span className="font-medium text-gray-400">· {list.status === "draft" ? "Draft" : "Review"}</span></span><span className="mt-0.5 block truncate text-[11px] text-gray-500">{equipmentListSummary(list)}{lines !== null ? ` · ${lines} item line${lines === 1 ? "" : "s"}` : ""}</span></span>
       <span className="text-[11px] font-bold text-red-600">View</span><ChevronRight size={16} className="text-gray-400" />
-    </Link> : <button type="button" onClick={openLists} className="flex min-h-12 w-full items-center justify-between border-b border-gray-100 px-4 text-xs font-semibold text-gray-700"><span>Choose a draft to add equipment</span><ChevronRight size={16} /></button>}
+    </Link><button type="button" aria-label="Finish adding items" onClick={()=>{
+      try{localStorage.removeItem(ACTIVE_EQUIPMENT_LIST_KEY);}catch{}
+      setList(null);setLines(null);setInventoryPickingMode(false);
+      window.dispatchEvent(new CustomEvent(ACTIVE_EQUIPMENT_LIST_EVENT,{detail:{listId:null}}));
+    }} className="mr-3 min-h-11 shrink-0 rounded-xl bg-gray-100 px-3 text-[11px] font-semibold text-gray-700">Done</button></div> : <button type="button" onClick={openLists} className="flex min-h-12 w-full items-center justify-between border-b border-gray-100 px-4 text-xs font-semibold text-gray-700"><span>Choose a draft to add equipment</span><ChevronRight size={16} /></button>}
     <nav aria-label="Mobile navigation" className="grid grid-cols-3 px-3 pt-1" style={{ paddingBottom: "max(8px, env(safe-area-inset-bottom))" }}>
       <Link href="/" aria-current={pathname === "/" ? "page" : undefined} className={`flex min-h-12 flex-col items-center justify-center gap-1 text-[10px] font-semibold ${pathname === "/" ? "text-red-600" : "text-gray-500"}`}><House size={20} />Home</Link>
       <Link href="/inventory" aria-current={pathname.startsWith("/inventory") && !pathname.startsWith("/inventory/lists") ? "page" : undefined} className={`flex min-h-12 flex-col items-center justify-center gap-1 text-[10px] font-semibold ${pathname.startsWith("/inventory") && !pathname.startsWith("/inventory/lists") ? "text-red-600" : "text-gray-500"}`}><Boxes size={20} />Inventory</Link>

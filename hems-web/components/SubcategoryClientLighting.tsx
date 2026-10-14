@@ -1,4 +1,5 @@
 "use client";
+import {useInventoryPickingMode} from "@/lib/inventoryPickingMode";
 import MaintenanceRepairBadge from "@/components/MaintenanceRepairBadge";
 
 import { useRepairRefresh } from "@/lib/useRepairStatus";
@@ -497,6 +498,9 @@ export default function SubcategoryClientLighting({
   const activeDraftList = activeEquipmentList;
 
   useRepairRefresh(()=>{void load(true, true);});
+
+  const inventoryPicking=useInventoryPickingMode();
+  useEffect(()=>{if(inventoryPicking){setMobileMenuItemId(null);setMobileAddFixtureOpen(false);}},[inventoryPicking]);
 
   useEffect(() => {
     const parsed = splitBrandModel(selectedFixture?.name ?? "");
@@ -1569,13 +1573,14 @@ export default function SubcategoryClientLighting({
                 event.stopPropagation();
                 setListPickerItem(it);
               }}
+              aria-label={`Add units to ${activeDraftList.reference}`}
               title={`Add units to ${activeDraftList.reference}`}
               data-hems-mobile-add="units"
               className={`absolute top-2 z-20 rounded-full bg-black px-2.5 py-1 text-[9px] font-semibold text-white shadow-sm hems-wide:hidden ${
                 editable ? "right-10" : "right-2"
               }`}
             >
-              + List
+              <span aria-hidden="true">+</span><span className="hidden hems-wide:inline"> List</span>
             </button>
           ) : null}
 
@@ -1588,10 +1593,11 @@ export default function SubcategoryClientLighting({
                   event.stopPropagation();
                   setListPickerItem(it);
                 }}
-                title={`Add units to ${activeDraftList.reference}`}
+                aria-label={`Add units to ${activeDraftList.reference}`}
+              title={`Add units to ${activeDraftList.reference}`}
                 className="rounded-full bg-black px-2.5 py-1 text-[9px] font-semibold text-white shadow-sm transition hover:bg-gray-800"
               >
-                + List
+                <span aria-hidden="true">+</span><span className="hidden hems-wide:inline"> List</span>
               </button>
             ) : null}
 
@@ -1611,6 +1617,7 @@ export default function SubcategoryClientLighting({
             >
               <button
                 type="button"
+                data-hems-inventory-tools="true"
                 aria-label={`Edit ${it.name}`}
                 aria-expanded={mobileMenuItemId === it.id}
                 onClick={(event) => {
@@ -2054,7 +2061,7 @@ export default function SubcategoryClientLighting({
         />
       ) : null}
 
-      {editable && mobileMenuItemId && selectedFixture ? (
+      {!inventoryPicking && editable && mobileMenuItemId && selectedFixture ? (
         <div
           data-mobile-lighting-tools="true"
           className="fixed inset-0 z-[9998] hems-wide:hidden"
@@ -2187,6 +2194,7 @@ export default function SubcategoryClientLighting({
         <>
           <button
             type="button"
+            data-hems-inventory-add="true"
             aria-label="Add fixture"
             aria-expanded={mobileAddFixtureOpen}
             onClick={() => setMobileAddFixtureOpen(true)}

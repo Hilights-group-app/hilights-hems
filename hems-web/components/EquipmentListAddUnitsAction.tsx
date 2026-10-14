@@ -178,7 +178,7 @@ export default function EquipmentListAddUnitsAction({
             : "w-full rounded-xl bg-red-600 px-3 py-2.5 text-center text-[11px] font-semibold text-white transition hover:bg-red-700"
         }
       >
-        {compact ? "+ List" : `+ Add Units to ${activeList.reference}`}
+        {compact ? <><span aria-hidden="true">+</span><span className="hidden hems-wide:inline"> List</span></> : `+ Add Units to ${activeList.reference}`}
       </button>
 
       {!compact && message ? (

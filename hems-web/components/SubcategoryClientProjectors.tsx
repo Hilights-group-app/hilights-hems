@@ -1,4 +1,5 @@
 "use client";
+import {useInventoryPickingMode} from "@/lib/inventoryPickingMode";
 
 import { useRepairRefresh } from "@/lib/useRepairStatus";
 
@@ -312,6 +313,9 @@ export default function SubcategoryClientProjectors({
   }, [blockOptions, selectedBlockDraft, selectedItem?.fixture_type]);
 
   useRepairRefresh(()=>{if (resolvedSubcategoryId) void loadItems(resolvedSubcategoryId, true);});
+
+  const inventoryPicking=useInventoryPickingMode();
+  useEffect(()=>{if(inventoryPicking){setMobileMenuItemId(null);setMobileAddOpen(false);}},[inventoryPicking]);
 
   useEffect(() => {
     const parsed = splitProjectorName(selectedItem?.name ?? "");
@@ -1365,7 +1369,7 @@ export default function SubcategoryClientProjectors({
         onChange={onPickListItemPhoto}
       />
 
-      {editable && mobileMenuItemId && selectedItem ? (
+      {!inventoryPicking && editable && mobileMenuItemId && selectedItem ? (
         <div
           data-mobile-projector-tools="true"
           className="fixed inset-0 z-[9998] hems-wide:hidden"
@@ -1480,6 +1484,7 @@ export default function SubcategoryClientProjectors({
         <>
           <button
             type="button"
+            data-hems-inventory-add="true"
             aria-label="Add projector"
             onClick={() => setMobileAddOpen(true)}
             className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl active:scale-95 hems-wide:hidden"
@@ -1971,6 +1976,7 @@ function ProjectorItemRow({
           >
             <button
               type="button"
+              data-hems-inventory-tools="true"
               aria-label={`Edit ${item.name}`}
               aria-expanded={mobileMenuOpen}
               onClick={(event) => {

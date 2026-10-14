@@ -1,4 +1,5 @@
 "use client";
+import EquipmentListPickerOverlay from "@/components/EquipmentListPickerOverlay";
 
 import { Check, Loader2, PackagePlus, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -258,12 +259,7 @@ export default function EquipmentListUnitPicker({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[10020] flex items-end justify-center sm:items-center sm:p-5"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Add ${item.name} to ${list.reference}`}
-    >
+    <EquipmentListPickerOverlay label={`Add ${item.name} to ${list.reference}`}>
       <button
         type="button"
         aria-label="Close unit picker"
@@ -273,8 +269,8 @@ export default function EquipmentListUnitPicker({
         className="absolute inset-0 bg-black/50"
       />
 
-      <div className="relative flex max-h-[88dvh] w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-xl sm:rounded-3xl">
-        <div className="flex items-start gap-3 border-b border-gray-200 px-4 py-4 sm:px-5">
+      <div className="relative flex w-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:max-w-xl sm:rounded-3xl" style={{maxHeight:"min(90dvh, calc(100% - 12px))"}}>
+        <div className="flex shrink-0 items-start gap-3 border-b border-gray-200 px-4 py-4 sm:px-5">
           {item.photo_url ? (
             <img
               src={item.photo_url}
@@ -310,6 +306,7 @@ export default function EquipmentListUnitPicker({
           </button>
         </div>
 
+        <div data-hems-picker-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 sm:px-5">
           <div>
             <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
@@ -364,7 +361,7 @@ export default function EquipmentListUnitPicker({
           </div>
         ) : null}
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-5">
+        <div className="px-3 py-3 sm:px-5">
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-12 text-xs text-gray-500">
               <Loader2 size={15} className="animate-spin" />
@@ -449,23 +446,19 @@ export default function EquipmentListUnitPicker({
           ) : null}
         </div>
 
-        <div className="border-t border-gray-200 bg-white px-4 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-3 sm:px-5 sm:pb-4">
+        </div>
+        <div data-hems-picker-footer className="shrink-0 border-t border-gray-200 bg-white px-4 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-3 sm:px-5 sm:pb-4">
           <button
             type="button"
             onClick={() => void addSelectedUnits()}
             disabled={saving || selectedIds.size === 0 || !canAddToList}
-            className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-black px-4 text-[11px] font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-black px-4 text-[11px] font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {saving ? <Loader2 size={14} className="animate-spin" /> : <PackagePlus size={14} />}
-            {saving
-              ? "Adding..."
-              : `Add ${selectedIds.size || ""} Unit${selectedIds.size === 1 ? "" : "s"}`.replace(
-                  "Add  Units",
-                  "Select Units",
-                )}
+            {saving ? "Adding..." : selectedIds.size===0 ? "Select serials to add" : `Add ${selectedIds.size} unit${selectedIds.size===1?"":"s"} to list`}
           </button>
         </div>
       </div>
-    </div>
+    </EquipmentListPickerOverlay>
   );
 }

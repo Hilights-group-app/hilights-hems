@@ -1,4 +1,5 @@
 "use client";
+import EquipmentListPickerOverlay from "@/components/EquipmentListPickerOverlay";
 
 import { Loader2, PackagePlus, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -281,12 +282,7 @@ export default function EquipmentListQuantityPicker({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[10020] flex items-end justify-center sm:items-center sm:p-5"
-      role="dialog"
-      aria-modal="true"
-      aria-label={`Add ${displayName || modelName} to ${list.reference}`}
-    >
+    <EquipmentListPickerOverlay label={`Add ${displayName || modelName} to ${list.reference}`}>
       <button
         type="button"
         aria-label="Close cabinet quantity picker"
@@ -296,7 +292,7 @@ export default function EquipmentListQuantityPicker({
         className="absolute inset-0 bg-black/50"
       />
 
-      <div className="relative w-full rounded-t-3xl bg-white shadow-2xl sm:max-w-md sm:rounded-3xl">
+      <div className="relative max-h-[calc(100dvh-12px)] w-full overflow-y-auto rounded-t-3xl bg-white shadow-2xl sm:max-w-md sm:rounded-3xl">
         <div className="flex items-start gap-3 border-b border-gray-200 px-4 py-4 sm:px-5">
           {row.photo_data ? (
             <img
@@ -466,6 +462,6 @@ export default function EquipmentListQuantityPicker({
           </button>
         </div>
       </div>
-    </div>
+    </EquipmentListPickerOverlay>
   );
 }
