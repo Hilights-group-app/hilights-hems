@@ -1,0 +1,11 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#ffffff"><meta name="robots" content="noindex"><title>Hilights · Offline workspace</title><link rel="stylesheet" href="/offline.css"><script src="/offline-store.js" defer></script><script src="/offline-app.js" defer></script></head><body>
+<header><img src="/logo-icon.png" width="30" height="30" alt="Hilights"><strong>HEMS</strong><span id="connection" class="badge">Offline</span><button id="back" class="quiet">Open online app</button></header>
+<div id="notice" role="status" aria-live="polite"></div>
+<main><div class="heading"><div><h1>Saved workspace</h1><p id="saved-at">Last data viewed on this device</p></div><button id="sync">Sync drafts</button></div>
+<nav aria-label="Workspace"><button data-view="inventory">Inventory & reports</button><button data-view="drafts">Draft lists <span id="pending"></span></button></nav>
+<div id="message" role="alert" aria-live="assertive"></div>
+<section id="inventory"><label>Saved page<select id="pages"></select></label><label>Search saved data<input id="search" type="search" placeholder="Name, serial number…"></label><div id="records"></div></section>
+<section id="drafts" hidden><div class="heading"><h2>Draft lists</h2><button id="new">+ New draft</button></div><p>Draft changes stay on this device until synced. They do not reserve stock. Submit, dispatch, Receive and Tested require an online connection.</p><div id="draft-list"></div><div id="draft-editor"></div></section>
+<noscript>JavaScript is required to open the saved workspace.</noscript></main>
+<dialog id="modal"><form id="modal-form"><div id="modal-body"></div><div class="actions"><button type="button" id="modal-close" class="quiet">Cancel</button><button type="submit">Save on device</button></div></form></dialog>
+</body></html>

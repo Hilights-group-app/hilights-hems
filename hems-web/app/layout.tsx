@@ -2,6 +2,7 @@ import "./globals.css";
 import { APP_LAYOUT_BOOTSTRAP } from "@/lib/appLayout";
 import type { Viewport } from "next";
 import ActionNotificationsProvider from "@/components/ActionNotificationsProvider";
+import OfflineWorkspace from "@/components/OfflineWorkspace";
 import AppStartup from "@/components/AppStartup";
 import TopBar from "@/components/TopBar";
 import MobileDraftDock from "@/components/MobileDraftDock";
@@ -53,6 +54,8 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <head><script dangerouslySetInnerHTML={{ __html: APP_LAYOUT_BOOTSTRAP }} /></head>
       <body className="bg-white text-black">
+        <OfflineWorkspace />
+        <div data-hems-online-app className="contents">
         <AppStartup>
         <ActionNotificationsProvider>
         <TopBar />
@@ -60,6 +63,7 @@ export default function RootLayout({
         <MobileDraftDock />
         </ActionNotificationsProvider>
         </AppStartup>
+        </div>
       </body>
     </html>
   );

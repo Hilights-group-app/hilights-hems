@@ -4,6 +4,11 @@ import { createServerClient } from "@supabase/ssr";
 export async function proxy(request: NextRequest) {
   const pathname = request.nextUrl.pathname;
 
+  // Offline shell assets contain no private data and must not wait for Auth.
+  if (["/offline.html", "/offline-store.js", "/offline-app.js", "/offline.css", "/hems-sw.js", "/logo-icon.png"].includes(pathname)) {
+    return NextResponse.next();
+  }
+
   const isPublic =
     pathname === "/login" ||
     pathname.startsWith("/_next") ||
@@ -38,7 +43,21 @@ export async function proxy(request: NextRequest) {
 
   const {
     data: { user },
+    error: authError,
   } = await supabase.auth.getUser();
+
+  const hasAuthCookie = request.cookies.getAll().some(({ name }) =>
+    /^sb-.*-auth-token(?:\.\d+)?$/.test(name)
+  );
+  const authStatus = Number((authError as { status?: number } | null)?.status || 0);
+  const authMessage = String(authError?.message || "");
+  const transientAuthError = Boolean(authError && hasAuthCookie && (
+    authStatus === 0 || authStatus === 429 || authStatus >= 500 || /fetch|network|timeout|retryable/i.test(authMessage)
+  ));
+
+  // A temporary network/Auth service failure with an existing session cookie
+  // is not a sign-out. Missing or rejected sessions still go to /login below.
+  if (transientAuthError) return response;
 
   if (!user && !isPublic && !isApi) {
     const url = request.nextUrl.clone();

@@ -1,3 +1,4 @@
+import { offlineStore } from "@/lib/offline";
 import { createClient } from "@/lib/supabase/client";
 
 export type UserRole =
@@ -57,6 +58,14 @@ export function getUserDepartment(): string | null {
 
 export function clearAuthStore() {
   if (typeof window === "undefined") return;
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.controller?.postMessage({ type: "hems:clear-app-cache" });
+    void navigator.serviceWorker.ready.then(registration => {
+      registration.active?.postMessage({ type: "hems:clear-app-cache" });
+    }).catch(() => {});
+  }
+  localStorage.removeItem("hems:offline:owner");
+  void offlineStore().then(store => store.purge()).catch(() => {});
   localStorage.removeItem(ROLE_KEY);
   localStorage.removeItem(NAME_KEY);
   localStorage.removeItem(DEPT_KEY);

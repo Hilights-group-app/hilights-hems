@@ -1,4 +1,6 @@
 "use client";
+import { offlineStore } from "@/lib/offline";
+import { OfflineStatus } from "@/components/OfflineWorkspace";
 
 import { getAppLayout } from "@/lib/appLayout";
 import { useAppLayout } from "@/lib/useAppLayout";
@@ -606,6 +608,14 @@ if (!notifCache) {
 
   async function onLogout() {
     if (loggingOut) return;
+    try {
+      const store = await offlineStore(), owner = store.owner();
+      if (owner && (await store.all(owner, 'draft:')).some((draft: any) => draft.dirty)) {
+        window.dispatchEvent(new Event('hems:open-offline'));
+        window.dispatchEvent(new CustomEvent('hems:offline-message', {detail:'Sync your offline drafts, or export and discard their local changes, before signing out.'}));
+        return;
+      }
+    } catch { /* A browser without offline storage can still sign out. */ }
 
     setLoggingOut(true);
     setNotifOpen(false);
@@ -808,6 +818,8 @@ if (!notifCache) {
           )}
 
           <div className="relative ml-auto flex shrink-0 items-center gap-2">
+            <OfflineStatus />
+
             {loggedIn ? (
               <div className="flex items-center gap-2 px-1 py-0.5">
                 {pathname !== "/login" ? (
