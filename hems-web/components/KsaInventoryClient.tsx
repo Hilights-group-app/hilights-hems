@@ -35,6 +35,7 @@ export default function KsaInventoryClient() {
   const loadedCount = useRef(0);
   const alive = useRef(true);
   const selected = lists.find((list) => list.id === selectedId);
+  const selectedDraft = selected?.status === "draft" ? selected : undefined;
 
   useEffect(() => {
     const timer = window.setTimeout(() => setQuery(search.trim()), 250);
@@ -155,6 +156,14 @@ export default function KsaInventoryClient() {
     return [...groups.entries()];
   }, [stock]);
 
+  function stockQuantity(item: KsaStock, quantity: number) {
+    const area = Number(item.metadata?.cabinet_area_sqm);
+    if (item.record_type === "matrix_row" && Number.isFinite(area) && area > 0) {
+      return `${Number((quantity * area).toFixed(2))} SQM`;
+    }
+    return String(quantity);
+  }
+
   return <div className="min-h-full space-y-4 bg-gray-50 p-3 sm:p-5">
     <section className="rounded-2xl border border-gray-200 bg-white p-4 sm:p-5">
       <Link href="/inventory" className="mb-4 inline-flex min-h-9 items-center gap-1.5 text-xs font-semibold text-gray-500"><ArrowLeft size={14}/>Inventory</Link>
@@ -163,12 +172,6 @@ export default function KsaInventoryClient() {
           <p className="mt-2 max-w-xl text-xs leading-5 text-gray-500">Choose a Transfer In draft, then tap + to select equipment to return to Dubai.</p></div>
         <button type="button" onClick={() => {setError("");void readStock(query);if(userId) void readLists(userId,manager);}}
           disabled={Boolean(busy)} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-gray-200 px-3 text-xs font-semibold text-gray-600"><RefreshCw size={14}/>Refresh</button>
-      </div>
-      <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-        <select aria-label="Transfer In list" value={selectedId} onChange={(event) => {activateIncomingList(lists.find((list) => list.id === event.target.value) || null);setMessage("");}}
-          disabled={Boolean(busy)} className={inputClass}>
-          <option value="">Select a Transfer In draft…</option>{lists.map((list) => <option key={list.id} value={list.id}>{list.reference} · {list.status === "pending" ? "Pending" : "Draft"}</option>)}
-        </select>
       </div>
       <div className="relative mt-4"><Search size={16} className="absolute left-3 top-3.5 text-gray-400"/><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search equipment, serial number or category" aria-label="Search KSA equipment" className={`${inputClass} pl-9`}/></div>
     </section>
@@ -189,21 +192,21 @@ export default function KsaInventoryClient() {
           <div className="min-w-0 flex-1"><div className="break-words text-sm font-semibold text-gray-900">{item.display_name}</div>
 
           {item.block_name ? <div className="mt-1 text-[11px] text-gray-400">{item.block_name}</div> : null}
-          <div className="mt-2 flex flex-wrap gap-2 text-[11px]"><span className="rounded-md bg-blue-50 px-2 py-1 font-semibold text-blue-800">In KSA: {item.in_ksa_quantity}</span>
-            <span className="rounded-md bg-gray-100 px-2 py-1 text-gray-600">Unreserved: {item.selectable_quantity}</span>{item.reserved_quantity > 0 ? <span className="rounded-md bg-amber-50 px-2 py-1 text-amber-700">Selected for return: {item.reserved_quantity}</span> : null}</div>
+          <div className="mt-2 flex flex-wrap gap-2 text-[11px]"><span className="rounded-md bg-blue-50 px-2 py-1 font-semibold text-blue-800">In KSA: {stockQuantity(item,item.in_ksa_quantity)}</span>
+            <span className="rounded-md bg-gray-100 px-2 py-1 text-gray-600">Unreserved: {stockQuantity(item,item.selectable_quantity)}</span>{item.reserved_quantity > 0 ? <span className="rounded-md bg-amber-50 px-2 py-1 text-amber-700">Selected for return: {stockQuantity(item,item.reserved_quantity)}</span> : null}</div>
           </div>
         </div>
-        <button type="button" aria-label={`Add ${item.display_name} to draft`}
-          title={selected ? `Add to ${selected.reference}` : "Select a Transfer In draft first"}
-          onClick={() => {if(selected)setPickerItem(item);}} disabled={!selected || Boolean(busy) || item.selectable_quantity<1}
-          className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-blue-700 text-white disabled:opacity-40"><Plus size={19}/></button>
+        {selectedDraft ? <button type="button" aria-label={`Add ${item.display_name} to draft`}
+          title={`Add to ${selectedDraft.reference}`}
+          onClick={() => setPickerItem(item)} disabled={Boolean(busy) || item.selectable_quantity<1}
+          className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-blue-700 text-white disabled:opacity-40"><Plus size={19}/></button> : null}
       </div>)}</div>
     </section>)}
     {hasMore ? <button type="button" disabled={paging || Boolean(busy)} onClick={() => void readStock(query,stock.length)} className="min-h-11 w-full rounded-xl border border-gray-200 bg-white text-xs font-semibold text-gray-700">{paging ? "Loading…" : "Load more equipment"}</button> : null}
-    {pickerItem && selected ? <KsaDraftItemPicker key={`${selected.id}:${pickerItem.record_type}:${pickerItem.record_id}`}
-      item={pickerItem} list={selected} onClose={() => setPickerItem(null)} onAdded={(quantity) => {
-        setMessage(`${quantity} unit(s) of ${pickerItem.display_name} added to ${selected.reference}.`);
-        setPickerItem(null); notify(selected.id,selected.status);
+    {pickerItem && selectedDraft ? <KsaDraftItemPicker key={`${selectedDraft.id}:${pickerItem.record_type}:${pickerItem.record_id}`}
+      item={pickerItem} list={selectedDraft} onClose={() => setPickerItem(null)} onAdded={(quantity) => {
+        setMessage(`${quantity} unit(s) of ${pickerItem.display_name} added to ${selectedDraft.reference}.`);
+        setPickerItem(null); notify(selectedDraft.id,selectedDraft.status);
       }} /> : null}
   </div>;
 }

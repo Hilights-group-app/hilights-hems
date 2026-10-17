@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { getUserName } from "@/lib/authStore";
+import NavigationFeedbackLink from "@/components/NavigationFeedbackLink";
 
 export default function HomePage() {
   const [mounted, setMounted] = useState(false);
@@ -32,16 +32,17 @@ export default function HomePage() {
         {/* Main card */}
         <div className="mt-5 rounded-2xl border border-gray-200 bg-white p-4 sm:p-5">
           <div className="grid grid-cols-1 gap-3 sm:flex sm:flex-wrap">
-            <Link
+            <NavigationFeedbackLink
               href="/inventory"
+              loadingLabel="Opening Inventory..."
               className="
-                rounded-full bg-black px-4 py-3
+                inline-flex items-center justify-center gap-2 rounded-full bg-black px-4 py-3
                 text-center text-sm font-medium text-white
                 transition-all hover:opacity-90 active:scale-[0.98]
               "
             >
               Go to Inventory
-            </Link>
+            </NavigationFeedbackLink>
 
           </div>
         </div>
