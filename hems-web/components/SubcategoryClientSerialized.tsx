@@ -1,9 +1,7 @@
 "use client";
-import {useInventoryPickingMode} from "@/lib/inventoryPickingMode";
-
-import { useRepairRefresh } from "@/lib/useRepairStatus";
 
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
+import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor";
 
 import { getAppLayout } from "@/lib/appLayout";
 
@@ -24,6 +22,7 @@ type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 type ItemRow = {
   id: string;
   name: string;
+  description?: string | null;
   fixture_type?: string | null;
   photo_url: string | null;
   subcategory_id: string;
@@ -315,6 +314,7 @@ export default function SubcategoryClientSerialized({
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
   const [blockName, setBlockName] = useState("");
+  const [description, setDescription] = useState("");
   const [qty, setQty] = useState<number>(1);
   const [photo, setPhoto] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState("");
@@ -392,11 +392,6 @@ export default function SubcategoryClientSerialized({
       option.toLowerCase().startsWith(query),
     );
   }, [blockOptions, selectedBlockDraft, selectedItem?.fixture_type]);
-
-  useRepairRefresh(()=>{void load(true, true);});
-
-  const inventoryPicking=useInventoryPickingMode();
-  useEffect(()=>{if(inventoryPicking){setMobileMenuItemId(null);setMobileAddOpen(false);}},[inventoryPicking]);
 
   useEffect(() => {
     const parsed = splitBrandModel(selectedItem?.name ?? "");
@@ -499,7 +494,7 @@ export default function SubcategoryClientSerialized({
     return subRes.data.id as string;
   }
 
-  async function load(forceRefresh = false, quiet = false) {
+  async function load(forceRefresh = false) {
     setErr(null);
 
     const cacheKey = cacheKeyFor(category, subcategory);
@@ -518,7 +513,7 @@ export default function SubcategoryClientSerialized({
       }
     }
 
-    if (!quiet) setLoading(items.length === 0);
+    setLoading(items.length === 0);
     await refreshData(cacheKey);
   }
   async function refreshData(cacheKey: string) {
@@ -528,7 +523,7 @@ export default function SubcategoryClientSerialized({
 
       const itemsRes = await supabase
         .from("items")
-        .select("id,name,fixture_type,photo_url,subcategory_id")
+        .select("id,name,description,fixture_type,photo_url,subcategory_id")
         .eq("subcategory_id", sid);
 
       if (itemsRes.error) throw itemsRes.error;
@@ -860,10 +855,11 @@ export default function SubcategoryClientSerialized({
         .insert({
           subcategory_id: subId,
           name: nm,
+          description: description.trim() || null,
           fixture_type: blockName.trim() || null,
           photo_url: photo || null,
         })
-        .select("id,name,fixture_type,photo_url,subcategory_id")
+        .select("id,name,description,fixture_type,photo_url,subcategory_id")
         .single();
 
       if (insItem.error) throw insItem.error;
@@ -904,6 +900,7 @@ export default function SubcategoryClientSerialized({
       setBrand("");
       setModel("");
       setBlockName("");
+      setDescription("");
       setQty(1);
       setPhoto(null);
       setImageSearch("");
@@ -1121,6 +1118,12 @@ export default function SubcategoryClientSerialized({
 
                 </div>
 
+                {it.description ? (
+                  <p className="mt-1 whitespace-pre-line break-words text-[8px] leading-3 text-gray-500 hems-wide:text-[9px]">
+                    {it.description}
+                  </p>
+                ) : null}
+
                 <div className="mt-2 hems-wide:hidden">
                   <div className={`grid gap-x-2 gap-y-1 text-center ${
                     stats.maintenance > 0 ? "grid-cols-3" : "grid-cols-2"
@@ -1212,7 +1215,6 @@ export default function SubcategoryClientSerialized({
             >
               <button
                 type="button"
-                data-hems-inventory-tools="true"
                 aria-label={`Edit ${it.name}`}
                 onClick={(event) => {
                   event.preventDefault();
@@ -1360,6 +1362,16 @@ export default function SubcategoryClientSerialized({
           className="h-8 w-full rounded-lg border border-gray-300 bg-white px-2.5 text-[9px] text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
         />
       </div>
+
+      <InventoryDescriptionEditor
+        table="items"
+        recordId={selectedItem.id}
+        value={selectedItem.description}
+        disabled={!editable}
+        onSaved={(nextDescription) => setItems((current) => current.map((item) =>
+          item.id === selectedItem.id ? { ...item, description: nextDescription } : item
+        ))}
+      />
 
       <div className="relative mt-1.5">
         <input
@@ -1531,6 +1543,16 @@ export default function SubcategoryClientSerialized({
           placeholder="Block Name"
           className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none focus:border-black"
         />
+        <label className="block text-[10px] font-semibold text-gray-600">
+          Description <span className="font-normal text-gray-400">(optional)</span>
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            rows={3}
+            placeholder={"One detail per line\ne.g. 6 x Socapex out\n2 x 32A 3ph out"}
+            className="mt-1 min-h-20 w-full resize-y rounded-2xl border border-gray-300 bg-white px-4 py-3 text-[11px] font-normal leading-5 text-gray-900 shadow-sm outline-none placeholder:text-gray-400 focus:border-black"
+          />
+        </label>
         <input
           value={qty}
           onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
@@ -1647,7 +1669,7 @@ export default function SubcategoryClientSerialized({
         ))}
       </datalist>
 
-      {!inventoryPicking && editable && mobileMenuItemId && selectedItem ? (
+      {editable && mobileMenuItemId && selectedItem ? (
         <div
           data-mobile-serialized-tools="true"
           className="fixed inset-0 z-[9998] hems-wide:hidden"
@@ -1690,7 +1712,6 @@ export default function SubcategoryClientSerialized({
         <>
           <button
             type="button"
-            data-hems-inventory-add="true"
             aria-label="Add item"
             onClick={() => setMobileAddOpen(true)}
             className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl active:scale-95 hems-wide:hidden"

@@ -4,6 +4,11 @@
   let confirmedOffline = navigator.onLine === false;
   let user = S.owner(), data = [], drafts = [], selected = null, view = 'inventory', busy = false, loadVersion = 0, tableData = {}, visibleCounts = [];
   const embedded = new URLSearchParams(location.search).has('embedded');
+  // A standalone fallback page must not survive an online login/navigation.
+  // The embedded version remains available from the Online/Offline pill.
+  if (!embedded && navigator.onLine) {
+    setTimeout(() => location.replace('/'), 0);
+  }
   const categories = ['lighting','video','rigging','audio','power','other'];
   const typeNames = {dry_hire:'Dry Hire',local_event:'Local Event',transfer_out:'Transfer Out',transfer_in:'Transfer In',maintenance:'Send for Maintenance',internal_use:'Internal Use'};
   const tableNames = {items:'Equipment',units:'Serial numbers',matrix_models:'Matrix models',matrix_rows:'Matrix stock',
@@ -260,12 +265,12 @@
     const blob=new Blob([JSON.stringify({list:draft.list,items:draft.items,saved_at:new Date(draft.at).toISOString()},null,2)],{type:'application/json'});
     const link=document.createElement('a');link.href=URL.createObjectURL(blob);link.download=`${draft.list.reference||'local-draft'}-${draft.id}.json`;link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);
   }
-  $('back').onclick=()=>{if(!navigator.onLine){offlineMessage();return;}if(embedded)parent.postMessage({type:'hems:close-offline'},location.origin);else location.href='/?offlineSync=1';};
+  $('back').onclick=()=>{if(!navigator.onLine){offlineMessage();return;}if(embedded)parent.postMessage({type:'hems:close-offline'},location.origin);else location.replace('/');};
   $('sync').onclick=()=>{if(!navigator.onLine){offlineMessage();return;}if(embedded)parent.postMessage({type:'hems:sync-drafts'},location.origin);else location.href='/?offlineSync=1';};
   $('new').onclick=createDraft;$('modal-close').onclick=()=>$('modal').close();
   $('pages').onchange=renderInventory;$('search').oninput=renderInventory;
   document.querySelectorAll('[data-view]').forEach(node=>node.onclick=()=>changeView(node.dataset.view));
-  window.addEventListener('online',()=>{if(!embedded)confirmedOffline=false;status();});
+  window.addEventListener('online',()=>{if(!embedded){confirmedOffline=false;location.replace('/');return;}status();});
   window.addEventListener('offline',()=>{confirmedOffline=true;status();});
   window.addEventListener('message',event=>{if(embedded&&event.origin===location.origin&&event.source===parent&&event.data?.type==='hems:connection-state'){confirmedOffline=event.data.offline===true;status();}});
   let refreshTimer;

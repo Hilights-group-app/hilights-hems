@@ -1,16 +1,15 @@
 // components/SubcategoryClientChainHoist.tsx
 "use client";
-import {useInventoryPickingMode} from "@/lib/inventoryPickingMode";
-
-import { useRepairRefresh } from "@/lib/useRepairStatus";
 
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
+import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor";
 
 import { getAppLayout } from "@/lib/appLayout";
 
 import KsaStockLink from "@/components/KsaStockLink";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createClient } from "@/lib/supabase/client";
@@ -27,6 +26,7 @@ type DbItem = {
   id: string;
   subcategory_id: string;
   name: string;
+  description?: string | null;
   fixture_type?: string | null;
   photo_url: string | null;
   created_at?: string;
@@ -255,6 +255,7 @@ export default function SubcategoryClientChainHoist({
   category: string;
   subcategory: string;
 }) {
+  const router = useRouter();
   const supabase = createClient();
   const editable = canEditInventory();
 
@@ -267,6 +268,7 @@ export default function SubcategoryClientChainHoist({
   const [capacity, setCapacity] = useState("");
   const [chainLength, setChainLength] = useState("");
   const [blockName, setBlockName] = useState("");
+  const [description, setDescription] = useState("");
   const [qty, setQty] = useState<number>(1);
   const [photo, setPhoto] = useState<string | null>(null);
   const addPhotoRef = useRef<HTMLInputElement | null>(null);
@@ -356,11 +358,6 @@ export default function SubcategoryClientChainHoist({
       option.toLowerCase().startsWith(query),
     );
   }, [blockOptions, selectedBlockDraft, selectedItem]);
-
-  useRepairRefresh(()=>{if (subcategoryId) void loadItems(subcategoryId, false);});
-
-  const inventoryPicking=useInventoryPickingMode();
-  useEffect(()=>{if(inventoryPicking){setMobileMenuItemId(null);setMobileAddOpen(false);}},[inventoryPicking]);
 
   useEffect(() => {
     const details = selectedItem
@@ -469,7 +466,7 @@ export default function SubcategoryClientChainHoist({
 
     const { data, error } = await supabase
       .from("items")
-      .select("id, subcategory_id, name, fixture_type, photo_url, created_at")
+      .select("id, subcategory_id, name, description, fixture_type, photo_url, created_at")
       .eq("subcategory_id", subId)
       .order("created_at", { ascending: false });
 
@@ -801,10 +798,11 @@ export default function SubcategoryClientChainHoist({
       .insert({
         subcategory_id: subcategoryId,
         name: clean,
+        description: description.trim() || null,
         fixture_type: blockName.trim() || "Unassigned",
         photo_url: photo || null,
       })
-      .select("id, subcategory_id, name, fixture_type, photo_url, created_at")
+      .select("id, subcategory_id, name, description, fixture_type, photo_url, created_at")
       .single();
 
     if (error) {
@@ -836,6 +834,7 @@ export default function SubcategoryClientChainHoist({
     setCapacity("");
     setChainLength("");
     setBlockName("");
+    setDescription("");
     setQty(1);
     setPhoto(null);
     setImageSearch("");
@@ -1090,6 +1089,17 @@ export default function SubcategoryClientChainHoist({
           className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
         />
 
+        <label className="block text-[10px] font-semibold text-gray-600">
+          Description <span className="font-normal text-gray-400">(optional)</span>
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            rows={3}
+            placeholder={"One detail per line\ne.g. Controller included\n20m chain"}
+            className="mt-1 min-h-20 w-full resize-y rounded-2xl border border-gray-300 bg-white px-4 py-3 text-[11px] font-normal leading-5 text-gray-900 shadow-sm outline-none placeholder:text-gray-400 focus:border-black focus:ring-1 focus:ring-black"
+          />
+        </label>
+
         <input
           value={String(qty)}
           onChange={(e) => setQty(Number(e.target.value))}
@@ -1312,6 +1322,15 @@ export default function SubcategoryClientChainHoist({
               className="h-8 w-full rounded-lg border border-gray-300 bg-white px-2.5 text-[9px] font-medium text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
             />
           </div>
+          <InventoryDescriptionEditor
+            table="items"
+            recordId={selectedItem.id}
+            value={selectedItem.description}
+            disabled={!editable}
+            onSaved={(nextDescription) => setItems((current) => current.map((item) =>
+              item.id === selectedItem.id ? { ...item, description: nextDescription } : item
+            ))}
+          />
           <div className="relative mt-1">
             <input
               value={selectedBlockDraft}
@@ -1490,7 +1509,7 @@ export default function SubcategoryClientChainHoist({
         ))}
       </datalist>
 
-      {!inventoryPicking && editable && mobileMenuItemId && selectedItem ? (
+      {editable && mobileMenuItemId && selectedItem ? (
         <div
           data-mobile-chain-hoist-tools="true"
           className="fixed inset-0 z-[9998] hems-wide:hidden"
@@ -1610,7 +1629,6 @@ export default function SubcategoryClientChainHoist({
         <>
           <button
             type="button"
-            data-hems-inventory-add="true"
             aria-label="Add chain hoist"
             aria-expanded={mobileAddOpen}
             onClick={() => setMobileAddOpen(true)}
@@ -1718,7 +1736,7 @@ export default function SubcategoryClientChainHoist({
                         await saveSelectedBlockName();
                         setSelectedItemId(it.id);
                       } else {
-                        window.location.href = detailsHref;
+                        router.push(detailsHref);
                       }
                     }}
                     className="flex w-full items-start gap-3 p-2 pr-10 text-left hems-wide:pr-20"
@@ -1752,6 +1770,12 @@ export default function SubcategoryClientChainHoist({
                             </span>
                           ) : null}
                         </div>
+                      ) : null}
+
+                      {it.description ? (
+                        <p className="mt-1 whitespace-pre-line break-words text-[8px] leading-3 text-gray-500 hems-wide:text-[9px]">
+                          {it.description}
+                        </p>
                       ) : null}
 
                       {/* Mobile stats */}
@@ -1857,7 +1881,6 @@ export default function SubcategoryClientChainHoist({
                     >
                       <button
                         type="button"
-                        data-hems-inventory-tools="true"
                         aria-label={`Edit ${it.name}`}
                         aria-expanded={mobileMenuItemId === it.id}
                         onClick={(event) => {

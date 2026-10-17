@@ -223,24 +223,3 @@ html[data-hems-layout="compact"] [data-hems-header-row] > div:first-child > span
 html[data-hems-layout="compact"][data-hems-mobile="new"] [data-hems-main] button.fixed[aria-label^="Add"] {
   bottom: calc(124px + env(safe-area-inset-bottom));
 }
-
-/* List-building mode keeps compact inventory dedicated to choosing equipment. */
-html[data-hems-layout="compact"][data-hems-inventory-picking="true"] {
-  [data-hems-inventory-add], [data-hems-inventory-tools] { display: none !important; }
-}
-html[data-hems-layout="compact"][data-hems-mobile="new"] {
-  button[data-hems-mobile-add="units"], button[data-hems-mobile-add="cabinets"] {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 44px; height: 44px; min-width: 44px; min-height: 44px;
-    padding: 0; border-radius: 9999px; font-size: 22px; line-height: 1;
-  }
-}
-/* A portal prevents row z-index/transform from trapping a picker below page tools. */
-body:has([data-hems-list-picker]) { overflow: hidden !important; }
-html:has([data-hems-list-picker]) {
-  [data-hems-dock] { visibility: hidden; pointer-events: none; }
-  [data-hems-main] [data-hems-mobile-add],
-  [data-hems-main] [data-hems-inventory-add],
-  [data-hems-main] [data-hems-inventory-tools] { visibility: hidden; pointer-events: none; }
-}
-[data-hems-picker-footer] { position: relative; z-index: 1; }

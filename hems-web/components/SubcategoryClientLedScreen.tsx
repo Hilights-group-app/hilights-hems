@@ -1,8 +1,5 @@
 "use client";
-import {useInventoryPickingMode} from "@/lib/inventoryPickingMode";
-import MaintenanceRepairBadge from "@/components/MaintenanceRepairBadge";
-
-import { useRepairRefresh } from "@/lib/useRepairStatus";
+import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor";
 
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 
@@ -67,6 +64,7 @@ type MatrixModel = {
   category_id: string;
   subcategory_id: string;
   name: string;
+  description?: string | null;
   matrix_rows?: MatrixRow[];
   created_at?: string;
   sort_order?: number | null;
@@ -543,6 +541,7 @@ export default function SubcategoryClientLedScreen({
 
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
+  const [description, setDescription] = useState("");
   const [cabinetSize, setCabinetSize] = useState("");
   const [totalQtyInput, setTotalQtyInput] = useState(0);
   const [newPhoto, setNewPhoto] = useState<string | null>(null);
@@ -606,11 +605,6 @@ export default function SubcategoryClientLedScreen({
   function rowMaintenanceRepairQuantity(rowId: string) {
     return maintenanceAllocationQuantity(allocationsByRow[rowId] ?? []);
   }
-
-  useRepairRefresh(()=>{if (subcategoryId) void loadModels(subcategoryId, true);});
-
-  const inventoryPicking=useInventoryPickingMode();
-  useEffect(()=>{if(inventoryPicking){setMobileAddOpen(false);}},[inventoryPicking]);
 
   useEffect(() => {
     const parsed = parseLedName(selectedModel?.name ?? "");
@@ -777,7 +771,7 @@ export default function SubcategoryClientLedScreen({
       const { data, error } = await supabase
         .from("matrix_models")
         .select(
-          "id, category_id, subcategory_id, name, created_at, sort_order, matrix_rows(id, model_id, size, cabinet_model, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data, sort_order)"
+          "id, category_id, subcategory_id, name, description, created_at, sort_order, matrix_rows(id, model_id, size, cabinet_model, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data, sort_order)"
         )
         .eq("subcategory_id", subId)
         .order("sort_order", { ascending: true, nullsFirst: false })
@@ -786,7 +780,7 @@ export default function SubcategoryClientLedScreen({
       if (error) {
         const fallback = await supabase
           .from("matrix_models")
-          .select("id, category_id, subcategory_id, name, created_at")
+          .select("id, category_id, subcategory_id, name, description, created_at")
           .eq("subcategory_id", subId)
           .order("created_at", { ascending: false });
 
@@ -1295,8 +1289,9 @@ export default function SubcategoryClientLedScreen({
           category_id: catId,
           subcategory_id: subcategoryId,
           name: fullName,
+          description: description.trim() || null,
         })
-        .select("id, category_id, subcategory_id, name, created_at")
+        .select("id, category_id, subcategory_id, name, description, created_at")
         .single();
 
       if (error || !created) {
@@ -1310,6 +1305,7 @@ export default function SubcategoryClientLedScreen({
       setOpenModelId(created.id);
       setBrand("");
       setModel("");
+      setDescription("");
       setSaveMsg("LED screen model added");
       setTimeout(
         () => setSaveMsg((prev) => (prev === "LED screen model added" ? "" : prev)),
@@ -1767,6 +1763,15 @@ export default function SubcategoryClientLedScreen({
           disabled={!editable}
           className="h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
         />
+        <InventoryDescriptionEditor
+          table="matrix_models"
+          recordId={selectedModel.id}
+          value={selectedModel.description}
+          disabled={!editable}
+          onSaved={(nextDescription) => setModels((current) => current.map((model) =>
+            model.id === selectedModel.id ? { ...model, description: nextDescription } : model
+          ))}
+        />
       </div>
 
       {editable ? (
@@ -1901,7 +1906,7 @@ export default function SubcategoryClientLedScreen({
               Active Movements
             </div>
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {selectedCabinetAllocations.filter(allocation=>allocation.listType!=="maintenance").map((allocation) => (
+              {selectedCabinetAllocations.map((allocation) => (
                 <Link
                   key={allocation.listId}
                   href={`/inventory/lists/${allocation.listId}`}
@@ -1921,7 +1926,6 @@ export default function SubcategoryClientLedScreen({
           </div>
         ) : null}
 
-        <MaintenanceRepairBadge recordId={selectedCabinetInfo.row.id} />
         <KsaStockLink quantity={selectedCabinetInfo.row.in_ksa_qty} search={selectedCabinetInfo.model.name} />
         {Math.max(0,selectedCabinetExistingMovementQty-clampQty(selectedCabinetInfo.row.in_ksa_qty)) > 0 ? (
           <div className="rounded-xl bg-gray-100 px-2.5 py-2 text-[9px] font-semibold text-gray-600">
@@ -2052,6 +2056,16 @@ export default function SubcategoryClientLedScreen({
             <option key={item} value={item} />
           ))}
         </datalist>
+        <label className="block text-[10px] font-semibold text-gray-600">
+          Description <span className="font-normal text-gray-400">(optional)</span>
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            rows={3}
+            placeholder={"One detail per line\ne.g. Indoor cabinet\nNovastar receiving card"}
+            className="mt-1 min-h-20 w-full resize-y rounded-2xl border border-gray-300 bg-white px-4 py-3 text-[11px] font-normal leading-5 text-gray-900 shadow-sm outline-none placeholder:text-gray-400 focus:border-black"
+          />
+        </label>
         <button
           type="button"
           onClick={addLedScreen}
@@ -2219,7 +2233,7 @@ export default function SubcategoryClientLedScreen({
         />
       ) : null}
 
-      {!inventoryPicking && (selectedModel || selectedCabinetInfo) ? (
+      {(selectedModel || selectedCabinetInfo) ? (
         <div
           data-mobile-led-tools="true"
           className="fixed inset-0 z-[9998] hems-wide:hidden"
@@ -2335,7 +2349,6 @@ export default function SubcategoryClientLedScreen({
         <>
           <button
             type="button"
-            data-hems-inventory-add="true"
             aria-label="Add LED screen"
             onClick={() => setMobileAddOpen(true)}
             className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl active:scale-95 hems-wide:hidden"
@@ -2843,7 +2856,10 @@ function LedModelCard({
     return total + existingMovementQuantity(row, activeAllocated);
   }, 0);
 
-  const modelKsaQuantity = rows.reduce((total,row) => total+clampQty(row.in_ksa_qty),0);
+  const modelKsaSquareMetres = rows.reduce(
+    (total, row) => total + toSqm(clampQty(row.in_ksa_qty), row.size),
+    0,
+  );
 
   function handleDragEnd(event: any) {
     if (!reorderable) return;
@@ -2875,13 +2891,17 @@ function LedModelCard({
             <span className="font-bold">{brand}</span>
             {modelName ? <span>{` ${modelName}`}</span> : null}
           </h2>
+          {model.description ? (
+            <p className="mt-1 whitespace-pre-line break-words text-[8px] leading-3 text-gray-500 hems-wide:text-[9px]">
+              {model.description}
+            </p>
+          ) : null}
         </button>
 
         {editable ? (
           <button
             type="button"
             data-led-model-select="true"
-            data-hems-inventory-tools="true"
             aria-label={`Open ${model.name} tools`}
             onClick={(event) => {
               event.preventDefault();
@@ -2923,7 +2943,7 @@ function LedModelCard({
 
       {modelMovements.length > 0 ? (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {modelMovements.filter(allocation=>allocation.listType!=="maintenance").map((allocation) => (
+          {modelMovements.map((allocation) => (
             <Link
               key={allocation.listId}
               href={`/inventory/lists/${allocation.listId}`}
@@ -2942,12 +2962,11 @@ function LedModelCard({
           ))}
         </div>
       ) : null}
-      <MaintenanceRepairBadge itemId={model.id} />
-      <KsaStockLink quantity={modelKsaQuantity} search={model.name} />
-      {Math.max(0,modelExistingMovement-modelKsaQuantity) > 0 ? (
+      <KsaStockLink quantity={modelKsaSquareMetres} unit="sqm" search={model.name} />
+      {Math.max(0,modelExistingMovement-rows.reduce((total,row) => total+clampQty(row.in_ksa_qty),0)) > 0 ? (
         <div className="mt-2">
           <span className="rounded-lg bg-gray-100 px-2 py-1 text-[9px] font-semibold text-gray-600">
-            {Math.max(0,modelExistingMovement-modelKsaQuantity)} pcs · Existing movement
+            {Math.max(0,modelExistingMovement-rows.reduce((total,row) => total+clampQty(row.in_ksa_qty),0))} pcs · Existing movement
           </span>
         </div>
       ) : null}
@@ -3028,7 +3047,6 @@ function LedModelCard({
                         <button
                           type="button"
                           data-led-cabinet-row="true"
-                          data-hems-inventory-tools="true"
                           aria-label={`Open ${r.cabinet_model || r.size} tools`}
                           onClick={(event) => {
                             event.preventDefault();
@@ -3050,13 +3068,12 @@ function LedModelCard({
                             onAddToList(r);
                           }}
                           data-hems-mobile-add="cabinets"
-                          aria-label={`Add cabinets to ${activeDraftList.reference}`}
                           title={`Add cabinets to ${activeDraftList.reference}`}
                           className={`absolute top-2 z-20 inline-flex h-[26px] min-w-[26px] items-center justify-center rounded-full bg-black px-2 text-[9px] font-semibold text-white shadow-sm ${
                             editable ? "right-10" : "right-2"
                           }`}
                         >
-                          <span aria-hidden="true">+</span><span className="hidden hems-wide:inline"> List</span>
+                          + List
                         </button>
                       ) : null}
 
@@ -3069,16 +3086,16 @@ function LedModelCard({
                         <div className="min-w-0 flex-1">
                           <div className="mb-2 flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
-                              <div className="flex min-w-0 items-baseline gap-1.5">
+                              <div className="flex min-w-0 flex-col gap-0.5">
                                 <div
-                                  className="min-w-0 truncate text-left text-[10px] font-bold text-gray-900"
+                                  className="min-w-0 break-words text-left text-[9px] font-bold leading-tight text-gray-900 sm:text-[10px]"
                                   title={r.cabinet_model || "No model"}
                                 >
                                   {r.cabinet_model || "No model"}
                                 </div>
 
                                 <div
-                                  className="min-w-0 truncate text-left text-[9px] font-medium text-gray-500"
+                                  className="min-w-0 break-words text-left text-[8px] font-medium leading-tight text-gray-500 sm:text-[9px]"
                                   title={r.size}
                                 >
                                   {r.size}
@@ -3134,7 +3151,7 @@ function LedModelCard({
 
                           {(allocationsByRow[r.id] ?? []).length > 0 ? (
                             <div className="mt-2 flex flex-wrap gap-1">
-                              {(allocationsByRow[r.id] ?? []).filter(allocation=>allocation.listType!=="maintenance").map(
+                              {(allocationsByRow[r.id] ?? []).map(
                                 (allocation) => (
                                   <span
                                     key={allocation.listId}
@@ -3153,8 +3170,7 @@ function LedModelCard({
                               )}
                             </div>
                           ) : null}
-                          <MaintenanceRepairBadge recordId={r.id} />
-                          <KsaStockLink quantity={r.in_ksa_qty} search={model.name} />
+                          <KsaStockLink quantity={toSqm(r.in_ksa_qty, r.size)} unit="sqm" search={model.name} />
                           {Math.max(0,existingMovementQuantity(r,movementAllocationQuantity(allocationsByRow[r.id] ?? []))-clampQty(r.in_ksa_qty)) > 0 ? (
                             <div className="mt-1">
                               <span className="rounded-md bg-gray-100 px-1.5 py-1 text-[8px] font-semibold text-gray-600">
@@ -3306,7 +3322,7 @@ function DesktopEditableCabinetRow({
 
       <div className="flex min-w-0 flex-wrap gap-1">
         {allocations.length > 0 ? (
-          allocations.filter(allocation=>allocation.listType!=="maintenance").map((allocation) => (
+          allocations.map((allocation) => (
             <Link
               key={allocation.listId}
               href={`/inventory/lists/${allocation.listId}`}
@@ -3326,8 +3342,7 @@ function DesktopEditableCabinetRow({
         ) : (
           legacyMovement === 0 ? <span className="text-gray-300">—</span> : null
         )}
-        <MaintenanceRepairBadge recordId={row.id} />
-        <KsaStockLink quantity={row.in_ksa_qty} />
+        <KsaStockLink quantity={toSqm(row.in_ksa_qty, row.size)} unit="sqm" />
         {Math.max(0,legacyMovement-clampQty(row.in_ksa_qty)) > 0 ? (
           <span className="max-w-full truncate rounded-md bg-gray-100 px-1.5 py-1 text-[8px] font-semibold text-gray-600">
             {Math.max(0,legacyMovement-clampQty(row.in_ksa_qty))} pcs · Existing movement
@@ -3355,7 +3370,6 @@ function DesktopEditableCabinetRow({
               onAddToList();
             }}
             data-hems-mobile-add="cabinets"
-                          aria-label={`Add cabinets to ${activeDraftList.reference}`}
                           title={`Add cabinets to ${activeDraftList.reference}`}
             className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-black text-xs font-bold text-white hover:bg-gray-800"
           >

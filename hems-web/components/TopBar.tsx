@@ -9,7 +9,7 @@ import ActionRequiredAlerts from "@/components/ActionRequiredAlerts";
 import { useActionNotifications } from "@/components/ActionNotificationsProvider";
 import Link from "next/link";
 import { IMPORTANT_ACTIVITY_FILTER, isImportantActivity } from "@/lib/importantActivity";
-import { readWorkspaceProfile } from "@/lib/workspaceStartup";
+import { readWorkingDraft, readWorkspaceProfile } from "@/lib/workspaceStartup";
 import {
   Bell,
   Boxes,
@@ -27,6 +27,7 @@ import { createClient } from "@/lib/supabase/client";
 import {
   getUserName,
   getUserId,
+  canManageEquipmentLists,
   logout,
   setUserDepartment,
   setUserId,
@@ -34,7 +35,13 @@ import {
   setUserRole,
 } from "@/lib/authStore";
 import EquipmentListsSidebar from "@/components/EquipmentListsSidebar";
-import { ACTIVE_EQUIPMENT_LIST_EVENT } from "@/lib/equipmentLists";
+import EquipmentListUnitPicker from "@/components/EquipmentListUnitPicker";
+import {
+  ACTIVE_EQUIPMENT_LIST_EVENT,
+  ACTIVE_EQUIPMENT_LIST_KEY,
+  canAddToEquipmentList,
+  type EquipmentList,
+} from "@/lib/equipmentLists";
 import { CATALOG_CHANGED_EVENT } from "@/lib/catalogStore";
 
 type NotificationRow = {
@@ -64,6 +71,8 @@ type ItemRow = {
   id: string;
   name: string;
   subcategory_id: string;
+  photo_url?: string | null;
+  fixture_type?: string | null;
 };
 
 type UnitRow = {
@@ -103,6 +112,11 @@ type SearchResult = {
   subtitle: string;
   href: string;
   score: number;
+  addTarget?: {
+    item: Pick<ItemRow, "id" | "name" | "photo_url" | "fixture_type">;
+    category: string;
+    subcategory: string;
+  };
 };
 
 function rowName(row: CategoryRow) {
@@ -146,6 +160,8 @@ export default function TopBar() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [searchIndex, setSearchIndex] = useState<SearchIndex | null>(null);
+  const [activeSearchDraft, setActiveSearchDraft] = useState<EquipmentList | null>(null);
+  const [searchPickerTarget, setSearchPickerTarget] = useState<NonNullable<SearchResult["addTarget"]> | null>(null);
 
   const [profile, setProfile] = useState<{
     role?: string;
@@ -218,6 +234,30 @@ export default function TopBar() {
   }, []);
 
   useEffect(() => { if (appLayout === "desktop") setSidebarOpen(false); }, [appLayout]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function refreshActiveDraft() {
+      const listId = localStorage.getItem(ACTIVE_EQUIPMENT_LIST_KEY);
+      if (!listId || !getUserId()) {
+        if (!cancelled) setActiveSearchDraft(null);
+        return;
+      }
+      const { data } = await readWorkingDraft(supabase, listId, true);
+      const usable = data?.status === "draft" &&
+        canAddToEquipmentList(data, getUserId(), canManageEquipmentLists());
+      if (!cancelled) setActiveSearchDraft(usable ? data : null);
+    }
+    const handleChange = () => void refreshActiveDraft();
+    void refreshActiveDraft();
+    window.addEventListener(ACTIVE_EQUIPMENT_LIST_EVENT, handleChange);
+    window.addEventListener("hems:equipment-lists-change", handleChange);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(ACTIVE_EQUIPMENT_LIST_EVENT, handleChange);
+      window.removeEventListener("hems:equipment-lists-change", handleChange);
+    };
+  }, [supabase, pathname]);
 
   useEffect(() => {
     function invalidateSearchCatalog() {
@@ -301,7 +341,7 @@ export default function TopBar() {
           await Promise.all([
             fetchAllRows("categories", "*"),
             fetchAllRows("subcategories", "*"),
-            fetchAllRows("items", "id,name,subcategory_id"),
+            fetchAllRows("items", "id,name,subcategory_id,photo_url,fixture_type"),
             fetchAllRows("units", "id,item_id,unit_no,serial"),
             fetchAllRows(
               "matrix_models",
@@ -409,6 +449,11 @@ export default function TopBar() {
         )}`,
         href: `${location.baseHref}/${encodeURIComponent(item.id)}`,
         score,
+        addTarget: {
+          item,
+          category: String(location.category.slug),
+          subcategory: String(location.subcategory.slug),
+        },
       });
     }
 
@@ -433,6 +478,11 @@ export default function TopBar() {
         subtitle: details.join(" • ") || rowName(location.subcategory),
         href: `${location.baseHref}/${encodeURIComponent(item.id)}`,
         score,
+        addTarget: {
+          item,
+          category: String(location.category.slug),
+          subcategory: String(location.subcategory.slug),
+        },
       });
     }
 
@@ -785,28 +835,42 @@ if (!notifCache) {
                   ) : (
                     <div className="max-h-[min(420px,65vh)] overflow-y-auto p-1.5">
                       {searchResults.map((result) => (
-                        <Link
-                          key={result.key}
-                          href={result.href}
-                          onClick={() => {
-                            setSearchQuery("");
-                            setSearchFocused(false);
-                          }}
-                          className="flex items-start justify-between gap-3 rounded-lg px-3 py-2.5 transition hover:bg-gray-50"
-                        >
-                          <div className="min-w-0">
+                        <div key={result.key} className="flex items-center gap-2 rounded-lg transition hover:bg-gray-50">
+                          <Link
+                            href={result.href}
+                            onClick={() => {
+                              setSearchQuery("");
+                              setSearchFocused(false);
+                            }}
+                            className="min-w-0 flex-1 px-3 py-2.5"
+                          >
                             <div className="truncate text-xs font-semibold text-gray-900">
                               {result.title}
                             </div>
                             <div className="mt-0.5 truncate text-[10px] text-gray-500 hems-wide:text-[11px]">
                               {result.subtitle}
                             </div>
-                          </div>
+                          </Link>
 
-                          <span className="shrink-0 rounded-full bg-gray-100 px-2 py-1 text-[9px] font-semibold text-gray-600">
-                            {result.kind}
-                          </span>
-                        </Link>
+                          {activeSearchDraft && result.addTarget ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSearchPickerTarget(result.addTarget!);
+                                setSearchFocused(false);
+                              }}
+                              title={`Add ${result.title} to ${activeSearchDraft.reference}`}
+                              aria-label={`Add ${result.title} to active draft`}
+                              className="mr-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-600 text-lg font-bold text-white shadow-sm transition hover:bg-red-700 active:scale-95"
+                            >
+                              +
+                            </button>
+                          ) : result.kind !== "LED model" ? (
+                            <span className="mr-2 shrink-0 rounded-full bg-gray-100 px-2 py-1 text-[9px] font-semibold text-gray-600">
+                              {result.kind}
+                            </span>
+                          ) : null}
+                        </div>
                       ))}
                     </div>
                   )}
@@ -1096,6 +1160,19 @@ if (!notifCache) {
             </div>
           </aside>
         </>
+      ) : null}
+      {activeSearchDraft && searchPickerTarget ? (
+        <EquipmentListUnitPicker
+          list={activeSearchDraft}
+          item={searchPickerTarget.item}
+          category={searchPickerTarget.category}
+          subcategory={searchPickerTarget.subcategory}
+          onClose={() => setSearchPickerTarget(null)}
+          onAdded={() => {
+            setSearchPickerTarget(null);
+            setSearchQuery("");
+          }}
+        />
       ) : null}
     </>
   );

@@ -1,8 +1,5 @@
 "use client";
 
-import { useRepairStatus } from "@/lib/useRepairStatus";
-import { mergeRepairMovements, repairMovementClass } from "@/lib/repairWorkflow";
-
 
 
 import Link from "next/link";
@@ -93,8 +90,6 @@ type UnitMovement = {
   reference: string;
 
   label: string;
-  repairPhase?: "sent" | "received";
-  stockConflict?: boolean;
 
 };
 
@@ -328,18 +323,11 @@ export function ChainHoistRowsBlock({
 
   const unitsRef = useRef<Unit[]>([]);
 
-  const [baseMovementByUnit, setMovementByUnit] = useState<
+  const [movementByUnit, setMovementByUnit] = useState<
 
     Record<string, UnitMovement>
 
   >({});
-  const loadVersion=useRef(0);
-  useEffect(()=>()=>{++loadVersion.current;},[]);
-  const repairSnapshot=useRepairStatus();
-  const movementByUnit=useMemo(()=>mergeRepairMovements(baseMovementByUnit,repairSnapshot.rows),[baseMovementByUnit,repairSnapshot.rows]);
-  const repairEpoch=useRef(repairSnapshot.epoch);
-  useEffect(()=>{if(repairEpoch.current!==repairSnapshot.epoch){repairEpoch.current=repairSnapshot.epoch;void loadUnits();}},[repairSnapshot.epoch]);
-
 
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
   const [filterQuery, setFilterQuery] = useState("");
@@ -395,11 +383,11 @@ export function ChainHoistRowsBlock({
 
 
 
-  async function loadUnitMovements(unitIds: string[], version = loadVersion.current) {
+  async function loadUnitMovements(unitIds: string[]) {
 
     if (!workflowControlledStatus || unitIds.length === 0) {
 
-      if(version===loadVersion.current)setMovementByUnit({});
+      setMovementByUnit({});
 
       return;
 
@@ -414,7 +402,6 @@ export function ChainHoistRowsBlock({
       .select(ACTIVE_LIST_SELECT)
 
       .in("status", ["active", "partially_returned"])
-      .not("list_type", "in", "(maintenance,transfer_in)")
 
       .order("created_at", { ascending: false })
 
@@ -426,7 +413,7 @@ export function ChainHoistRowsBlock({
 
       console.error("load chain hoist active lists error", activeListsResult.error);
 
-      if(version===loadVersion.current)setMovementByUnit({});
+      setMovementByUnit({});
 
       return;
 
@@ -442,7 +429,7 @@ export function ChainHoistRowsBlock({
 
     if (activeListIds.length === 0) {
 
-      if(version===loadVersion.current)setMovementByUnit({});
+      setMovementByUnit({});
 
       return;
 
@@ -472,7 +459,7 @@ export function ChainHoistRowsBlock({
 
       console.error("load chain hoist unit movements error", error);
 
-      if(version===loadVersion.current)setMovementByUnit({});
+      setMovementByUnit({});
 
       return;
 
@@ -538,14 +525,13 @@ export function ChainHoistRowsBlock({
 
 
 
-    if(version===loadVersion.current)setMovementByUnit(nextMovements);
+    setMovementByUnit(nextMovements);
 
   }
 
 
 
   async function loadUnits() {
-    const version=++loadVersion.current;
 
     const { data, error } = await supabase
 
@@ -559,7 +545,6 @@ export function ChainHoistRowsBlock({
 
 
 
-    if(version!==loadVersion.current)return;
     if (error) {
 
       console.error("loadUnits error:", error);
@@ -576,7 +561,7 @@ export function ChainHoistRowsBlock({
 
     setUnits(nextUnits);
 
-    await loadUnitMovements(nextUnits.map((unit) => unit.id),version);
+    await loadUnitMovements(nextUnits.map((unit) => unit.id));
 
   }
 
@@ -1503,7 +1488,7 @@ function ChainHoistStatusField({
 
           title={`${movement.reference} · ${movement.label}`}
 
-          className={`block w-full min-w-0 truncate rounded-lg px-1 py-1 font-semibold transition ${repairMovementClass(movement)} ${textClass}`}
+          className={`block w-full min-w-0 truncate rounded-lg bg-blue-50 px-1 py-1 font-semibold text-blue-700 transition hover:bg-blue-100 ${textClass}`}
 
         >
 
@@ -1527,7 +1512,7 @@ function ChainHoistStatusField({
 
       >
 
-        Existing movement
+        {status === "in_ksa" ? "In KSA" : "Existing movement"}
 
       </div>
 

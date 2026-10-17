@@ -66,6 +66,7 @@ export default function LoginPage() {
       setUserName(profile.full_name ?? "");
       setUserDepartment(profile.department ?? "");
 
+      window.history.replaceState(null, "", "/");
       router.replace("/");
       router.refresh();
     } catch (error: any) {

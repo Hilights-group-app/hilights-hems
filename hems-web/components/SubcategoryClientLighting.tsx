@@ -1,10 +1,7 @@
 "use client";
-import {useInventoryPickingMode} from "@/lib/inventoryPickingMode";
-import MaintenanceRepairBadge from "@/components/MaintenanceRepairBadge";
-
-import { useRepairRefresh } from "@/lib/useRepairStatus";
 
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
+import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor";
 
 import { getAppLayout } from "@/lib/appLayout";
 
@@ -13,6 +10,7 @@ import KsaStockLink from "@/components/KsaStockLink";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
   canEditInventory,
@@ -51,6 +49,7 @@ type FixtureType = (typeof FIXTURE_TYPES)[number];
 type ItemRow = {
   id: string;
   name: string;
+  description?: string | null;
   photo_url: string | null;
   subcategory_id: string;
   fixture_type: string | null;
@@ -395,6 +394,7 @@ export default function SubcategoryClientLighting({
   category: string;
   subcategory: string;
 }) {
+  const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const listPhotoFileRef = useRef<HTMLInputElement | null>(null);
@@ -413,6 +413,7 @@ export default function SubcategoryClientLighting({
   const [fixtureType, setFixtureType] = useState("");
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
+  const [description, setDescription] = useState("");
   const [qty, setQty] = useState<number>(1);
   const [photo, setPhoto] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState("");
@@ -497,11 +498,6 @@ export default function SubcategoryClientLighting({
 
   const activeDraftList = activeEquipmentList;
 
-  useRepairRefresh(()=>{void load(true, true);});
-
-  const inventoryPicking=useInventoryPickingMode();
-  useEffect(()=>{if(inventoryPicking){setMobileMenuItemId(null);setMobileAddFixtureOpen(false);}},[inventoryPicking]);
-
   useEffect(() => {
     const parsed = splitBrandModel(selectedFixture?.name ?? "");
     setSelectedBrandDraft(parsed.brand);
@@ -574,7 +570,7 @@ export default function SubcategoryClientLighting({
 
       const itemsRes = await supabase
         .from("items")
-        .select("id,name,photo_url,subcategory_id,fixture_type")
+        .select("id,name,description,photo_url,subcategory_id,fixture_type")
         .eq("subcategory_id", sid);
 
       if (itemsRes.error) throw itemsRes.error;
@@ -1089,9 +1085,10 @@ export default function SubcategoryClientLighting({
           subcategory_id: subId,
           fixture_type: ft,
           name: nm,
+          description: description.trim() || null,
           photo_url: photo || null,
         })
-        .select("id,name,photo_url,subcategory_id,fixture_type")
+        .select("id,name,description,photo_url,subcategory_id,fixture_type")
         .single();
 
       if (insItem.error) throw insItem.error;
@@ -1133,6 +1130,7 @@ export default function SubcategoryClientLighting({
       setFixtureType("");
       setBrand("");
       setModel("");
+      setDescription("");
       setQty(1);
       setPhoto(null);
       setImageSearch("");
@@ -1443,7 +1441,7 @@ export default function SubcategoryClientLighting({
                 await saveSelectedFixtureName();
                 setSelectedFixtureId(it.id);
               } else {
-                window.location.href = detailsHref;
+                router.push(detailsHref);
               }
             }}
             className={`flex w-full flex-col gap-3 p-2 pr-10 text-left hems-wide:flex-row hems-wide:items-start ${
@@ -1467,6 +1465,12 @@ export default function SubcategoryClientLighting({
                       {renderFixtureName(it.name)}
                     </h2>
                   </div>
+
+                  {it.description ? (
+                    <p className="mt-1 whitespace-pre-line break-words text-[8px] leading-3 text-gray-500 hems-wide:text-[9px]">
+                      {it.description}
+                    </p>
+                  ) : null}
 
                   <div className="mt-2 hems-wide:hidden">
                     <div
@@ -1524,7 +1528,6 @@ export default function SubcategoryClientLighting({
             </div>
           </button>
 
-          <div className="pl-[76px]"><MaintenanceRepairBadge itemId={it.id} /></div>
           {allocations.length > 0 || existingMovementQuantity > 0 || stats.inKsa > 0 ? (
             <div
               data-lighting-active-allocations="true"
@@ -1537,7 +1540,7 @@ export default function SubcategoryClientLighting({
               </div>
 
               <div className="flex flex-wrap gap-1.5">
-                {allocations.filter(allocation=>allocation.listType!=="maintenance").map((allocation) => (
+                {allocations.map((allocation) => (
                   <Link
                     key={allocation.listId}
                     href={`/inventory/lists/${allocation.listId}`}
@@ -1573,14 +1576,13 @@ export default function SubcategoryClientLighting({
                 event.stopPropagation();
                 setListPickerItem(it);
               }}
-              aria-label={`Add units to ${activeDraftList.reference}`}
               title={`Add units to ${activeDraftList.reference}`}
               data-hems-mobile-add="units"
               className={`absolute top-2 z-20 rounded-full bg-black px-2.5 py-1 text-[9px] font-semibold text-white shadow-sm hems-wide:hidden ${
                 editable ? "right-10" : "right-2"
               }`}
             >
-              <span aria-hidden="true">+</span><span className="hidden hems-wide:inline"> List</span>
+              + List
             </button>
           ) : null}
 
@@ -1593,11 +1595,10 @@ export default function SubcategoryClientLighting({
                   event.stopPropagation();
                   setListPickerItem(it);
                 }}
-                aria-label={`Add units to ${activeDraftList.reference}`}
-              title={`Add units to ${activeDraftList.reference}`}
+                title={`Add units to ${activeDraftList.reference}`}
                 className="rounded-full bg-black px-2.5 py-1 text-[9px] font-semibold text-white shadow-sm transition hover:bg-gray-800"
               >
-                <span aria-hidden="true">+</span><span className="hidden hems-wide:inline"> List</span>
+                + List
               </button>
             ) : null}
 
@@ -1617,7 +1618,6 @@ export default function SubcategoryClientLighting({
             >
               <button
                 type="button"
-                data-hems-inventory-tools="true"
                 aria-label={`Edit ${it.name}`}
                 aria-expanded={mobileMenuItemId === it.id}
                 onClick={(event) => {
@@ -1781,6 +1781,17 @@ export default function SubcategoryClientLighting({
           + Add
         </button>
       </div>
+
+      <label className="mt-2 block text-[10px] font-semibold text-gray-600">
+        Description <span className="font-normal text-gray-400">(optional)</span>
+        <textarea
+          value={description}
+          onChange={(event) => setDescription(event.target.value)}
+          rows={3}
+          placeholder={"One detail per line\ne.g. 6 x Socapex out\n2 x 32A 3ph out"}
+          className="mt-1 min-h-20 w-full resize-y rounded-2xl border border-gray-300 bg-white px-4 py-3 text-[11px] font-normal leading-5 text-gray-900 shadow-sm outline-none transition placeholder:text-gray-400 focus:border-black focus:ring-1 focus:ring-black"
+        />
+      </label>
 
       {photo ? (
         <div className="mt-3 flex items-center gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-2">
@@ -1947,6 +1958,15 @@ export default function SubcategoryClientLighting({
               className="h-8 w-full rounded-lg border border-gray-300 bg-white px-2.5 text-[9px] font-medium text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
             />
           </div>
+          <InventoryDescriptionEditor
+            table="items"
+            recordId={selectedFixture.id}
+            value={selectedFixture.description}
+            disabled={!editable}
+            onSaved={(nextDescription) => setItems((current) => current.map((item) =>
+              item.id === selectedFixture.id ? { ...item, description: nextDescription } : item
+            ))}
+          />
         </div>
       </div>
 
@@ -2061,7 +2081,7 @@ export default function SubcategoryClientLighting({
         />
       ) : null}
 
-      {!inventoryPicking && editable && mobileMenuItemId && selectedFixture ? (
+      {editable && mobileMenuItemId && selectedFixture ? (
         <div
           data-mobile-lighting-tools="true"
           className="fixed inset-0 z-[9998] hems-wide:hidden"
@@ -2194,7 +2214,6 @@ export default function SubcategoryClientLighting({
         <>
           <button
             type="button"
-            data-hems-inventory-add="true"
             aria-label="Add fixture"
             aria-expanded={mobileAddFixtureOpen}
             onClick={() => setMobileAddFixtureOpen(true)}

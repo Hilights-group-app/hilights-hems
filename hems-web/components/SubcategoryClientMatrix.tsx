@@ -1,8 +1,5 @@
 "use client";
-import {useInventoryPickingMode} from "@/lib/inventoryPickingMode";
-import MaintenanceRepairBadge from "@/components/MaintenanceRepairBadge";
-
-import { useRepairRefresh } from "@/lib/useRepairStatus";
+import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor";
 
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 
@@ -32,6 +29,7 @@ type MatrixItemRow = {
   category_id: string;
   subcategory_id: string;
   name: string;
+  description?: string | null;
   photo_data: string | null;
   item_type: "unit" | "cable" | "rack" | null;
   block_name?: string | null;
@@ -459,15 +457,15 @@ function StatPill({
 }
 
 function AllocationBadges({
-  allocations,recordId,
+  allocations,
 }: {
-  allocations: ActiveAllocation[];recordId:string;
+  allocations: ActiveAllocation[];
 }) {
+  if (allocations.length === 0) return null;
 
   return (
     <div className="mt-1 flex min-w-0 flex-wrap gap-1">
-      <MaintenanceRepairBadge recordId={recordId} />
-      {allocations.filter(allocation=>allocation.listType!=="maintenance").map((allocation) => (
+      {allocations.map((allocation) => (
         <Link
           key={allocation.listId}
           href={`/inventory/lists/${allocation.listId}`}
@@ -621,6 +619,7 @@ export default function SubcategoryClientMatrix({
   const [cableModel, setCableModel] = useState("");
   const [blockName, setBlockName] = useState("");
   const [newBlockName, setNewBlockName] = useState("");
+  const [description, setDescription] = useState("");
   const [qty, setQty] = useState<number>(1);
 
   const [photo, setPhoto] = useState<string | null>(null);
@@ -693,11 +692,6 @@ export default function SubcategoryClientMatrix({
     );
     return item && row ? { item, row } : null;
   }, [items, cableRowsByItem, selectedCableRow]);
-
-  useRepairRefresh(()=>{void load(true, true);});
-
-  const inventoryPicking=useInventoryPickingMode();
-  useEffect(()=>{if(inventoryPicking){setMobileAddOpen(false);}},[inventoryPicking]);
 
   useEffect(() => {
     if (!selectedItem) return;
@@ -1316,6 +1310,10 @@ export default function SubcategoryClientMatrix({
       EQUIPMENT_LIST_ITEMS_EVENT,
       refreshEquipmentMovements,
     );
+    window.addEventListener(
+      "hems:maintenance-requests-change",
+      refreshEquipmentMovements,
+    );
 
     return () => {
       window.removeEventListener(
@@ -1324,6 +1322,10 @@ export default function SubcategoryClientMatrix({
       );
       window.removeEventListener(
         EQUIPMENT_LIST_ITEMS_EVENT,
+        refreshEquipmentMovements,
+      );
+      window.removeEventListener(
+        "hems:maintenance-requests-change",
         refreshEquipmentMovements,
       );
     };
@@ -1567,6 +1569,7 @@ export default function SubcategoryClientMatrix({
           category_id: categoryId,
           subcategory_id: subcategoryId,
           name: nm,
+          description: description.trim() || null,
           item_type: itemType,
           block_name: cleanBlockName,
           photo_data: photo || null,
@@ -1610,6 +1613,7 @@ export default function SubcategoryClientMatrix({
       setCableModel("");
       setBlockName(cleanBlockName);
       setNewBlockName("");
+      setDescription("");
       setQty(1);
       setPhoto(null);
       setImageSearch("");
@@ -2015,6 +2019,16 @@ export default function SubcategoryClientMatrix({
           className="h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
         />
 
+        <InventoryDescriptionEditor
+          table="matrix_models"
+          recordId={selectedItem.id}
+          value={selectedItem.description}
+          disabled={!editable}
+          onSaved={(nextDescription) => setItems((current) => current.map((item) =>
+            item.id === selectedItem.id ? { ...item, description: nextDescription } : item
+          ))}
+        />
+
         {selectedItem.item_type !== "cable" ? (
           <div className="grid grid-cols-2 gap-2">
             {(
@@ -2253,7 +2267,6 @@ export default function SubcategoryClientMatrix({
           {editable ? (
             <button
               type="button"
-              data-hems-inventory-tools="true"
               aria-label={`Open ${it.name} tools`}
               onClick={(event) => {
                 event.preventDefault();
@@ -2310,7 +2323,13 @@ export default function SubcategoryClientMatrix({
                     </h2>
                   </div>
 
-                  <AllocationBadges recordId={it.id}
+                  {it.description ? (
+                    <p className="mt-1 whitespace-pre-line break-words text-[8px] leading-3 text-gray-500 hems-wide:text-[9px]">
+                      {it.description}
+                    </p>
+                  ) : null}
+
+                  <AllocationBadges
                     allocations={
                       allocationsByRecordKey[`matrix_model:${it.id}`] || []
                     }
@@ -2403,7 +2422,6 @@ export default function SubcategoryClientMatrix({
                     title={row.cable_length}
                   >
                     {row.cable_length}
-                    <MaintenanceRepairBadge recordId={row.id} />
                     <KsaStockLink quantity={row.in_ksa_qty || 0} search={it.name} />
                   </div>
 
@@ -2452,7 +2470,6 @@ export default function SubcategoryClientMatrix({
           {editable ? (
             <button
               type="button"
-              data-hems-inventory-tools="true"
               aria-label={`Open ${it.name} tools`}
               onClick={(event) => {
                 event.preventDefault();
@@ -2483,6 +2500,12 @@ export default function SubcategoryClientMatrix({
                 >
                   {renderItemName(it.name, it.item_type)}
                 </h2>
+
+                {it.description ? (
+                  <p className="mt-1 whitespace-pre-line break-words text-[8px] font-normal normal-case leading-3 tracking-normal text-gray-500 hems-wide:text-[9px]">
+                    {it.description}
+                  </p>
+                ) : null}
 
               </div>
             </div>
@@ -2540,7 +2563,7 @@ export default function SubcategoryClientMatrix({
                     >
                       <div className="min-w-0 text-left">
                         <div className="font-bold">{row.cable_length}</div>
-                        <AllocationBadges recordId={row.id} allocations={rowAllocations} />
+                        <AllocationBadges allocations={rowAllocations} />
                         <KsaStockLink quantity={row.in_ksa_qty || 0} search={it.name} />
                       </div>
 
@@ -2630,7 +2653,6 @@ export default function SubcategoryClientMatrix({
         {editable ? (
           <button
             type="button"
-            data-hems-inventory-tools="true"
             aria-label={`Open ${it.name} tools`}
             onClick={(event) => {
               event.preventDefault();
@@ -2685,9 +2707,15 @@ export default function SubcategoryClientMatrix({
                     {renderItemName(it.name, it.item_type)}
                   </h2>
 
+                  {it.description ? (
+                    <p className="mt-1 whitespace-pre-line break-words text-[8px] font-normal normal-case leading-3 tracking-normal text-gray-500 hems-wide:text-[9px]">
+                      {it.description}
+                    </p>
+                  ) : null}
+
                 </div>
 
-                <AllocationBadges recordId={it.id}
+                <AllocationBadges
                   allocations={
                     allocationsByRecordKey[`matrix_model:${it.id}`] || []
                   }
@@ -2796,7 +2824,7 @@ export default function SubcategoryClientMatrix({
         onChange={onPickListItemPhoto}
       />
 
-      {!inventoryPicking && (selectedBlockName || selectedItem || selectedCableRowInfo) ? (
+      {(selectedBlockName || selectedItem || selectedCableRowInfo) ? (
         <div
           data-mobile-matrix-tools="true"
           className="fixed inset-0 z-[9998] hems-wide:hidden"
@@ -2992,6 +3020,17 @@ export default function SubcategoryClientMatrix({
               className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
             />
 
+            <label className="block text-[10px] font-semibold text-gray-600 md:col-span-full">
+              Description <span className="font-normal text-gray-400">(optional)</span>
+              <textarea
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                rows={3}
+                placeholder={"One detail per line\ne.g. 6 x Socapex out\n2 x 32A 3ph out\n6 x 16A out"}
+                className="mt-1 min-h-20 w-full resize-y rounded-2xl border border-gray-300 bg-white px-4 py-3 text-[11px] font-normal leading-5 text-gray-900 shadow-sm outline-none placeholder:text-gray-400 focus:border-black focus:ring-1 focus:ring-black"
+              />
+            </label>
+
             <input
               ref={fileRef}
               type="file"
@@ -3172,7 +3211,6 @@ export default function SubcategoryClientMatrix({
             <>
               <button
                 type="button"
-                data-hems-inventory-add="true"
                 aria-label="Add matrix item"
                 aria-expanded={mobileAddOpen}
                 onClick={() => setMobileAddOpen(true)}
@@ -3187,7 +3225,6 @@ export default function SubcategoryClientMatrix({
                   className="fixed inset-0 z-[9998] hems-desktop:hidden"
                   role="dialog"
                   aria-modal="true"
-                  data-hems-inventory-add="true"
                   aria-label="Add matrix item"
                 >
                   <button

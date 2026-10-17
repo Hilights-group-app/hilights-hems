@@ -1,15 +1,14 @@
 "use client";
-import {useInventoryPickingMode} from "@/lib/inventoryPickingMode";
-
-import { useRepairRefresh } from "@/lib/useRepairStatus";
 
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
+import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor";
 
 import { getAppLayout } from "@/lib/appLayout";
 
 import KsaStockLink from "@/components/KsaStockLink";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createClient } from "@/lib/supabase/client";
@@ -25,6 +24,7 @@ type DbItem = {
   id: string;
   subcategory_id: string;
   name: string;
+  description?: string | null;
   fixture_type?: string | null;
   photo_url?: string | null;
   created_at?: string;
@@ -230,6 +230,7 @@ export default function SubcategoryClientProjectors({
   const [brand, setBrand] = useState("");
   const [model, setModel] = useState("");
   const [blockName, setBlockName] = useState("");
+  const [description, setDescription] = useState("");
   const [qty, setQty] = useState<number>(1);
   const [photo, setPhoto] = useState<string | null>(null);
   const addPhotoRef = useRef<HTMLInputElement | null>(null);
@@ -311,11 +312,6 @@ export default function SubcategoryClientProjectors({
       option.toLowerCase().startsWith(query),
     );
   }, [blockOptions, selectedBlockDraft, selectedItem?.fixture_type]);
-
-  useRepairRefresh(()=>{if (resolvedSubcategoryId) void loadItems(resolvedSubcategoryId, true);});
-
-  const inventoryPicking=useInventoryPickingMode();
-  useEffect(()=>{if(inventoryPicking){setMobileMenuItemId(null);setMobileAddOpen(false);}},[inventoryPicking]);
 
   useEffect(() => {
     const parsed = splitProjectorName(selectedItem?.name ?? "");
@@ -444,13 +440,13 @@ export default function SubcategoryClientProjectors({
     return subRes.data.id as string;
   }
 
-  async function loadItems(subId: string, quiet = false) {
-    if (!quiet) setLoading(true);
+  async function loadItems(subId: string) {
+    setLoading(true);
     setErrorMsg(null);
 
     const { data, error } = await supabase
       .from("items")
-      .select("id, subcategory_id, name, fixture_type, photo_url, created_at")
+      .select("id, subcategory_id, name, description, fixture_type, photo_url, created_at")
       .eq("subcategory_id", subId);
 
     if (error) {
@@ -784,10 +780,11 @@ export default function SubcategoryClientProjectors({
         .insert({
           subcategory_id: resolvedSubcategoryId,
           name: clean,
+          description: description.trim() || null,
           fixture_type: blockName.trim() || null,
           photo_url: photo || null,
         })
-        .select("id, subcategory_id, name, fixture_type, photo_url, created_at")
+        .select("id, subcategory_id, name, description, fixture_type, photo_url, created_at")
         .single();
 
       if (error) {
@@ -830,6 +827,7 @@ export default function SubcategoryClientProjectors({
       setBrand("");
       setModel("");
       setBlockName("");
+      setDescription("");
       setQty(1);
       setPhoto(null);
       setImageSearch("");
@@ -1119,6 +1117,15 @@ export default function SubcategoryClientProjectors({
               </div>
             ) : null}
           </div>
+          <InventoryDescriptionEditor
+            table="items"
+            recordId={selectedItem.id}
+            value={selectedItem.description}
+            disabled={!editable}
+            onSaved={(nextDescription) => setItems((current) => current.map((item) =>
+              item.id === selectedItem.id ? { ...item, description: nextDescription } : item
+            ))}
+          />
         </div>
       </div>
 
@@ -1200,6 +1207,19 @@ export default function SubcategoryClientProjectors({
       />
     ) : null;
 
+  const addDescriptionField = (
+    <label className="block text-[10px] font-semibold text-gray-600 md:col-span-full">
+      Description <span className="font-normal text-gray-400">(optional)</span>
+      <textarea
+        value={description}
+        onChange={(event) => setDescription(event.target.value)}
+        rows={3}
+        placeholder={"One detail per line\ne.g. 2 x HDMI input\n1 x SDI input"}
+        className="mt-1 min-h-20 w-full resize-y rounded-2xl border border-gray-300 bg-white px-4 py-3 text-[11px] font-normal leading-5 text-gray-900 shadow-sm outline-none placeholder:text-gray-400 focus:border-black focus:ring-1 focus:ring-black"
+      />
+    </label>
+  );
+
   const sidebarAddPanel = editable && !selectedItem ? (
     <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm hems-wide:p-5">
       <div className="mb-4">
@@ -1238,6 +1258,7 @@ export default function SubcategoryClientProjectors({
           placeholder="Block Name (e.g. Main Projector)"
           className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
         />
+        {addDescriptionField}
         <input
           value={String(qty)}
           onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
@@ -1369,7 +1390,7 @@ export default function SubcategoryClientProjectors({
         onChange={onPickListItemPhoto}
       />
 
-      {!inventoryPicking && editable && mobileMenuItemId && selectedItem ? (
+      {editable && mobileMenuItemId && selectedItem ? (
         <div
           data-mobile-projector-tools="true"
           className="fixed inset-0 z-[9998] hems-wide:hidden"
@@ -1484,7 +1505,6 @@ export default function SubcategoryClientProjectors({
         <>
           <button
             type="button"
-            data-hems-inventory-add="true"
             aria-label="Add projector"
             onClick={() => setMobileAddOpen(true)}
             className="fixed bottom-5 right-4 z-[90] flex h-14 w-14 items-center justify-center rounded-full bg-black text-[30px] font-light leading-none text-white shadow-xl active:scale-95 hems-wide:hidden"
@@ -1575,6 +1595,7 @@ export default function SubcategoryClientProjectors({
               placeholder="Block Name (e.g. Main Projector)"
               className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
             />
+            {addDescriptionField}
 
             <input
               value={String(qty)}
@@ -1836,6 +1857,7 @@ function ProjectorItemRow({
   onDelete: () => void;
 }) {
   const detailsHref = `/inventory/${category}/${subcategory}/${item.id}`;
+  const router = useRouter();
 
   return (
     <div className={!isLast ? "border-b border-gray-100 pb-4 mb-4" : ""}>
@@ -1854,7 +1876,7 @@ function ProjectorItemRow({
               if (getAppLayout() !== "compact") {
                 onSelect();
               } else {
-                window.location.href = detailsHref;
+                router.push(detailsHref);
               }
             }}
             className="flex items-start gap-3 min-w-0 flex-1 text-left group"
@@ -1870,6 +1892,12 @@ function ProjectorItemRow({
                   {item.name}
                 </h2>
               </div>
+
+              {item.description ? (
+                <p className="mt-1 whitespace-pre-line break-words text-[8px] leading-3 text-gray-500 hems-wide:text-[9px]">
+                  {item.description}
+                </p>
+              ) : null}
 
               <div className="mt-2 hems-wide:hidden">
                 <div className={`grid gap-x-2 gap-y-1 text-center ${
@@ -1976,7 +2004,6 @@ function ProjectorItemRow({
           >
             <button
               type="button"
-              data-hems-inventory-tools="true"
               aria-label={`Edit ${item.name}`}
               aria-expanded={mobileMenuOpen}
               onClick={(event) => {

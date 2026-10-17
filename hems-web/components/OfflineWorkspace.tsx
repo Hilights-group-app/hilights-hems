@@ -161,6 +161,7 @@ export default function OfflineWorkspace() {
       queueMicrotask(() => {
         if (!alive || !storage) return;
         if (session?.user.id) {
+          if (event === 'SIGNED_IN') setOpened(false);
           user = session.user.id;
           void storage.setOwner(user).then(count).catch(() => {});
         } else if (event === 'SIGNED_OUT' && !isOffline()) {
@@ -195,6 +196,10 @@ export default function OfflineWorkspace() {
       window.removeEventListener('hems:connection', connection); window.removeEventListener('focus', focus);
     };
   }, [client]);
+  useEffect(() => {
+    // Never carry the Saved workspace overlay through logout/login navigation.
+    if (pathname === '/login') setOpened(false);
+  }, [pathname]);
   useEffect(() => {
     const app = document.querySelector<HTMLElement>('[data-hems-online-app]');
     if (app) app.inert = opened;
