@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import { setUserId, setUserRole, setUserName, setUserDepartment } from "@/lib/authStore";
+import { clearAuthStore, setUserId, setUserRole, setUserName, setUserDepartment } from "@/lib/authStore";
+import { isOffline } from "@/lib/offline";
 import { CATALOG_CHANGED_EVENT, readCatalog } from "@/lib/catalogStore";
 import { ACTIVE_EQUIPMENT_LIST_KEY } from "@/lib/equipmentLists";
 import { readWorkingDraft, readWorkspaceProfile, seedCatalogRoutes } from "@/lib/workspaceStartup";
@@ -46,7 +47,17 @@ export default function AppStartup({ children }: { children: ReactNode }) {
         if (isLogin) { if (!cancelled) setReadyScope(true); return; }
         const { data: { session } } = await client.auth.getSession();
         if (cancelled) return;
-        if (!session) { setReadyScope(isLogin); return; }
+        if (!session) {
+          // A cached app route can bypass middleware. Never expose that cached
+          // inventory shell after an online sign-out. Offline users keep the
+          // dedicated saved-workspace viewer instead.
+          if (isOffline()) window.location.replace("/offline.html");
+          else {
+            clearAuthStore();
+            window.location.replace("/login");
+          }
+          return;
+        }
         setUserId(session.user.id);
         const profileResult = await readWorkspaceProfile(client, session.user.id);
         if (cancelled) return;
@@ -77,6 +88,39 @@ export default function AppStartup({ children }: { children: ReactNode }) {
       window.removeEventListener(CATALOG_CHANGED_EVENT, updateRoutes);
     };
   }, [isLogin, attempt, client, router]);
+
+  useEffect(() => {
+    if (isLogin) return;
+    let alive = true;
+
+    function goToLogin() {
+      if (!alive || isOffline()) return;
+      clearAuthStore();
+      window.location.replace("/login");
+    }
+
+    const { data: { subscription } } = client.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") queueMicrotask(goToLogin);
+    });
+
+    const verifyVisibleSession = () => {
+      if (document.visibilityState !== "visible" || isOffline()) return;
+      void client.auth.getSession().then(({ data, error }) => {
+        if (!error && !data.session) goToLogin();
+      }).catch(() => {
+        // A temporary connection failure is handled by offline mode, not logout.
+      });
+    };
+
+    window.addEventListener("focus", verifyVisibleSession);
+    document.addEventListener("visibilitychange", verifyVisibleSession);
+    return () => {
+      alive = false;
+      subscription.unsubscribe();
+      window.removeEventListener("focus", verifyVisibleSession);
+      document.removeEventListener("visibilitychange", verifyVisibleSession);
+    };
+  }, [client, isLogin]);
 
   if (readyScope === isLogin) return <>{children}</>;
   return <div role="status" aria-live="polite" aria-label="Preparing your workspace" className="fixed inset-0 z-[20000] flex min-h-dvh flex-col items-center justify-center bg-white px-8 text-center">
