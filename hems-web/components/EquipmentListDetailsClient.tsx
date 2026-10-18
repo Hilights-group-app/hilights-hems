@@ -1,5 +1,4 @@
 "use client";
-import { useRepairRefresh } from "@/lib/useRepairStatus";
 
 import { createBrowserId } from "@/lib/browserId";
 import { draftGroupRank, moveDraftGroup } from "@/lib/draftItemOrder";
@@ -712,6 +711,10 @@ export default function EquipmentListDetailsClient({
     null,
   );
   const [error, setError] = useState("");
+  const [quantityError, setQuantityError] = useState<{
+    itemId: string;
+    message: string;
+  } | null>(null);
   const [message, setMessage] = useState("");
   const [deletingList, setDeletingList] = useState(false);
   const [pdfAction, setPdfAction] = useState<"download" | "share" | null>(
@@ -741,25 +744,10 @@ export default function EquipmentListDetailsClient({
     null,
   );
   const listReadVersion = useRef(0);
-  const maintenanceReadVersion=useRef(0);
-  const detailsMounted=useRef(true);
-  useEffect(()=>{
-    detailsMounted.current=true;
-    return()=>{detailsMounted.current=false;++listReadVersion.current;++maintenanceReadVersion.current;};
-  },[listId]);
-  function isCurrentList(){return detailsMounted.current && cancelListScope.current===listId;}
-  function showListUnavailable(){
-    clearListDetailsCache(listId);++maintenanceReadVersion.current;
-    setList(null);setItems([]);setMaintenanceRequests([]);
-    setReviewPicker(null);setReturnDialog(null);setCustomItemOpen(false);
-    setMessage("");setError("This list was deleted or your access has been removed.");setLoading(false);
-    try{
-      if(localStorage.getItem(ACTIVE_EQUIPMENT_LIST_KEY)===listId){
-        localStorage.removeItem(ACTIVE_EQUIPMENT_LIST_KEY);
-        window.dispatchEvent(new CustomEvent(ACTIVE_EQUIPMENT_LIST_EVENT,{detail:{listId:null}}));
-      }
-    }catch{ /* Storage can be unavailable; the current page is still cleared. */ }
-  }
+
+  useEffect(() => {
+    setQuantityError(null);
+  }, [listId]);
 
   useClientLayoutEffect(() => {
     try {
@@ -862,13 +850,22 @@ export default function EquipmentListDetailsClient({
 
       if (cancelled || version !== listReadVersion.current) return;
 
-      if(listResult.error){
-        console.error("equipment list details load error",listResult.error);
-        if(!cached){setList(null);setItems([]);}
-        setError("The list could not be loaded. Please retry when the connection is available.");
-        setLoading(false);return;
+      if (listResult.error || !listResult.data) {
+        console.error("equipment list details load error", listResult.error);
+
+        if (cached && listResult.error) {
+          setError("The latest list changes could not be refreshed.");
+          setLoading(false);
+          return;
+        }
+
+        clearListDetailsCache(listId);
+        setList(null);
+        setItems([]);
+        setError("Equipment list not found or access has been removed.");
+        setLoading(false);
+        return;
       }
-      if(!listResult.data){showListUnavailable();return;}
 
       const nextList = listResult.data as DetailedEquipmentList;
       let nextItems: EquipmentListItem[];
@@ -887,51 +884,39 @@ export default function EquipmentListDetailsClient({
       setLoading(false);
     }
 
-    void load().catch(loadError=>{
-      if(cancelled || !isCurrentList())return;
-      console.error("equipment list load error",loadError);
-      setError("The list could not be loaded. Please retry when the connection is available.");setLoading(false);
-    });
+    void load();
 
     return () => {
       cancelled = true;
     };
   }, [listId, supabase]);
 
-  useRepairRefresh(()=>{
-    if(list?.list_type==="maintenance")void refreshRepairDetails();
-  });
-
-  async function refreshRepairDetails(){
-    try{
-      if(await refreshListAndItems()===true)await refreshMaintenanceRequests();
-    }catch(refreshError){
-      if(!isCurrentList())return;
-      console.error("maintenance list refresh error",refreshError);
-      setError((refreshError as {message?:string})?.message || "The list could not be refreshed. Please retry.");
-    }
-  }
-
   async function refreshMaintenanceRequests() {
-    if(!isCurrentList())return;
-    const version=++maintenanceReadVersion.current;
     if (list?.list_type !== "maintenance") {
       setMaintenanceRequests([]);
       return;
     }
-    try{
-      const { data, error: requestsError } = await supabase
-        .from("maintenance_requests")
-        .select("id,list_id,list_item_id,display_name,serial_number,quantity,received_quantity,tested_quantity,department,report_href,status")
-        .eq("list_id",list.id).eq("source_type","maintenance").order("created_at",{ascending:true});
-      if(!isCurrentList() || version!==maintenanceReadVersion.current)return;
-      if(requestsError)throw requestsError;
-      setMaintenanceRequests((data ?? []) as MaintenanceWorkflowRequest[]);
-    }catch(requestsError){
-      if(!isCurrentList() || version!==maintenanceReadVersion.current)return;
-      console.error("load maintenance workflow requests error",requestsError);
-      setError("The repair workflow could not be refreshed. Please retry.");
+
+    const { data, error: requestsError } = await supabase
+      .from("maintenance_requests")
+      .select(
+        "id,list_id,list_item_id,display_name,serial_number,quantity,received_quantity,tested_quantity,department,report_href,status",
+      )
+      .eq("list_id", list.id)
+      .eq("source_type", "maintenance")
+      .order("created_at", { ascending: true });
+
+    if (requestsError) {
+      console.error("load maintenance workflow requests error", requestsError);
+      setError(
+        "The repair workflow could not be loaded. Check the maintenance access SQL update.",
+      );
+      return;
     }
+
+    setMaintenanceRequests(
+      (data ?? []) as MaintenanceWorkflowRequest[],
+    );
   }
 
   useEffect(() => {
@@ -1181,7 +1166,6 @@ export default function EquipmentListDetailsClient({
   }
 
   async function refreshListAndItems(isCancelled: () => boolean = () => false) {
-    if(!isCurrentList())return false;
     const version = ++listReadVersion.current;
     const [listResult, itemsResult] = await Promise.all([
       supabase
@@ -1196,10 +1180,13 @@ export default function EquipmentListDetailsClient({
         .order("created_at", { ascending: true }),
     ]);
 
-    if (!isCurrentList() || isCancelled() || version !== listReadVersion.current || draftOrderBusy.current) return false;
+    if (isCancelled() || version !== listReadVersion.current || draftOrderBusy.current) return;
     if (!listResult.error && !listResult.data) {
-      showListUnavailable();
-      return false;
+      clearListDetailsCache(listId);
+      setList(null);
+      setItems([]);
+      setLoading(false);
+      throw new Error("This list is no longer shared with you or is no longer available.");
     }
     if (listResult.error) throw listResult.error;
 
@@ -1211,7 +1198,6 @@ export default function EquipmentListDetailsClient({
     setItems(nextItems);
     writeListDetailsCache(listId, nextList, nextItems);
     setLoading(false);
-    return true;
   }
 
   useEffect(() => {
@@ -1308,7 +1294,7 @@ export default function EquipmentListDetailsClient({
 
       if (returnError) throw returnError;
 
-      if(await refreshListAndItems()===false)return;
+      await refreshListAndItems();
       setReturnDialog(null);
       setReturnOkQuantity(0);
       setMessage(toMaintenance ? "Received in Dubai and moved to Maintenance." : "Return received. The equipment is Available again.");
@@ -1396,11 +1382,10 @@ export default function EquipmentListDetailsClient({
       );
       if (testError) throw testError;
 
-      const [listAvailable]=await Promise.all([
+      await Promise.all([
         refreshListAndItems(),
         refreshMaintenanceRequests(),
       ]);
-      if(listAvailable===false)return;
       setMessage(
         "Test completed. The equipment is Available again; the list closes automatically after every item passes.",
       );
@@ -1486,6 +1471,61 @@ export default function EquipmentListDetailsClient({
     }
   }
 
+  async function loadMatrixQuantityLimit(item: EquipmentListItem) {
+    if (
+      !list ||
+      list.list_type === "maintenance" ||
+      (item.inventory_record_type !== "matrix_model" &&
+        item.inventory_record_type !== "matrix_row")
+    ) {
+      return null;
+    }
+
+    const result = item.inventory_record_type === "matrix_model"
+      ? await supabase
+          .from("matrix_models")
+          .select("total_qty,in_use_qty,maintenance_qty,in_ksa_qty")
+          .eq("id", item.inventory_record_id)
+          .maybeSingle()
+      : await supabase
+          .from("matrix_rows")
+          .select("qty,total_qty,in_use_qty,maintenance_qty,in_ksa_qty")
+          .eq("id", item.inventory_record_id)
+          .maybeSingle();
+
+    if (result.error) throw result.error;
+    if (!result.data) throw new Error("This Matrix item no longer exists.");
+
+    const stock = result.data as Record<string, unknown>;
+    const genericMatrix =
+      item.inventory_record_type === "matrix_model" ||
+      item.metadata?.matrix_source === "generic";
+    const total = Math.max(
+      0,
+      Number(genericMatrix ? stock.total_qty : stock.qty) || 0,
+    );
+    const inKsa = Math.max(0, Number(stock.in_ksa_qty) || 0);
+    const occupied =
+      Math.max(0, Number(stock.in_use_qty) || 0) +
+      Math.max(0, Number(stock.maintenance_qty) || 0) +
+      inKsa;
+    const available = list.list_type === "transfer_in"
+      ? inKsa
+      : Math.max(0, total - occupied);
+    const siblingQuantity = items.reduce((sum, current) => {
+      if (
+        current.id === item.id ||
+        current.inventory_record_type !== item.inventory_record_type ||
+        current.inventory_record_id !== item.inventory_record_id
+      ) {
+        return sum;
+      }
+      return sum + Math.max(0, Number(current.requested_quantity) || 0);
+    }, 0);
+
+    return Math.max(0, available - siblingQuantity);
+  }
+
   async function updateItemQuantity(
     item: EquipmentListItem,
     nextValue: number,
@@ -1528,6 +1568,31 @@ export default function EquipmentListDetailsClient({
 
     setUpdatingItemId(item.id);
     setError("");
+    setQuantityError(null);
+
+    try {
+      const quantityLimit = await loadMatrixQuantityLimit(item);
+      if (quantityLimit !== null && nextQuantity > quantityLimit) {
+        setQuantityError({
+          itemId: item.id,
+          message: `Only ${quantityLimit} unit${quantityLimit === 1 ? " is" : "s are"} currently available for ${item.display_name}.`,
+        });
+        setQuantityInputVersion((version) => version + 1);
+        setUpdatingItemId(null);
+        return;
+      }
+    } catch (quantityError: any) {
+      console.error("matrix quantity availability check error", quantityError);
+      setQuantityError({
+        itemId: item.id,
+        message:
+          quantityError?.message ||
+          "Could not verify the available Matrix quantity.",
+      });
+      setQuantityInputVersion((version) => version + 1);
+      setUpdatingItemId(null);
+      return;
+    }
 
     if (
       item.inventory_record_type === "matrix_row" &&
@@ -1551,7 +1616,10 @@ export default function EquipmentListDetailsClient({
 
     if (updateError || !data) {
       console.error("update equipment list quantity error", updateError);
-      setError(updateError?.message || "Failed to update the quantity.");
+      setQuantityError({
+        itemId: item.id,
+        message: updateError?.message || "Failed to update the quantity.",
+      });
       setQuantityInputVersion((version) => version + 1);
       setUpdatingItemId(null);
       return;
@@ -2398,7 +2466,7 @@ export default function EquipmentListDetailsClient({
     try {
       const { error: syncError } = await supabase.rpc("hems_archive_transfer_out", {p_list_id:list.id});
       if (syncError) throw syncError;
-      if(await refreshListAndItems()===false)return;
+      await refreshListAndItems();
       setMessage("Delivery note saved and stock synced.");
       window.dispatchEvent(new CustomEvent(EQUIPMENT_LISTS_EVENT, {detail:{listId:list.id}}));
       window.dispatchEvent(new CustomEvent(EQUIPMENT_LIST_ITEMS_EVENT, {detail:{listId:list.id}}));
@@ -2520,7 +2588,7 @@ export default function EquipmentListDetailsClient({
   if (!list) {
     return (
       <div className="w-full rounded-2xl border border-gray-200 bg-white p-6">
-        <div className="text-base font-bold text-gray-900">List unavailable</div>
+        <div className="text-base font-bold text-gray-900">List not found</div>
         <div className="mt-1 text-sm text-red-600">
           {error || "This equipment list is unavailable."}
         </div>
@@ -3232,7 +3300,7 @@ export default function EquipmentListDetailsClient({
                             </button>
                           ) : null}
                           {!isMatrixChildCollection ? (
-                          <div className="flex min-w-[72px] items-center justify-end">
+                          <div className="flex min-w-[72px] flex-col items-end justify-end gap-1">
                             {canEditQuantity ? (
                               <div className="flex items-center justify-end gap-1">
                                 <input
@@ -3254,6 +3322,11 @@ export default function EquipmentListDetailsClient({
                                       : firstItem.requested_quantity
                                   }
                                   disabled={updatingItemId === firstItem.id}
+                                  onFocus={() => {
+                                    if (quantityError?.itemId === firstItem.id) {
+                                      setQuantityError(null);
+                                    }
+                                  }}
                                   onKeyDown={(event) => {
                                     if (event.key === "Enter") {
                                       event.preventDefault();
@@ -3312,6 +3385,14 @@ export default function EquipmentListDetailsClient({
                                 {quantityText}
                               </span>
                             )}
+                            {quantityError?.itemId === firstItem.id ? (
+                              <div
+                                role="alert"
+                                className="max-w-[260px] rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-left text-[9px] font-semibold leading-4 text-red-700 shadow-sm"
+                              >
+                                {quantityError.message}
+                              </div>
+                            ) : null}
                           </div>
                           ) : null}
 
@@ -3405,7 +3486,7 @@ export default function EquipmentListDetailsClient({
                             return (
                               <div
                                 key={item.id}
-                                className="flex min-h-9 items-center justify-between gap-3 border-t border-gray-100 px-2.5 py-1.5 first:border-t-0"
+                                className="flex min-h-9 items-start justify-between gap-3 border-t border-gray-100 px-2.5 py-1.5 first:border-t-0"
                               >
                                 <span
                                   className="min-w-0 flex-1 truncate text-[9px] font-semibold text-gray-900 sm:text-[10px]"
@@ -3414,7 +3495,8 @@ export default function EquipmentListDetailsClient({
                                   {rowLabel}
                                 </span>
 
-                                <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+                                <div className="flex shrink-0 flex-col items-end gap-1">
+                                  <div className="flex flex-wrap items-center justify-end gap-1.5">
                                   {canChangeItems ? (
                                     <button
                                       type="button"
@@ -3441,6 +3523,11 @@ export default function EquipmentListDetailsClient({
                                         step={1}
                                         defaultValue={item.requested_quantity}
                                         disabled={updatingItemId === item.id}
+                                        onFocus={() => {
+                                          if (quantityError?.itemId === item.id) {
+                                            setQuantityError(null);
+                                          }
+                                        }}
                                         onKeyDown={(event) => {
                                           if (event.key === "Enter") {
                                             event.preventDefault();
@@ -3503,6 +3590,15 @@ export default function EquipmentListDetailsClient({
                                         ? `${returnedMaintenance} Maintenance`
                                         : ""}
                                     </span>
+                                  ) : null}
+                                  </div>
+                                  {quantityError?.itemId === item.id ? (
+                                    <div
+                                      role="alert"
+                                      className="max-w-[240px] rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-left text-[9px] font-semibold leading-4 text-red-700 shadow-sm"
+                                    >
+                                      {quantityError.message}
+                                    </div>
                                   ) : null}
                                 </div>
                               </div>

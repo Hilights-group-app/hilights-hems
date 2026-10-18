@@ -36,6 +36,9 @@ import {
 } from "@/lib/authStore";
 import EquipmentListsSidebar from "@/components/EquipmentListsSidebar";
 import EquipmentListUnitPicker from "@/components/EquipmentListUnitPicker";
+import EquipmentListMatrixQuantityAction, {
+  type MatrixListTarget,
+} from "@/components/EquipmentListMatrixQuantityAction";
 import {
   ACTIVE_EQUIPMENT_LIST_EVENT,
   ACTIVE_EQUIPMENT_LIST_KEY,
@@ -87,13 +90,26 @@ type MatrixModelRow = {
   name: string;
   category_id: string;
   subcategory_id: string;
+  item_type?: "unit" | "cable" | "rack" | null;
+  block_name?: string | null;
+  total_qty?: number | null;
+  in_use_qty?: number | null;
+  maintenance_qty?: number | null;
+  in_ksa_qty?: number | null;
 };
 
 type MatrixRow = {
   id: string;
-  model_id: string;
+  model_id: string | null;
+  item_id?: string | null;
   size: string | null;
   cabinet_model: string | null;
+  cable_length?: string | null;
+  qty?: number | null;
+  total_qty?: number | null;
+  in_use_qty?: number | null;
+  maintenance_qty?: number | null;
+  in_ksa_qty?: number | null;
 };
 
 type SearchIndex = {
@@ -114,6 +130,11 @@ type SearchResult = {
   score: number;
   addTarget?: {
     item: Pick<ItemRow, "id" | "name" | "photo_url" | "fixture_type">;
+    category: string;
+    subcategory: string;
+  };
+  matrixAddTarget?: {
+    target: MatrixListTarget;
     category: string;
     subcategory: string;
   };
@@ -345,9 +366,12 @@ export default function TopBar() {
             fetchAllRows("units", "id,item_id,unit_no,serial"),
             fetchAllRows(
               "matrix_models",
-              "id,name,category_id,subcategory_id"
+              "id,name,category_id,subcategory_id,item_type,block_name,total_qty,in_use_qty,maintenance_qty,in_ksa_qty"
             ),
-            fetchAllRows("matrix_rows", "id,model_id,size,cabinet_model"),
+            fetchAllRows(
+              "matrix_rows",
+              "id,model_id,item_id,size,cabinet_model,cable_length,qty,total_qty,in_use_qty,maintenance_qty,in_ksa_qty",
+            ),
           ]);
 
         setSearchIndex({
@@ -491,32 +515,91 @@ export default function TopBar() {
       const location = locationForSubcategory(model.subcategory_id);
       if (score === null || !location) continue;
 
+      const genericMatrixItem = model.item_type === "unit";
+
       results.push({
         key: `matrix-model-${model.id}`,
-        kind: "LED model",
+        kind: genericMatrixItem
+          ? "Matrix item"
+          : model.item_type === "cable"
+            ? "Cable group"
+            : model.item_type === "rack"
+              ? "Rack group"
+              : "LED model",
         title: model.name,
         subtitle: `${rowName(location.category)} / ${rowName(
           location.subcategory
         )}`,
         href: location.baseHref,
         score,
+        matrixAddTarget: genericMatrixItem
+          ? {
+              target: {
+                id: model.id,
+                parentId: null,
+                recordType: "matrix_model",
+                displayName: model.name,
+                blockName: model.block_name || null,
+                photoUrl: null,
+                itemType: model.item_type || "unit",
+                total: Number(model.total_qty || 0),
+                inUse: Number(model.in_use_qty || 0),
+                maintenance: Number(model.maintenance_qty || 0),
+                inKsa: Number(model.in_ksa_qty || 0),
+              },
+              category: String(location.category.slug),
+              subcategory: String(location.subcategory.slug),
+            }
+          : undefined,
       });
     }
 
     for (const row of searchIndex.matrixRows) {
-      const model = modelsById.get(row.model_id);
+      const parentId = row.model_id || row.item_id || "";
+      const model = modelsById.get(parentId);
       const location = model ? locationForSubcategory(model.subcategory_id) : null;
-      const ownText = `${row.size ?? ""} ${row.cabinet_model ?? ""}`;
+      const rowLabel =
+        row.cable_length ||
+        [row.size, row.cabinet_model].filter(Boolean).join(" · ");
+      const ownText = `${model?.name ?? ""} ${rowLabel}`;
       const score = matchScore(ownText, query);
       if (score === null || !model || !location) continue;
 
+      const rowKind =
+        model.item_type === "cable"
+          ? "Cable length"
+          : model.item_type === "rack"
+            ? "Rack item"
+            : "LED cabinet";
+
       results.push({
         key: `matrix-row-${row.id}`,
-        kind: "LED cabinet",
-        title: [model.name, row.size].filter(Boolean).join(" — "),
-        subtitle: row.cabinet_model || rowName(location.subcategory),
-        href: `${location.baseHref}/led-report/${encodeURIComponent(row.id)}`,
+        kind: rowKind,
+        title: model.name,
+        subtitle: rowLabel || rowName(location.subcategory),
+        href:
+          rowKind === "LED cabinet"
+            ? `${location.baseHref}/led-report/${encodeURIComponent(row.id)}`
+            : location.baseHref,
         score,
+        matrixAddTarget: {
+          target: {
+            id: row.id,
+            parentId: model.id,
+            recordType: "matrix_row",
+            displayName: model.name,
+            blockName: model.block_name || null,
+            photoUrl: null,
+            itemType: model.item_type || null,
+            rowLabel: rowLabel || null,
+            total: Number(row.total_qty ?? row.qty ?? 0),
+            inUse: Number(row.in_use_qty || 0),
+            maintenance: Number(row.maintenance_qty || 0),
+            inKsa: Number(row.in_ksa_qty || 0),
+          },
+          category: String(location.category.slug),
+          subcategory: String(location.subcategory.slug),
+        },
       });
     }
 
@@ -852,7 +935,17 @@ if (!notifCache) {
                             </div>
                           </Link>
 
-                          {activeSearchDraft && result.addTarget ? (
+                          {activeSearchDraft && result.matrixAddTarget ? (
+                            <div className="mr-2 shrink-0">
+                              <EquipmentListMatrixQuantityAction
+                                target={result.matrixAddTarget.target}
+                                category={result.matrixAddTarget.category}
+                                subcategory={result.matrixAddTarget.subcategory}
+                                compact
+                                variant="topbar"
+                              />
+                            </div>
+                          ) : activeSearchDraft && result.addTarget ? (
                             <button
                               type="button"
                               onClick={() => {

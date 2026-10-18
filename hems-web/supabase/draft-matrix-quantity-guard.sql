@@ -26,6 +26,8 @@ begin
   end if;
   select * into parent from public.equipment_lists where id = new.list_id for no key update;
   if not found then raise exception 'Equipment list not found.'; end if;
+  -- Transfer In has its own KSA reservation guard in ksa-transfer-workflow.sql.
+  if parent.list_type::text = 'transfer_in' then return new; end if;
   if parent.status::text not in ('draft', 'pending') then return new; end if;
   if new.inventory_record_type::text = 'matrix_model' then
     select to_jsonb(m) into stock from public.matrix_models m where m.id = new.inventory_record_id for share;
@@ -52,7 +54,7 @@ begin
       into active_quantity
       from public.equipment_list_items i join public.equipment_lists l on l.id = i.list_id
       where i.inventory_record_type = new.inventory_record_type and i.inventory_record_id = new.inventory_record_id
-        and l.status::text in ('active', 'partially_returned') and l.list_type::text <> 'maintenance'
+        and l.status::text in ('active', 'partially_returned') and l.list_type::text not in ('maintenance','transfer_in')
         and i.list_id <> new.list_id;
     occupied := greatest(occupied, active_quantity);
   end if;

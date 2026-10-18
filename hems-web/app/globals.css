@@ -205,10 +205,41 @@ html[data-hems-layout="compact"] {
   color: #374151;
   overflow-wrap: anywhere;
 }
+
+/*
+ * Matrix blocks live inside padded cards. Extend their sticky header across
+ * that padding and add an opaque cap above it so rows never show through the
+ * small gap while the page is scrolling.
+ */
+[data-hems-matrix-block-header] {
+  isolation: isolate;
+  margin-left: -0.5rem;
+  margin-right: -0.5rem;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  background: #fff !important;
+}
+[data-hems-matrix-block-header]::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: -16px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: #fff;
+  pointer-events: none;
+}
 html:not([data-hems-layout="compact"]) {
   [data-hems-block-header] { min-height: 48px; }
   [data-hems-block-header] h2,
   [data-hems-block-header] > button:not([draggable]) { font-size: 15px; }
+  [data-hems-matrix-block-header] {
+    margin-left: -1rem;
+    margin-right: -1rem;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
 }
 html[data-hems-layout="compact"] {
   &[data-hems-mobile="new"] [data-hems-block-header] {

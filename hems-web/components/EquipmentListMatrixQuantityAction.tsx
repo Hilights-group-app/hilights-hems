@@ -1,8 +1,8 @@
 "use client";
-import EquipmentListPickerOverlay from "@/components/EquipmentListPickerOverlay";
 
 import { Loader2, PackagePlus, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   canCreateEquipmentLists,
   canEditReportForRoute,
@@ -181,11 +181,15 @@ export default function EquipmentListMatrixQuantityAction({
   category,
   subcategory,
   compact = false,
+  variant = "default",
+  onOpen,
 }: {
   target: MatrixListTarget;
   category: string;
   subcategory: string;
   compact?: boolean;
+  variant?: "default" | "topbar";
+  onOpen?: () => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
   const canBuildLists = canCreateEquipmentLists();
@@ -492,7 +496,13 @@ export default function EquipmentListMatrixQuantityAction({
   }
 
   const quantityDialog = open ? (
-    <EquipmentListPickerOverlay label={`Add ${target.displayName} to ${activeList.reference}`}>
+    <div
+      className="fixed inset-0 z-[10020] flex items-end justify-center sm:items-center sm:p-5"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Add ${target.displayName} to ${activeList.reference}`}
+      onClick={(event) => event.stopPropagation()}
+    >
       <button
         type="button"
         aria-label="Close quantity picker"
@@ -502,7 +512,7 @@ export default function EquipmentListMatrixQuantityAction({
         className="absolute inset-0 bg-black/50"
       />
 
-      <div className="relative max-h-[calc(100dvh-12px)] w-full overflow-y-auto rounded-t-3xl bg-white shadow-2xl sm:max-w-md sm:rounded-3xl">
+      <div className="relative w-full rounded-t-3xl bg-white shadow-2xl sm:max-w-md sm:rounded-3xl">
         <div className="flex items-start gap-3 border-b border-gray-200 px-4 py-4 sm:px-5">
           {target.photoUrl ? (
             <img
@@ -624,8 +634,12 @@ export default function EquipmentListMatrixQuantityAction({
           </button>
         </div>
       </div>
-    </EquipmentListPickerOverlay>
+    </div>
   ) : null;
+  const quantityDialogPortal =
+    quantityDialog && typeof document !== "undefined"
+      ? createPortal(quantityDialog, document.body)
+      : null;
 
   if (compact) {
     const currentQuantity = existingLine ? qty(requested) : 0;
@@ -659,6 +673,7 @@ export default function EquipmentListMatrixQuantityAction({
                 event.preventDefault();
                 event.stopPropagation();
                 setError("");
+                onOpen?.();
                 setOpen(true);
               }}
               aria-label="Enter quantity"
@@ -685,7 +700,7 @@ export default function EquipmentListMatrixQuantityAction({
               +
             </button>
           </div>
-          {quantityDialog}
+          {quantityDialogPortal}
         </>
       );
     }
@@ -700,11 +715,14 @@ export default function EquipmentListMatrixQuantityAction({
             event.stopPropagation();
             setRequested(available > 0 ? 1 : 0);
             setError("");
+            onOpen?.();
             setOpen(true);
           }}
           data-hems-mobile-add="quantity"
           title={`Enter quantity for ${activeList.reference}`}
-          className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-300 bg-white text-[14px] font-medium leading-none text-gray-700 transition hover:border-gray-400 hover:bg-gray-50 disabled:opacity-40"
+          className={variant === "topbar"
+            ? "inline-flex h-9 w-9 items-center justify-center rounded-xl border border-red-600 bg-red-600 text-lg font-bold leading-none text-white shadow-sm transition hover:bg-red-700 disabled:opacity-40"
+            : "inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-300 bg-white text-[14px] font-medium leading-none text-gray-700 transition hover:border-gray-400 hover:bg-gray-50 disabled:opacity-40"}
           aria-label="Enter quantity"
         >
           {saving || loading ? (
@@ -713,7 +731,7 @@ export default function EquipmentListMatrixQuantityAction({
             "+"
           )}
         </button>
-        {quantityDialog}
+        {quantityDialogPortal}
       </>
     );
   }
@@ -725,6 +743,7 @@ export default function EquipmentListMatrixQuantityAction({
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
+          onOpen?.();
           setOpen(true);
         }}
         className="w-full rounded-xl bg-red-600 px-3 py-2.5 text-center text-[11px] font-semibold text-white transition hover:bg-red-700"
@@ -738,7 +757,7 @@ export default function EquipmentListMatrixQuantityAction({
         </div>
       ) : null}
 
-      {quantityDialog}
+      {quantityDialogPortal}
     </>
   );
 }

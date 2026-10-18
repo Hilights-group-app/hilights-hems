@@ -661,6 +661,7 @@ export default function SubcategoryClientMatrix({
   const [selectedModel, setSelectedModel] = useState("");
   const [selectedName, setSelectedName] = useState("");
   const [selectedBlockDraft, setSelectedBlockDraft] = useState("");
+  const [newBlockDraft, setNewBlockDraft] = useState("");
   const [mobileAddOpen, setMobileAddOpen] = useState(false);
 
   const {
@@ -700,6 +701,7 @@ export default function SubcategoryClientMatrix({
     setSelectedModel(parsed.model);
     setSelectedName(selectedItem.name);
     setSelectedBlockDraft(itemBlockName(selectedItem));
+    setNewBlockDraft("");
     // Drafts are initialized only when a different item is selected.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedItemId]);
@@ -1777,6 +1779,91 @@ export default function SubcategoryClientMatrix({
     await onRename(selectedItem.id, selectedItem.name, clean);
   }
 
+  async function moveItemToBlock(itemId: string, requestedBlock: string) {
+    if (!editable || matrixMovePendingRef.current) return;
+
+    const item = items.find((current) => current.id === itemId);
+    const clean = requestedBlock.trim();
+    const targetGroup = brandGroups.find(
+      (group) => group.brand.toLowerCase() === clean.toLowerCase(),
+    );
+    if (!item || !clean) return;
+
+    const targetBlock = targetGroup?.brand || clean;
+
+    const sourceBlock = itemBlockName(item);
+    if (sourceBlock.toLowerCase() === targetBlock.toLowerCase()) return;
+
+    const sourceGroup = brandGroups.find(
+      (group) => group.brand.toLowerCase() === sourceBlock.toLowerCase(),
+    );
+    const nextItems = sortItemsByBrand(
+      items.map((current) =>
+        current.id === itemId
+          ? { ...current, block_name: targetBlock }
+          : current,
+      ),
+    );
+    const nextItemOrderByBlock = {
+      ...itemOrderByBlock,
+      [targetBlock]: [
+        ...(targetGroup?.items || [])
+          .map((current) => current.id)
+          .filter((id) => id !== itemId),
+        itemId,
+      ],
+    };
+    if (sourceGroup) {
+      nextItemOrderByBlock[sourceGroup.brand] = sourceGroup.items
+        .map((current) => current.id)
+        .filter((id) => id !== itemId);
+    }
+    const currentBlockOrder = blockOrder.length > 0
+      ? blockOrder
+      : brandGroups.map((group) => group.brand);
+    const nextBlockOrder = currentBlockOrder.some(
+      (name) => name.toLowerCase() === targetBlock.toLowerCase(),
+    )
+      ? currentBlockOrder
+      : [...currentBlockOrder, targetBlock];
+
+    matrixMovePendingRef.current = true;
+    setMovingMatrixItem(true);
+    setSelectedBlockDraft(targetBlock);
+    setItems(nextItems);
+    if (categoryId && subcategoryId) {
+      writeItemsCache(categoryId, subcategoryId, {
+        categoryId,
+        subcategoryId,
+        items: nextItems,
+        statsByItem,
+      });
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from("matrix_models")
+        .update({ block_name: targetBlock })
+        .eq("id", itemId)
+        .select("id,block_name")
+        .single();
+      if (error || !data) throw error || new Error("Item was not moved");
+
+      await saveManualOrder(nextBlockOrder, nextItemOrderByBlock);
+      setNewBlockDraft("");
+      setSaveMsg(`Moved to ${targetBlock}`);
+      setTimeout(() => setSaveMsg(""), 1500);
+    } catch (error: any) {
+      setSelectedBlockDraft(sourceBlock);
+      setItems(items);
+      alert(error?.message || "Could not move the item");
+      await refreshData();
+    } finally {
+      matrixMovePendingRef.current = false;
+      setMovingMatrixItem(false);
+    }
+  }
+
   async function updateItemDirect(
     itemId: string,
     patch: Partial<
@@ -1933,19 +2020,22 @@ export default function SubcategoryClientMatrix({
       <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
         Selected Block
       </div>
-      <input
-        key={selectedBlockName}
-        defaultValue={selectedBlockName}
-        disabled={!editable}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") event.currentTarget.blur();
-        }}
-        onBlur={(event) =>
-          void renameBlock(selectedBlockName, event.currentTarget.value)
-        }
-        className="mt-2 h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] font-semibold text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
-        placeholder="Block name"
-      />
+      <label className="mt-2 block text-[8px] font-semibold uppercase tracking-wide text-gray-500">
+        Block name
+        <input
+          key={selectedBlockName}
+          defaultValue={selectedBlockName}
+          disabled={!editable}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur();
+          }}
+          onBlur={(event) =>
+            void renameBlock(selectedBlockName, event.currentTarget.value)
+          }
+          className="mt-1 h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] font-semibold normal-case tracking-normal text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+          placeholder="Block name"
+        />
+      </label>
     </div>
   ) : null;
 
@@ -1963,43 +2053,52 @@ export default function SubcategoryClientMatrix({
         {selectedItem.item_type !== "cable" &&
         selectedItem.item_type !== "rack" ? (
           <>
-            <input
-              value={selectedBrand}
-              onChange={(event) => setSelectedBrand(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") event.currentTarget.blur();
-              }}
-              onBlur={() => void saveSelectedItemName()}
-              disabled={!editable}
-              placeholder="Brand"
-              className="h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] font-semibold text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
-            />
-            <input
-              value={selectedModel}
-              onChange={(event) => setSelectedModel(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") event.currentTarget.blur();
-              }}
-              onBlur={() => void saveSelectedItemName()}
-              disabled={!editable}
-              placeholder="Model"
-              className="h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
-            />
+            <label className="text-[8px] font-semibold uppercase tracking-wide text-gray-500">
+              Brand
+              <input
+                value={selectedBrand}
+                onChange={(event) => setSelectedBrand(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+                onBlur={() => void saveSelectedItemName()}
+                disabled={!editable}
+                placeholder="Brand"
+                className="mt-1 h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] font-semibold normal-case tracking-normal text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+              />
+            </label>
+            <label className="text-[8px] font-semibold uppercase tracking-wide text-gray-500">
+              Model
+              <input
+                value={selectedModel}
+                onChange={(event) => setSelectedModel(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") event.currentTarget.blur();
+                }}
+                onBlur={() => void saveSelectedItemName()}
+                disabled={!editable}
+                placeholder="Model"
+                className="mt-1 h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] normal-case tracking-normal text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+              />
+            </label>
           </>
         ) : (
-          <input
-            value={selectedName}
-            onChange={(event) => setSelectedName(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur();
-            }}
-            onBlur={() => void saveSelectedItemName()}
-            disabled={!editable}
-            placeholder={
-              selectedItem.item_type === "rack" ? "Rack name" : "Cable model"
-            }
-            className="h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] font-semibold text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
-          />
+          <label className="text-[8px] font-semibold uppercase tracking-wide text-gray-500">
+            {selectedItem.item_type === "rack" ? "Rack name" : "Cable model"}
+            <input
+              value={selectedName}
+              onChange={(event) => setSelectedName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur();
+              }}
+              onBlur={() => void saveSelectedItemName()}
+              disabled={!editable}
+              placeholder={
+                selectedItem.item_type === "rack" ? "Rack name" : "Cable model"
+              }
+              className="mt-1 h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] font-semibold normal-case tracking-normal text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+            />
+          </label>
         )}
 
         <InventoryDescriptionEditor
@@ -2012,22 +2111,55 @@ export default function SubcategoryClientMatrix({
           ))}
         />
 
-        <input
-          value={selectedBlockDraft}
-          onChange={(event) => setSelectedBlockDraft(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur();
-          }}
-          onBlur={(event) => {
-            const clean = event.currentTarget.value.trim();
-            if (clean && clean !== itemBlockName(selectedItem)) {
-              void updateItemDirect(selectedItem.id, { block_name: clean });
-            }
-          }}
-          disabled={!editable}
-          placeholder="Block name"
-          className="h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
-        />
+        <label className="text-[8px] font-semibold uppercase tracking-wide text-gray-500">
+          Block
+          <select
+            value={selectedBlockDraft}
+            onChange={(event) => {
+              const nextBlock = event.target.value;
+              setSelectedBlockDraft(nextBlock);
+              if (nextBlock && nextBlock !== itemBlockName(selectedItem)) {
+                void moveItemToBlock(selectedItem.id, nextBlock);
+              }
+            }}
+            disabled={!editable || movingMatrixItem}
+            className="mt-1 h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] font-semibold normal-case tracking-normal text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+          >
+            {Array.from(
+              new Set([itemBlockName(selectedItem), ...blockOptions].filter(Boolean)),
+            ).map((name) => (
+              <option key={name} value={name}>{name}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="text-[8px] font-semibold uppercase tracking-wide text-gray-500">
+          New block name
+          <div className="mt-1 flex gap-1.5">
+            <input
+              value={newBlockDraft}
+              onChange={(event) => setNewBlockDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  const nextBlock = event.currentTarget.value.trim();
+                  if (nextBlock) void moveItemToBlock(selectedItem.id, nextBlock);
+                }
+              }}
+              disabled={!editable || movingMatrixItem}
+              placeholder="Type a new block"
+              className="h-9 min-w-0 flex-1 rounded-xl border border-gray-300 bg-white px-3 text-[10px] font-semibold normal-case tracking-normal text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+            />
+            <button
+              type="button"
+              disabled={!editable || movingMatrixItem || !newBlockDraft.trim()}
+              onClick={() => void moveItemToBlock(selectedItem.id, newBlockDraft)}
+              className="h-9 shrink-0 rounded-xl bg-black px-3 text-[9px] font-semibold normal-case tracking-normal text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Move
+            </button>
+          </div>
+        </label>
 
         {selectedItem.item_type !== "cable" ? (
           <div className="grid grid-cols-2 gap-2">
@@ -2114,24 +2246,27 @@ export default function SubcategoryClientMatrix({
       </div>
 
       <div className="mt-2 grid grid-cols-1 gap-2">
-        <input
-          defaultValue={selectedCableRowInfo.row.cable_length}
-          disabled={!editable}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur();
-          }}
-          onBlur={(event) => {
-            const clean = event.currentTarget.value.trim();
-            if (clean && clean !== selectedCableRowInfo.row.cable_length) {
-              void updateCableRowDirect(
-                selectedCableRowInfo.item.id,
-                selectedCableRowInfo.row.id,
-                { cable_length: clean },
-              );
-            }
-          }}
-          className="h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] font-semibold text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
-        />
+        <label className="text-[8px] font-semibold uppercase tracking-wide text-gray-500">
+          {selectedCableRowInfo.item.item_type === "rack" ? "Item name" : "Cable length"}
+          <input
+            defaultValue={selectedCableRowInfo.row.cable_length}
+            disabled={!editable}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+            onBlur={(event) => {
+              const clean = event.currentTarget.value.trim();
+              if (clean && clean !== selectedCableRowInfo.row.cable_length) {
+                void updateCableRowDirect(
+                  selectedCableRowInfo.item.id,
+                  selectedCableRowInfo.row.id,
+                  { cable_length: clean },
+                );
+              }
+            }}
+            className="mt-1 h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] font-semibold normal-case tracking-normal text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
+          />
+        </label>
 
         <div className="grid grid-cols-2 gap-2">
           {(
@@ -2205,12 +2340,13 @@ export default function SubcategoryClientMatrix({
 
     if (
       selectedItem &&
-      selectedBlockDraft.trim() &&
-      selectedBlockDraft.trim() !== itemBlockName(selectedItem)
+      (newBlockDraft.trim() || selectedBlockDraft.trim()) &&
+      (newBlockDraft.trim() || selectedBlockDraft.trim()) !== itemBlockName(selectedItem)
     ) {
-      await updateItemDirect(selectedItem.id, {
-        block_name: selectedBlockDraft.trim(),
-      });
+      await moveItemToBlock(
+        selectedItem.id,
+        newBlockDraft.trim() || selectedBlockDraft.trim(),
+      );
     }
 
     setSelectedBlockName(null);
@@ -2324,7 +2460,7 @@ export default function SubcategoryClientMatrix({
                   </div>
 
                   {it.description ? (
-                    <p className="mt-1 whitespace-pre-line break-words text-[8px] leading-3 text-gray-500 hems-wide:text-[9px]">
+                    <p className="mt-1 block w-full whitespace-pre-line break-words text-[8px] leading-3 text-gray-500 hems-wide:text-[9px]">
                       {it.description}
                     </p>
                   ) : null}
@@ -2441,9 +2577,6 @@ export default function SubcategoryClientMatrix({
 
     if (it.item_type === "cable") {
       const cableRows = sortCableRows(cableRowsByItem[it.id] || []);
-      const showCableMaintenance = cableRows.some(
-        (row) => cableStats(row).maintenance > 0,
-      );
 
       return (
         <div
@@ -2502,7 +2635,7 @@ export default function SubcategoryClientMatrix({
                 </h2>
 
                 {it.description ? (
-                  <p className="mt-1 whitespace-pre-line break-words text-[8px] font-normal normal-case leading-3 tracking-normal text-gray-500 hems-wide:text-[9px]">
+                  <p className="mt-1 block w-full whitespace-pre-line break-words text-[8px] font-normal normal-case leading-3 tracking-normal text-gray-500 hems-wide:text-[9px]">
                     {it.description}
                   </p>
                 ) : null}
@@ -2513,18 +2646,13 @@ export default function SubcategoryClientMatrix({
           </div>
 
           <div className="mt-5 overflow-x-auto pr-0">
-            <div className="rounded-2xl border border-gray-200 overflow-hidden min-w-0">
-              <div className={`grid items-center gap-[1px] bg-gray-100 px-2 py-1 text-[7px] font-bold text-gray-600 hems-desktop:px-6 hems-desktop:py-2 hems-desktop:text-[9px] ${
-                showCableMaintenance
-                  ? "grid-cols-[74px_45px_45px_45px_76px] hems-wide:grid-cols-[minmax(74px,1.2fr)_repeat(3,minmax(45px,1fr))_76px]"
-                  : "grid-cols-[74px_45px_45px_76px] hems-wide:grid-cols-[minmax(74px,1.2fr)_repeat(2,minmax(45px,1fr))_76px]"
-              }`}>
+            <div className="min-w-[330px] overflow-hidden rounded-2xl border border-gray-200 bg-white">
+              <div className="grid grid-cols-[minmax(76px,1.3fr)_repeat(4,minmax(44px,.75fr))_42px] items-center gap-[1px] bg-gray-100 px-2 py-1.5 text-[7px] font-bold text-gray-600 hems-desktop:grid-cols-[minmax(120px,1.4fr)_repeat(4,minmax(70px,.8fr))_56px] hems-desktop:px-6 hems-desktop:py-2 hems-desktop:text-[9px]">
                 <div className="text-left">Length</div>
                 <div className="text-center">Total</div>
                 <div className="text-center">Available</div>
-                {showCableMaintenance ? (
-                  <div className="text-center">Maintenance</div>
-                ) : null}
+                <div className="text-center">Maintenance</div>
+                <div className="text-center text-blue-700">In KSA</div>
                 <div />
               </div>
 
@@ -2549,11 +2677,7 @@ export default function SubcategoryClientMatrix({
                         setSelectedItemId(null);
                         setSelectedBlockName(null);
                       }}
-                      className={`grid items-center gap-[1px] border-t border-gray-100 px-2 py-[1px] text-[7px] text-gray-900 hems-desktop:px-6 hems-desktop:py-[2px] hems-desktop:text-[9px] ${
-                        showCableMaintenance
-                          ? "grid-cols-[74px_45px_45px_45px_76px] hems-wide:grid-cols-[minmax(74px,1.2fr)_repeat(3,minmax(45px,1fr))_76px]"
-                          : "grid-cols-[74px_45px_45px_76px] hems-wide:grid-cols-[minmax(74px,1.2fr)_repeat(2,minmax(45px,1fr))_76px]"
-                      } ${
+                      className={`grid grid-cols-[minmax(76px,1.3fr)_repeat(4,minmax(44px,.75fr))_42px] items-center gap-[1px] border-t border-gray-100 px-2 py-1 text-[7px] text-gray-900 hems-desktop:grid-cols-[minmax(120px,1.4fr)_repeat(4,minmax(70px,.8fr))_56px] hems-desktop:px-6 hems-desktop:py-1.5 hems-desktop:text-[9px] ${
                         selectedCableRow?.rowId === row.id
                           ? "ring-2 ring-inset ring-black"
                           : editable
@@ -2562,9 +2686,8 @@ export default function SubcategoryClientMatrix({
                       }`}
                     >
                       <div className="min-w-0 text-left">
-                        <div className="font-bold">{row.cable_length}</div>
+                        <div className="truncate font-bold" title={row.cable_length}>{row.cable_length}</div>
                         <AllocationBadges allocations={rowAllocations} />
-                        <KsaStockLink quantity={row.in_ksa_qty || 0} search={it.name} />
                       </div>
 
                       <div className="text-center">
@@ -2577,17 +2700,30 @@ export default function SubcategoryClientMatrix({
                         </span>
                       </div>
 
-                      {showCableMaintenance ? (
-                        <div className="text-center">
-                          {s.maintenance > 0 ? (
-                            <span className="inline-flex min-w-5 justify-center rounded-md bg-yellow-100 px-1 py-0 font-bold hems-desktop:min-w-7 hems-desktop:rounded-lg hems-desktop:px-1.5 hems-desktop:py-[2px]">
-                              {s.maintenance}
-                            </span>
-                          ) : (
-                            <span className="text-gray-300">—</span>
-                          )}
-                        </div>
-                      ) : null}
+                      <div className="text-center">
+                        {s.maintenance > 0 ? (
+                          <span className="inline-flex min-w-5 justify-center rounded-md bg-yellow-100 px-1 py-0 font-bold hems-desktop:min-w-7 hems-desktop:rounded-lg hems-desktop:px-1.5 hems-desktop:py-[2px]">
+                            {s.maintenance}
+                          </span>
+                        ) : (
+                          <span className="text-gray-300">—</span>
+                        )}
+                      </div>
+
+                      <div className="text-center">
+                        {s.inKsa > 0 ? (
+                          <Link
+                            href={`/inventory/ksa?search=${encodeURIComponent(it.name)}`}
+                            onClick={(event) => event.stopPropagation()}
+                            title={`${s.inKsa} pcs in KSA`}
+                            className="inline-flex min-w-5 justify-center rounded-md bg-blue-100 px-1 py-0 font-bold text-blue-800 transition hover:bg-blue-200 hems-desktop:min-w-7 hems-desktop:rounded-lg hems-desktop:px-1.5 hems-desktop:py-[2px]"
+                          >
+                            {s.inKsa}
+                          </Link>
+                        ) : (
+                          <span className="text-gray-300">—</span>
+                        )}
+                      </div>
 
                       <div className="text-center">
                         <EquipmentListMatrixQuantityAction
@@ -2709,7 +2845,7 @@ export default function SubcategoryClientMatrix({
                 </div>
 
                 {it.description ? (
-                  <p className="mt-1 whitespace-pre-line break-words text-[8px] font-normal normal-case leading-3 tracking-normal text-gray-500 hems-wide:text-[9px]">
+                  <p className="mt-1 block w-full whitespace-pre-line break-words text-[8px] font-normal normal-case leading-3 tracking-normal text-gray-500 hems-wide:text-[9px]">
                     {it.description}
                   </p>
                 ) : null}
@@ -3308,7 +3444,11 @@ export default function SubcategoryClientMatrix({
                   : "border-gray-200"
             }`}
           >
-            <div data-hems-block-header className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
+            <div
+              data-hems-block-header
+              data-hems-matrix-block-header
+              className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2"
+            >
               {canDragMatrix ? (
                 <button
                   type="button"
