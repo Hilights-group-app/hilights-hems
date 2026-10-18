@@ -11,11 +11,11 @@ function subscribe(callback: () => void) {
 }
 export function OfflineStatus() {
   const offline = useSyncExternalStore(subscribe, isOffline, () => false);
-  return <button type="button" onClick={() => window.dispatchEvent(new Event('hems:open-offline'))}
-    title="Saved workspace and offline drafts" aria-label={`${offline ? 'Offline' : 'Online'} — saved workspace and offline drafts`}
+  return <span
+    title={offline ? 'App is offline' : 'App is online'} aria-label={offline ? 'Offline' : 'Online'}
     className={`shrink-0 rounded-full px-2 py-1.5 text-[10px] font-bold ${offline ? 'bg-amber-100 text-amber-800' : 'bg-emerald-50 text-emerald-700'}`}>
     <span aria-hidden="true">● </span>{offline ? 'Offline' : 'Online'}
-  </button>;
+  </span>;
 }
 
 export default function OfflineWorkspace() {

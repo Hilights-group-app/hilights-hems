@@ -1,5 +1,5 @@
 /* Cache the public fallback plus the normal HEMS shell for routes opened online. */
-const VERSION = 'v4';
+const VERSION = 'v5';
 const SHELL = `hems-offline-shell-${VERSION}`;
 const ROUTES = `hems-app-routes-${VERSION}`;
 const STATIC = `hems-app-static-${VERSION}`;
@@ -171,7 +171,7 @@ self.addEventListener('fetch', event => {
 
   if (isFlightRequest(request, url)) {
     event.respondWith(caches.open(FLIGHT).then(async cache => {
-      if (offlineHint || self.navigator?.onLine === false) return savedFlight(cache, request, url);
+      if (self.navigator?.onLine === false) return savedFlight(cache, request, url);
       try {
         const response = await fetch(request);
         if (response.ok) {
@@ -207,11 +207,11 @@ self.addEventListener('fetch', event => {
     event.respondWith((async () => {
       // localhost remains reachable with Wi-Fi off. Avoid asking its middleware,
       // which cannot verify Supabase auth while the database is unreachable.
-      if (offlineHint || self.navigator?.onLine === false) return savedNavigation(url);
+      if (self.navigator?.onLine === false) return savedNavigation(url);
       try {
         const response = await fetch(request);
         const finalUrl = new URL(response.url || url.href, self.location.origin);
-        if (response.redirected && finalUrl.pathname === '/login' && (offlineHint || self.navigator?.onLine === false)) {
+        if (response.redirected && finalUrl.pathname === '/login' && self.navigator?.onLine === false) {
           return savedNavigation(url);
         }
         if (response.ok) await rememberRoute(url, response.clone());

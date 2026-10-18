@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -12,8 +11,6 @@ import {
 } from "@/lib/authStore";
 
 export default function LoginPage() {
-  const router = useRouter();
-
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -66,9 +63,9 @@ export default function LoginPage() {
       setUserName(profile.full_name ?? "");
       setUserDepartment(profile.department ?? "");
 
-      window.history.replaceState(null, "", "/");
-      router.replace("/");
-      router.refresh();
+      // Use a clean document navigation after authentication so middleware and
+      // the service worker both observe the new session before rendering HEMS.
+      window.location.replace("/");
     } catch (error: any) {
       setErr(error?.message || "Login failed.");
     } finally {

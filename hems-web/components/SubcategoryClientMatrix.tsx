@@ -2002,6 +2002,16 @@ export default function SubcategoryClientMatrix({
           />
         )}
 
+        <InventoryDescriptionEditor
+          table="matrix_models"
+          recordId={selectedItem.id}
+          value={selectedItem.description}
+          disabled={!editable}
+          onSaved={(nextDescription) => setItems((current) => current.map((item) =>
+            item.id === selectedItem.id ? { ...item, description: nextDescription } : item
+          ))}
+        />
+
         <input
           value={selectedBlockDraft}
           onChange={(event) => setSelectedBlockDraft(event.target.value)}
@@ -2017,16 +2027,6 @@ export default function SubcategoryClientMatrix({
           disabled={!editable}
           placeholder="Block name"
           className="h-9 w-full rounded-xl border border-gray-300 bg-white px-3 text-[10px] text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
-        />
-
-        <InventoryDescriptionEditor
-          table="matrix_models"
-          recordId={selectedItem.id}
-          value={selectedItem.description}
-          disabled={!editable}
-          onSaved={(nextDescription) => setItems((current) => current.map((item) =>
-            item.id === selectedItem.id ? { ...item, description: nextDescription } : item
-          ))}
         />
 
         {selectedItem.item_type !== "cable" ? (
@@ -2706,14 +2706,13 @@ export default function SubcategoryClientMatrix({
                   >
                     {renderItemName(it.name, it.item_type)}
                   </h2>
-
-                  {it.description ? (
-                    <p className="mt-1 whitespace-pre-line break-words text-[8px] font-normal normal-case leading-3 tracking-normal text-gray-500 hems-wide:text-[9px]">
-                      {it.description}
-                    </p>
-                  ) : null}
-
                 </div>
+
+                {it.description ? (
+                  <p className="mt-1 whitespace-pre-line break-words text-[8px] font-normal normal-case leading-3 tracking-normal text-gray-500 hems-wide:text-[9px]">
+                    {it.description}
+                  </p>
+                ) : null}
 
                 <AllocationBadges
                   allocations={
@@ -2954,6 +2953,17 @@ export default function SubcategoryClientMatrix({
                   className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
                 />
 
+                <label className="block text-[10px] font-semibold text-gray-600 md:col-span-full">
+                  Description <span className="font-normal text-gray-400">(optional)</span>
+                  <textarea
+                    value={description}
+                    onChange={(event) => setDescription(event.target.value)}
+                    rows={3}
+                    placeholder={"One detail per line\ne.g. 6 x Socapex out\n2 x 32A 3ph out\n6 x 16A out"}
+                    className="mt-1 min-h-20 w-full resize-y rounded-2xl border border-gray-300 bg-white px-4 py-3 text-[11px] font-normal leading-5 text-gray-900 shadow-sm outline-none placeholder:text-gray-400 focus:border-black focus:ring-1 focus:ring-black"
+                  />
+                </label>
+
                 <input
                   value={qty}
                   onChange={(e) =>
@@ -2978,6 +2988,17 @@ export default function SubcategoryClientMatrix({
                   }
                   className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
                 />
+
+                <label className="block text-[10px] font-semibold text-gray-600 md:col-span-full">
+                  Description <span className="font-normal text-gray-400">(optional)</span>
+                  <textarea
+                    value={description}
+                    onChange={(event) => setDescription(event.target.value)}
+                    rows={3}
+                    placeholder={"One detail per line\ne.g. 6 x Socapex out\n2 x 32A 3ph out\n6 x 16A out"}
+                    className="mt-1 min-h-20 w-full resize-y rounded-2xl border border-gray-300 bg-white px-4 py-3 text-[11px] font-normal leading-5 text-gray-900 shadow-sm outline-none placeholder:text-gray-400 focus:border-black focus:ring-1 focus:ring-black"
+                  />
+                </label>
 
                 {itemType === "rack" ? (
                   <input
@@ -3019,17 +3040,6 @@ export default function SubcategoryClientMatrix({
               placeholder="New block name"
               className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
             />
-
-            <label className="block text-[10px] font-semibold text-gray-600 md:col-span-full">
-              Description <span className="font-normal text-gray-400">(optional)</span>
-              <textarea
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                rows={3}
-                placeholder={"One detail per line\ne.g. 6 x Socapex out\n2 x 32A 3ph out\n6 x 16A out"}
-                className="mt-1 min-h-20 w-full resize-y rounded-2xl border border-gray-300 bg-white px-4 py-3 text-[11px] font-normal leading-5 text-gray-900 shadow-sm outline-none placeholder:text-gray-400 focus:border-black focus:ring-1 focus:ring-black"
-              />
-            </label>
 
             <input
               ref={fileRef}

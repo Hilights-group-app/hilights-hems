@@ -1055,6 +1055,15 @@ export default function SubcategoryClientProjectors({
               className="h-8 w-full rounded-lg border border-gray-300 bg-white px-2.5 text-[9px] font-medium text-gray-900 outline-none focus:border-black disabled:bg-gray-50"
             />
           </div>
+          <InventoryDescriptionEditor
+            table="items"
+            recordId={selectedItem.id}
+            value={selectedItem.description}
+            disabled={!editable}
+            onSaved={(nextDescription) => setItems((current) => current.map((item) =>
+              item.id === selectedItem.id ? { ...item, description: nextDescription } : item
+            ))}
+          />
           <div className="relative mt-1">
             <input
               value={selectedBlockDraft}
@@ -1117,15 +1126,6 @@ export default function SubcategoryClientProjectors({
               </div>
             ) : null}
           </div>
-          <InventoryDescriptionEditor
-            table="items"
-            recordId={selectedItem.id}
-            value={selectedItem.description}
-            disabled={!editable}
-            onSaved={(nextDescription) => setItems((current) => current.map((item) =>
-              item.id === selectedItem.id ? { ...item, description: nextDescription } : item
-            ))}
-          />
         </div>
       </div>
 
@@ -1252,13 +1252,13 @@ export default function SubcategoryClientProjectors({
           placeholder="Model (e.g. F80 4K12)"
           className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
         />
+        {addDescriptionField}
         <input
           value={blockName}
           onChange={(e) => setBlockName(e.target.value)}
           placeholder="Block Name (e.g. Main Projector)"
           className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
         />
-        {addDescriptionField}
         <input
           value={String(qty)}
           onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
@@ -1589,13 +1589,14 @@ export default function SubcategoryClientProjectors({
               className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
             />
 
+            {addDescriptionField}
+
             <input
               value={blockName}
               onChange={(e) => setBlockName(e.target.value)}
               placeholder="Block Name (e.g. Main Projector)"
               className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
             />
-            {addDescriptionField}
 
             <input
               value={String(qty)}

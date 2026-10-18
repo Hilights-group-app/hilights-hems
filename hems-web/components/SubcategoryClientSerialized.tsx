@@ -1536,13 +1536,6 @@ export default function SubcategoryClientSerialized({
           placeholder="Model"
           className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none focus:border-black"
         />
-        <input
-          value={blockName}
-          onChange={(event) => setBlockName(event.target.value)}
-          list="serialized-add-block-options"
-          placeholder="Block Name"
-          className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none focus:border-black"
-        />
         <label className="block text-[10px] font-semibold text-gray-600">
           Description <span className="font-normal text-gray-400">(optional)</span>
           <textarea
@@ -1553,6 +1546,13 @@ export default function SubcategoryClientSerialized({
             className="mt-1 min-h-20 w-full resize-y rounded-2xl border border-gray-300 bg-white px-4 py-3 text-[11px] font-normal leading-5 text-gray-900 shadow-sm outline-none placeholder:text-gray-400 focus:border-black"
           />
         </label>
+        <input
+          value={blockName}
+          onChange={(event) => setBlockName(event.target.value)}
+          list="serialized-add-block-options"
+          placeholder="Block Name"
+          className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none focus:border-black"
+        />
         <input
           value={qty}
           onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}

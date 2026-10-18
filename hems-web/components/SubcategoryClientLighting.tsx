@@ -1717,6 +1717,17 @@ export default function SubcategoryClientLighting({
           className="h-11 w-full rounded-2xl border border-gray-300 bg-white px-4 text-[12px] text-gray-900 shadow-sm outline-none transition focus:border-black focus:ring-1 focus:ring-black"
         />
 
+        <label className="block text-[10px] font-semibold text-gray-600 md:col-span-full">
+          Description <span className="font-normal text-gray-400">(optional)</span>
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            rows={3}
+            placeholder={"One detail per line\ne.g. 6 x Socapex out\n2 x 32A 3ph out"}
+            className="mt-1 min-h-20 w-full resize-y rounded-2xl border border-gray-300 bg-white px-4 py-3 text-[11px] font-normal leading-5 text-gray-900 shadow-sm outline-none transition placeholder:text-gray-400 focus:border-black focus:ring-1 focus:ring-black"
+          />
+        </label>
+
         <input
           value={qty}
           onChange={(e) => setQty(Math.max(1, Number(e.target.value) || 1))}
@@ -1781,17 +1792,6 @@ export default function SubcategoryClientLighting({
           + Add
         </button>
       </div>
-
-      <label className="mt-2 block text-[10px] font-semibold text-gray-600">
-        Description <span className="font-normal text-gray-400">(optional)</span>
-        <textarea
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-          rows={3}
-          placeholder={"One detail per line\ne.g. 6 x Socapex out\n2 x 32A 3ph out"}
-          className="mt-1 min-h-20 w-full resize-y rounded-2xl border border-gray-300 bg-white px-4 py-3 text-[11px] font-normal leading-5 text-gray-900 shadow-sm outline-none transition placeholder:text-gray-400 focus:border-black focus:ring-1 focus:ring-black"
-        />
-      </label>
 
       {photo ? (
         <div className="mt-3 flex items-center gap-3 rounded-2xl border border-gray-100 bg-gray-50 p-2">
