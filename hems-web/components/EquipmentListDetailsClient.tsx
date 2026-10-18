@@ -353,6 +353,28 @@ function equipmentDisplayParts(
     }
   }
 
+  const genericMatrixItemType = metadataText(item, "item_type").trim();
+  const isGenericMatrixUnit =
+    isGenericMatrix &&
+    genericMatrixItemType !== "cable" &&
+    genericMatrixItemType !== "rack";
+
+  if (isGenericMatrixUnit) {
+    const [brand, ...modelParts] = primaryName.includes(" - ")
+      ? primaryName
+          .split(" - ")
+          .map((part) => part.trim())
+          .filter(Boolean)
+      : primaryName.split(/\s+/).filter(Boolean);
+
+    return {
+      brand: brand || "",
+      model: modelParts.join(primaryName.includes(" - ") ? " - " : " "),
+      primaryName,
+      cabinetDetail,
+    };
+  }
+
   if (
     item.inventory_record_type === "item" ||
     isGenericMatrix ||
@@ -632,11 +654,16 @@ function pdfHeading(list: EquipmentList) {
     return [list.from_location_name?.trim(), list.destination_name?.trim()]
       .filter(Boolean).join(" to ") || "Equipment Transfer";
   }
+  if (list.list_type === "local_event") {
+    return list.event_name?.trim() || "Event";
+  }
   return equipmentListTypeLabel(list.list_type);
 }
 
 function pdfFileName(list: EquipmentList) {
-  const type = equipmentListTypeLabel(list.list_type).trim();
+  const type = list.list_type === "local_event"
+    ? ""
+    : equipmentListTypeLabel(list.list_type).trim();
   const summary = equipmentListSummary(list).trim();
   const parts = [
     type,
@@ -1222,7 +1249,6 @@ export default function EquipmentListDetailsClient({
       clearTimeout(timer);
       timer = setTimeout(() => void refresh(), 120);
     }
-    function focus() { if (document.visibilityState === "visible") schedule(); }
     const channel = supabase.channel(`draft-details:${listId}:${createBrowserId()}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "equipment_lists", filter: `id=eq.${listId}` }, schedule)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "equipment_list_items", filter: `list_id=eq.${listId}` }, schedule)
@@ -1230,16 +1256,12 @@ export default function EquipmentListDetailsClient({
       // DELETE events cannot be filtered by list_id with the default replica identity.
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "equipment_list_items" }, schedule)
       .subscribe();
-    window.addEventListener("focus", focus);
-    document.addEventListener("visibilitychange", focus);
     return () => {
       cancelled = true;
       clearTimeout(timer);
-      window.removeEventListener("focus", focus);
-      document.removeEventListener("visibilitychange", focus);
       void supabase.removeChannel(channel);
     };
-    // Reload the same list on collaboration events without resubscribing per edit.
+    // Realtime keeps collaborative edits current without refreshing on tab focus.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listId, supabase]);
 
@@ -1842,8 +1864,13 @@ export default function EquipmentListDetailsClient({
     pdf.setFontSize(10);
     pdf.setFont("helvetica", "normal");
     pdf.setTextColor(95, 95, 95);
-    if (list.list_type !== "transfer_out") {
-      pdf.text(equipmentListSummary(list) || "Equipment List", 14, 43 + headingOffset);
+    const pdfSubtitle = list.list_type === "local_event"
+      ? list.venue?.trim() || ""
+      : list.list_type !== "transfer_out"
+        ? equipmentListSummary(list) || "Equipment List"
+        : "";
+    if (pdfSubtitle) {
+      pdf.text(pdfSubtitle, 14, 43 + headingOffset);
     }
 
     const pdfDates = scheduleRows(list);
@@ -1853,7 +1880,7 @@ export default function EquipmentListDetailsClient({
     ];
     pdf.setFontSize(8);
     pdf.setTextColor(75, 75, 75);
-    const detailsY = (list.list_type === "transfer_out" ? 44 : 50) + headingOffset;
+    const detailsY = (pdfSubtitle ? 50 : 44) + headingOffset;
     pdf.text(details.join("   |   "), 14, detailsY);
 
     let tableStartY = detailsY + 7;
@@ -2604,6 +2631,11 @@ export default function EquipmentListDetailsClient({
   }
 
   const dates = scheduleRows(list);
+  const isLocalEventList = list.list_type === "local_event";
+  const localEventTitle = list.event_name?.trim() || "Event";
+  const localEventMeta = [list.reference, list.venue?.trim()]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <div className="w-full space-y-3">
@@ -2672,7 +2704,7 @@ export default function EquipmentListDetailsClient({
 
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-bold tracking-tight text-gray-900 sm:text-2xl">
-                {list.reference}
+                {isLocalEventList ? localEventTitle : list.reference}
               </h1>
               <span
                 className={`rounded-full px-2.5 py-1 text-[9px] font-bold ${statusClass(
@@ -2684,7 +2716,9 @@ export default function EquipmentListDetailsClient({
             </div>
 
             <div className="mt-1 text-xs font-medium text-gray-500">
-              {equipmentListTypeLabel(list.list_type)} · {equipmentListSummary(list)}
+              {isLocalEventList
+                ? localEventMeta
+                : `${equipmentListTypeLabel(list.list_type)} · ${equipmentListSummary(list)}`}
             </div>
           </div>
 
@@ -3018,11 +3052,11 @@ export default function EquipmentListDetailsClient({
               <PackageCheck size={16} />
               Equipment
             </div>
-            <div className="mt-1 text-[10px] text-gray-500">
-              Selected equipment, quantities and serial numbers in this list.
-              {canReorderDraft ? <span className="hidden sm:block mt-1">Drag the handle to reorder equipment.</span> : null}
-              {savingDraftOrder ? <span role="status" className="block mt-1 text-red-600">Saving order…</span> : null}
-            </div>
+            {savingDraftOrder ? (
+              <div role="status" className="mt-1 text-[10px] text-red-600">
+                Saving order…
+              </div>
+            ) : null}
           </div>
 
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
