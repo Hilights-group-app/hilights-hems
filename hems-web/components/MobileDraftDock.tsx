@@ -9,7 +9,8 @@ import { readWorkingDraft } from "@/lib/workspaceStartup";
 import { usePathname } from "next/navigation";
 import { Boxes, ChevronRight, ClipboardList, House, Check } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
+import { createClient, readBrowserSession } from "@/lib/supabase/client";
 import { canManageEquipmentLists } from "@/lib/authStore";
 import {
   ACTIVE_EQUIPMENT_LIST_EVENT, ACTIVE_EQUIPMENT_LIST_KEY,
@@ -75,13 +76,14 @@ export default function MobileDraftDock() {
     let cancelled = false;
     let version = 0;
     let firstRead = true;
+    let lastRefresh = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let channel: ReturnType<typeof supabase.channel> | null = null;
     let subscribedId: string | null = null;
 
     function schedule() {
       clearTimeout(timer);
-      timer = setTimeout(() => void refresh(), 160);
+      timer = setTimeout(() => void refresh(), 300);
     }
     function subscribe(id: string | null) {
       if (subscribedId === id) return;
@@ -98,8 +100,9 @@ export default function MobileDraftDock() {
     async function refresh() {
       const readVersion = ++version;
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const { data: { session } } = await readBrowserSession();
         if (cancelled || readVersion !== version) return;
+        lastRefresh = Date.now();
         setSignedIn(Boolean(session));
         let id: string | null = null;
         try { id = localStorage.getItem(ACTIVE_EQUIPMENT_LIST_KEY); } catch {}
@@ -128,7 +131,9 @@ export default function MobileDraftDock() {
         setToast("List updated"); schedule();
       }
     }
-    function focus() { if (document.visibilityState === "visible") schedule(); }
+    function focus() {
+      if (document.visibilityState === "visible" && Date.now() - lastRefresh > 30000) schedule();
+    }
     function storage(event: StorageEvent) { if (event.key === ACTIVE_EQUIPMENT_LIST_KEY) activeChange(); }
     window.addEventListener(ACTIVE_EQUIPMENT_LIST_EVENT, activeChange);
     window.addEventListener(EQUIPMENT_LIST_ITEMS_EVENT, itemsChange);
@@ -136,7 +141,7 @@ export default function MobileDraftDock() {
     window.addEventListener("storage", storage);
     window.addEventListener("focus", focus);
     document.addEventListener("visibilitychange", focus);
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
       if (!session) { setList(null); setLines(null); setSignedIn(false); }
       schedule();
     });

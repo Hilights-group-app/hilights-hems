@@ -121,7 +121,7 @@ export default function EquipmentListUnitPicker({
       } else {
         setExistingIds(
           new Set(
-            (existingResult.data ?? []).map((row) =>
+            (existingResult.data ?? []).map((row: { inventory_record_id: string | null }) =>
               String(row.inventory_record_id),
             ),
           ),
@@ -137,7 +137,7 @@ export default function EquipmentListUnitPicker({
       } else {
         setActiveRepairIds(
           new Set(
-            (activeRepairResult.data ?? []).map((row) =>
+            (activeRepairResult.data ?? []).map((row: { inventory_record_id: string | null }) =>
               String(row.inventory_record_id),
             ),
           ),

@@ -54,16 +54,16 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <head><script dangerouslySetInnerHTML={{ __html: APP_LAYOUT_BOOTSTRAP }} /></head>
       <body className="bg-white text-black">
+        <AppStartup>
         <OfflineWorkspace />
         <div data-hems-online-app className="contents">
-        <AppStartup>
         <ActionNotificationsProvider>
         <TopBar />
         <AppShellClient>{children}</AppShellClient>
         <MobileDraftDock />
         </ActionNotificationsProvider>
-        </AppStartup>
         </div>
+        </AppStartup>
       </body>
     </html>
   );

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useSyncExternalStore } from "react";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import { getUserId } from "@/lib/authStore";
 import { createBrowserId } from "@/lib/browserId";
@@ -8,7 +9,7 @@ import type { RepairStatus } from "@/lib/repairWorkflow";
 
 type Snapshot={owner:string;rows:RepairStatus[];epoch:number;loading:boolean};
 const EMPTY:Snapshot={owner:"",rows:[],epoch:0,loading:true};
-let snapshot=EMPTY,revision=0,lastRead=0;
+let snapshot=EMPTY,revision=0,lastRead=0,lastWake=0;
 let request:Promise<void>|null=null,queued=false;
 let timer:ReturnType<typeof setTimeout>|undefined;
 let stop:(()=>void)|null=null;
@@ -30,7 +31,7 @@ async function read(){
 }
 export function invalidateRepairStatus(){
   ++revision;lastRead=0;clearTimeout(timer);
-  timer=setTimeout(()=>{snapshot={...snapshot,epoch:snapshot.epoch+1};emit();void read();},180);
+  timer=setTimeout(()=>{snapshot={...snapshot,epoch:snapshot.epoch+1};emit();void read();},350);
 }
 function subscribe(listener:()=>void){
   listeners.add(listener);
@@ -39,7 +40,7 @@ function subscribe(listener:()=>void){
     if(snapshot.owner!==owner){++revision;snapshot={owner,rows:[],epoch:snapshot.epoch+1,loading:true};lastRead=0;emit();}
     const supabase=createClient();
     let active=true;
-    const {data:{subscription:authSubscription}}=supabase.auth.onAuthStateChange((_event,session)=>{
+    const {data:{subscription:authSubscription}}=supabase.auth.onAuthStateChange((_event:AuthChangeEvent,session:Session|null)=>{
       if(!active)return;
       const nextOwner=session?.user.id || "";
       if(nextOwner===snapshot.owner)return;
@@ -51,11 +52,15 @@ function subscribe(listener:()=>void){
       .on("postgres_changes",{event:"*",schema:"public",table:"maintenance_requests"},invalidateRepairStatus)
       .on("postgres_changes",{event:"UPDATE",schema:"public",table:"equipment_lists",filter:"list_type=eq.maintenance"},invalidateRepairStatus)
       .subscribe();
-    const visible=()=>{if(document.visibilityState==="visible")invalidateRepairStatus();};
+    const wake=()=>{
+      const now=Date.now();
+      if(document.visibilityState!=="visible" || now-lastRead<30000 || now-lastWake<1500)return;
+      lastWake=now;invalidateRepairStatus();
+    };
     window.addEventListener("hems:maintenance-requests-change",invalidateRepairStatus);
-    window.addEventListener("focus",invalidateRepairStatus);document.addEventListener("visibilitychange",visible);
+    window.addEventListener("focus",wake);document.addEventListener("visibilitychange",wake);
     stop=()=>{active=false;authSubscription.unsubscribe();void supabase.removeChannel(channel);window.removeEventListener("hems:maintenance-requests-change",invalidateRepairStatus);
-      window.removeEventListener("focus",invalidateRepairStatus);document.removeEventListener("visibilitychange",visible);};
+      window.removeEventListener("focus",wake);document.removeEventListener("visibilitychange",wake);};
     if(Date.now()-lastRead>10000)void read();
   }
   return()=>{listeners.delete(listener);if(!listeners.size){stop?.();stop=null;clearTimeout(timer);}};

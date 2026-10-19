@@ -1,8 +1,5 @@
-// lib/supabaseClient.ts
-import { offlineFetch } from "./offline";
-import { createClient } from "@supabase/supabase-js";
+// Legacy import kept for catalogStore. It must share the same browser client as
+// the rest of HEMS; a second auth client can steal Supabase's session lock.
+import { createClient } from "./supabase/client";
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-export const supabase = createClient(url, anon, { global: { fetch: offlineFetch } });
+export const supabase = createClient();

@@ -22,8 +22,9 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { usePathname, useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { createClient, readBrowserSession } from "@/lib/supabase/client";
 import {
   getUserName,
   getUserId,
@@ -160,6 +161,7 @@ export default function TopBar() {
   const appLayout = useAppLayout();
   const actionInbox = useActionNotifications();
   const notificationReadVersion = useRef(0);
+  const notificationLoadedAt = useRef(0);
   const pathname = usePathname();
   const router = useRouter();
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -173,6 +175,7 @@ export default function TopBar() {
   const [open, setOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarMounted, setSidebarMounted] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [avatarLoaded, setAvatarLoaded] = useState(false);
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
@@ -257,19 +260,25 @@ export default function TopBar() {
   useEffect(() => { if (appLayout === "desktop") setSidebarOpen(false); }, [appLayout]);
 
   useEffect(() => {
+    // Defer the list queries until the drawer is actually used, then preserve
+    // its state so closing and reopening it stays instant.
+    if (sidebarOpen) setSidebarMounted(true);
+  }, [sidebarOpen]);
+
+  useEffect(() => {
     let cancelled = false;
-    async function refreshActiveDraft() {
+    async function refreshActiveDraft(force = false) {
       const listId = localStorage.getItem(ACTIVE_EQUIPMENT_LIST_KEY);
       if (!listId || !getUserId()) {
         if (!cancelled) setActiveSearchDraft(null);
         return;
       }
-      const { data } = await readWorkingDraft(supabase, listId, true);
+      const { data } = await readWorkingDraft(supabase, listId, force);
       const usable = data?.status === "draft" &&
         canAddToEquipmentList(data, getUserId(), canManageEquipmentLists());
       if (!cancelled) setActiveSearchDraft(usable ? data : null);
     }
-    const handleChange = () => void refreshActiveDraft();
+    const handleChange = () => void refreshActiveDraft(true);
     void refreshActiveDraft();
     window.addEventListener(ACTIVE_EQUIPMENT_LIST_EVENT, handleChange);
     window.addEventListener("hems:equipment-lists-change", handleChange);
@@ -295,7 +304,9 @@ export default function TopBar() {
     };
   }, []);
 
-  async function loadNotifications() {
+  async function loadNotifications(force = false) {
+    if (!force && Date.now() - notificationLoadedAt.current < 15000) return;
+    notificationLoadedAt.current = Date.now();
     const version=++notificationReadVersion.current;
     const userId=getUserId();
     if(!userId){setNotifications([]);return;}
@@ -307,6 +318,7 @@ export default function TopBar() {
       .limit(10);
 
     if (!error && version===notificationReadVersion.current && userId===getUserId()) setNotifications(((data ?? []) as NotificationRow[]).filter(entry=>entry.actor_id!==userId && isImportantActivity(entry)));
+    else if (error) notificationLoadedAt.current = 0;
   }
 
   useEffect(() => { void loadNotifications(); }, [actionInbox.revision]);
@@ -654,7 +666,7 @@ export default function TopBar() {
     async function syncAuth() {
       const {
         data: { session },
-      } = await supabase.auth.getSession();
+      } = await readBrowserSession();
 
       if (!mounted) return;
 
@@ -680,7 +692,7 @@ if (!notifCache) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, session: Session | null) => {
       if (!mounted) return;
 
       setLoggedIn(!!session);
@@ -1248,7 +1260,7 @@ if (!notifCache) {
               </nav>
 
               <div className="border-t border-gray-200">
-                {sidebarOpen ? <EquipmentListsSidebar /> : null}
+                {sidebarMounted ? <EquipmentListsSidebar /> : null}
               </div>
             </div>
           </aside>

@@ -271,6 +271,8 @@ export default function EquipmentListsSidebar() {
   useEffect(() => {
     let cancelled = false;
     let listLoadVersion = 0;
+    let lastLoadedAt = 0;
+    let locationsLoaded = false;
 
     setMounted(true);
     setCanCreateLists(canCreateEquipmentLists());
@@ -309,7 +311,7 @@ export default function EquipmentListsSidebar() {
 
       let [listResult, locationResult] = await Promise.all([
         queryLists(),
-        supabase
+        locationsLoaded ? Promise.resolve({ data: null, error: null }) : supabase
           .from("inventory_locations")
           .select("id,code,name")
           .eq("enabled", true)
@@ -323,7 +325,7 @@ export default function EquipmentListsSidebar() {
         // A browser can briefly abort a Supabase request while another tab
         // refreshes the auth session. One quiet retry prevents a false SQL
         // setup warning and keeps the last good list visible.
-        await new Promise((resolve) => window.setTimeout(resolve, 120));
+        await new Promise((resolve) => window.setTimeout(resolve, 800));
         listResult = await queryLists();
       }
 
@@ -339,10 +341,12 @@ export default function EquipmentListsSidebar() {
         }
       } else {
         setLists((listResult.data ?? []) as EquipmentList[]);
+        lastLoadedAt = Date.now();
       }
 
-      if (!locationResult.error) {
+      if (!locationResult.error && locationResult.data) {
         setLocations((locationResult.data ?? []) as InventoryLocation[]);
+        locationsLoaded = true;
       }
 
       setLoading(false);
@@ -357,7 +361,9 @@ export default function EquipmentListsSidebar() {
       clearTimeout(timer);
       timer = setTimeout(() => void load(false), 120);
     }
-    function focus() { if (document.visibilityState === "visible") scheduleReload(); }
+    function focus() {
+      if (document.visibilityState === "visible" && Date.now() - lastLoadedAt > 30000) scheduleReload();
+    }
     const channel = supabase.channel(`draft-sidebar:${createBrowserId()}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "equipment_lists" }, scheduleReload)
       .subscribe();

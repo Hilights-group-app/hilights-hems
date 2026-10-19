@@ -1,5 +1,5 @@
 /* Cache the public fallback plus the normal HEMS shell for routes opened online. */
-const VERSION = 'v5';
+const VERSION = 'v6';
 const SHELL = `hems-offline-shell-${VERSION}`;
 const ROUTES = `hems-app-routes-${VERSION}`;
 const STATIC = `hems-app-static-${VERSION}`;

@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import type { AuthChangeEvent } from "@supabase/supabase-js";
 import { usePathname, useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+import { createClient, readBrowserSession } from "@/lib/supabase/client";
 import { clearAuthStore, setUserId, setUserRole, setUserName, setUserDepartment } from "@/lib/authStore";
 import { isOffline } from "@/lib/offline";
 import { CATALOG_CHANGED_EVENT, readCatalog } from "@/lib/catalogStore";
@@ -20,6 +21,7 @@ export default function AppStartup({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+    let warmTimer: ReturnType<typeof setTimeout> | undefined;
     setReadyScope(null); setSlow(false);
     const timer = setTimeout(() => { if (!cancelled) setSlow(true); }, 8000);
     async function warmWorkspace(userId: string) {
@@ -45,7 +47,7 @@ export default function AppStartup({ children }: { children: ReactNode }) {
       try {
         // Login has its own auth flow and must not wait for a session refresh.
         if (isLogin) { if (!cancelled) setReadyScope(true); return; }
-        const { data: { session } } = await client.auth.getSession();
+        const { data: { session } } = await readBrowserSession();
         if (cancelled) return;
         if (!session) {
           // A cached app route can bypass middleware. Never expose that cached
@@ -59,19 +61,31 @@ export default function AppStartup({ children }: { children: ReactNode }) {
           return;
         }
         setUserId(session.user.id);
-        const profileResult = await readWorkspaceProfile(client, session.user.id);
-        if (cancelled) return;
-        const profile = profileResult.data;
-        if (!profileResult.error && profile) {
-          setUserRole(profile.role || "viewer");
-          setUserDepartment(profile.department || "");
-          setUserName(profile.full_name || "");
-        }
-        setReadyScope(isLogin);
+
+        // A slow profile query must not hold the whole application behind the
+        // startup screen. The cached profile already gives the shell enough
+        // information to open; refresh it quietly once the app is visible.
+        setReadyScope(false);
         clearTimeout(timer);
-        void warmWorkspace(session.user.id);
-        // Warm one shared entry route; stock is fetched when a page is opened.
-        router.prefetch("/inventory");
+        // Give the visible page first access to Supabase. Optional catalog,
+        // draft warming and route prefetching start once it settles.
+        warmTimer = setTimeout(() => {
+          if (cancelled) return;
+          void warmWorkspace(session.user.id);
+          router.prefetch("/inventory");
+        }, 1400);
+
+        void readWorkspaceProfile(client, session.user.id).then((profileResult) => {
+          if (cancelled) return;
+          const profile = profileResult.data;
+          if (!profileResult.error && profile) {
+            setUserRole(profile.role || "viewer");
+            setUserDepartment(profile.department || "");
+            setUserName(profile.full_name || "");
+          }
+        }).catch(() => {
+          // Keep the cached profile and let the normal app requests retry.
+        });
       } catch {
         // Show the real page/auth state if preparation fails; don't trap users.
         if (!cancelled) setReadyScope(isLogin);
@@ -84,7 +98,7 @@ export default function AppStartup({ children }: { children: ReactNode }) {
     window.addEventListener(CATALOG_CHANGED_EVENT, updateRoutes);
     void prepare();
     return () => {
-      cancelled = true; clearTimeout(timer);
+      cancelled = true; clearTimeout(timer); clearTimeout(warmTimer);
       window.removeEventListener(CATALOG_CHANGED_EVENT, updateRoutes);
     };
   }, [isLogin, attempt, client, router]);
@@ -92,6 +106,7 @@ export default function AppStartup({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (isLogin) return;
     let alive = true;
+    let lastVerifiedAt = Date.now();
 
     function goToLogin() {
       if (!alive || isOffline()) return;
@@ -99,13 +114,15 @@ export default function AppStartup({ children }: { children: ReactNode }) {
       window.location.replace("/login");
     }
 
-    const { data: { subscription } } = client.auth.onAuthStateChange((event) => {
+    const { data: { subscription } } = client.auth.onAuthStateChange((event: AuthChangeEvent) => {
       if (event === "SIGNED_OUT") queueMicrotask(goToLogin);
     });
 
     const verifyVisibleSession = () => {
-      if (document.visibilityState !== "visible" || isOffline()) return;
-      void client.auth.getSession().then(({ data, error }) => {
+      const now = Date.now();
+      if (document.visibilityState !== "visible" || isOffline() || now - lastVerifiedAt < 15000) return;
+      lastVerifiedAt = now;
+      void readBrowserSession().then(({ data, error }) => {
         if (!error && !data.session) goToLogin();
       }).catch(() => {
         // A temporary connection failure is handled by offline mode, not logout.

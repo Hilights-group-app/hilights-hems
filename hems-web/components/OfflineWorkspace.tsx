@@ -1,7 +1,9 @@
 "use client";
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
 import { usePathname } from 'next/navigation';
-import { createClient } from '@/lib/supabase/client';
+import { createClient, readBrowserSession } from '@/lib/supabase/client';
+import { getUserId } from '@/lib/authStore';
 import { connectionChanged, isOffline, offlineStore } from '@/lib/offline';
 
 function subscribe(callback: () => void) {
@@ -25,6 +27,7 @@ export default function OfflineWorkspace() {
   const [pending, setPending] = useState(0), [syncing, setSyncing] = useState(false);
   useEffect(() => {
     let alive = true, syncingNow = false, user = '', timer: ReturnType<typeof setTimeout> | undefined;
+    let countTimer: ReturnType<typeof setTimeout> | undefined;
     let storage: any;
     const snapshotVersion = new Map<string, number>();
     const lastSnapshot = new Map<string, number>(), scheduled = new Map<string, ReturnType<typeof setTimeout>>();
@@ -33,6 +36,10 @@ export default function OfflineWorkspace() {
       const id = storage.owner();
       const drafts = id ? await storage.all(id, 'draft:') : [];
       if (alive && storage.owner() === id) setPending(drafts.filter((d: any) => d.dirty).length);
+    }
+    function scheduleCount() {
+      clearTimeout(countTimer);
+      countTimer = setTimeout(() => void count(), 250);
     }
     function showMessage(event: Event) { setToast((event as CustomEvent).detail || 'App offline.'); }
     function openWorkspace() { setOpened(true); }
@@ -44,7 +51,7 @@ export default function OfflineWorkspace() {
     async function online() {
       // Browser online is a hint: prove the database is reachable before enabling writes.
       try {
-        const { data: { session } } = await client.auth.getSession();
+        const { data: { session } } = await readBrowserSession();
         if (!session?.user.id) { connectionChanged(false); return; }
         const result = await client.from('profiles').select('id').eq('id', session.user.id).setHeader('x-hems-online-probe', '1').maybeSingle();
         if (!result.error && result.data) { connectionChanged(false); await count(); }
@@ -123,24 +130,25 @@ export default function OfflineWorkspace() {
         const owner = user;
         const sources = [...document.querySelectorAll<HTMLImageElement>('main img')]
           .filter(img => img.complete && img.naturalWidth > 0).map(img => img.currentSrc || img.src)
-          .filter(src => src.startsWith('https://') && !photoSeen.has(src)).slice(0, 20);
-        // Two at a time: photo caching must not overwhelm Supabase or mobile data.
+          .filter(src => src.startsWith('https://') && !photoSeen.has(src)).slice(0, 6);
+        // Cache gently after the visible page settles; never compete with its reads.
         for (const src of sources) photoSeen.add(src);
-        void (async () => { for (let i=0; i<sources.length; i+=2) {
+        void (async () => { for (const src of sources) {
           if (!alive || storage.owner() !== owner || isOffline()) break;
-          await Promise.all(sources.slice(i,i+2).map(src => storage.savePhoto(owner, src)));
+          await storage.savePhoto(owner, src);
         } })().catch(() => {});
-      }, 1000);
+      }, 3000);
     }
     async function prepare() {
       try {
         storage = await offlineStore();
         if (!alive) return;
         if (navigator.onLine === false) { offline(); await count(); return; }
-        const { data: { session }, error: sessionError } = await client.auth.getSession();
+        const cachedUser = getUserId();
+        const sessionResult = cachedUser ? null : await readBrowserSession();
         if (!alive) return;
-        if (!session && !sessionError) await storage.purge();
-        user = session?.user.id || '';
+        if (!cachedUser && !sessionResult?.data.session && !sessionResult?.error) await storage.purge();
+        user = cachedUser || sessionResult?.data.session?.user.id || '';
         if (user) await storage.setOwner(user);
         await count();
         photoObserver = new MutationObserver(cachePhotos);
@@ -157,7 +165,7 @@ export default function OfflineWorkspace() {
       } catch { if (alive) setToast('Offline storage is unavailable in this browser. Online use can continue.'); }
     }
     // Auth callbacks must not await Supabase auth APIs (auth-js holds an internal lock).
-    const { data: { subscription } } = client.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = client.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
       queueMicrotask(() => {
         if (!alive || !storage) return;
         if (session?.user.id) {
@@ -172,7 +180,7 @@ export default function OfflineWorkspace() {
     window.addEventListener('offline', offline); window.addEventListener('online', online);
     window.addEventListener('hems:open-offline', openWorkspace);
     window.addEventListener('hems:offline-message', showMessage);
-    window.addEventListener('hems:offline-data', count);
+    window.addEventListener('hems:offline-data', scheduleCount);
     window.addEventListener('hems:offline-draft-read', scheduleDraft);
     window.addEventListener('hems:equipment-list-items-change', scheduleDraft);
     window.addEventListener('hems:active-equipment-list-change', scheduleDraft);
@@ -186,11 +194,11 @@ export default function OfflineWorkspace() {
     timer = setInterval(() => { if (navigator.onLine && isOffline()) void online(); }, 30000);
     void prepare();
     return () => {
-      alive = false; subscription.unsubscribe(); clearInterval(timer); scheduled.forEach(clearTimeout);
+      alive = false; subscription.unsubscribe(); clearInterval(timer); clearTimeout(countTimer); scheduled.forEach(clearTimeout);
       clearTimeout(photoTimer); photoObserver?.disconnect(); document.removeEventListener('load', cachePhotos, true);
       window.removeEventListener('offline', offline); window.removeEventListener('online', online);
       window.removeEventListener('hems:open-offline', openWorkspace); window.removeEventListener('hems:offline-message', showMessage);
-      window.removeEventListener('hems:offline-data', count); window.removeEventListener('hems:offline-draft-read', scheduleDraft);
+      window.removeEventListener('hems:offline-data', scheduleCount); window.removeEventListener('hems:offline-draft-read', scheduleDraft);
       window.removeEventListener('hems:equipment-list-items-change', scheduleDraft); window.removeEventListener('hems:active-equipment-list-change', scheduleDraft);
       window.removeEventListener('hems:sync-drafts', sync); window.removeEventListener('message', message);
       window.removeEventListener('hems:connection', connection); window.removeEventListener('focus', focus);

@@ -80,7 +80,7 @@ export default function KsaInventoryClient() {
     const editable = ((incoming.data || []) as IncomingList[]).filter((list) => (list.status === "draft" && list.created_by === currentUserId) || (list.status === "pending" && isManager));
     setLists(editable);
     setSelectedId((current) => editable.some((list) => list.id === current) ? current : "");
-    setLegacy((outgoing.data || []).filter((list) => /\b(ksa|saudi|riyadh|jeddah|dammam)\b/i.test(list.destination_name || "")));
+    setLegacy(((outgoing.data || []) as LegacyTransfer[]).filter((list) => /\b(ksa|saudi|riyadh|jeddah|dammam)\b/i.test(list.destination_name || "")));
   }, [supabase]);
 
   useEffect(() => {

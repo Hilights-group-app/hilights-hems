@@ -5,7 +5,11 @@
   const DB = 'hems-offline-v1', OWNER = 'hems:offline:owner';
   let opening;
   const channel = typeof root.BroadcastChannel === 'function' ? new root.BroadcastChannel('hems-offline-data') : null;
-  const notify = () => root.dispatchEvent && root.dispatchEvent(new Event('hems:offline-data'));
+  let notifyTimer;
+  const notify = () => {
+    clearTimeout(notifyTimer);
+    notifyTimer = setTimeout(() => root.dispatchEvent && root.dispatchEvent(new Event('hems:offline-data')), 120);
+  };
   if (channel) channel.onmessage = notify;
   const listeners = () => { notify(); channel?.postMessage('changed'); };
   function owner() { try { return localStorage.getItem(OWNER) || ''; } catch { return ''; } }

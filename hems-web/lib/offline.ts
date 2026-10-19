@@ -12,6 +12,25 @@ export function offlineStore(): Promise<any> {
   return loading;
 }
 let disconnected = false, requestSequence = 0;
+const CACHEABLE_TABLES = new Set([
+  'categories','subcategories','items','units','matrix_models','matrix_rows',
+  'equipment_lists','equipment_list_items','maintenance_requests',
+  'led_maintenance_logs','led_issue_repairs','inventory_locations',
+]);
+const CACHEABLE_RPCS = new Set([
+  'hems_repair_status','hems_ksa_inventory_groups','hems_ksa_unit_choices',
+  'hems_offline_draft_snapshot','is_equipment_list_manager',
+  'hems_maintenance_user_access','hems_action_notifications',
+]);
+let captureQueue: Promise<void> = Promise.resolve();
+function queueCapture(task: () => Promise<unknown>) {
+  captureQueue = captureQueue.catch(() => {}).then(() => new Promise<void>((resolve) => {
+    const run = () => { void task().catch(() => {}).finally(resolve); };
+    const idle = (window as any).requestIdleCallback as undefined | ((callback: () => void, options?: {timeout:number}) => number);
+    if (typeof idle === 'function') idle(run, { timeout: 1200 });
+    else window.setTimeout(run, 80);
+  }));
+}
 export function isOffline() { return typeof navigator !== 'undefined' && (navigator.onLine === false || disconnected); }
 export function connectionChanged(offline: boolean) {
   disconnected = offline;
@@ -54,8 +73,15 @@ export const offlineFetch: typeof fetch = async (input, init) => {
   if (probe) init = { ...init, headers };
   const user = tokenOwner(headers);
   const rest = url.pathname.startsWith('/rest/v1/');
+  const resource = url.pathname.split('/').pop() || '';
+  const rpc = url.pathname.includes('/rest/v1/rpc/') ? resource : '';
+  const cacheableRead = rest && ['GET','HEAD'].includes(method) && CACHEABLE_TABLES.has(resource);
+  const cacheableRpc = rest && method === 'POST' && CACHEABLE_RPCS.has(rpc);
   let store: any;
-  try { store = await offlineStore(); } catch { /* Online use does not depend on local storage. */ }
+  const needsStore = isOffline() || cacheableRead || cacheableRpc || (rest && !['GET','HEAD'].includes(method));
+  if (needsStore) {
+    try { store = await offlineStore(); } catch { /* Online use does not depend on local storage. */ }
+  }
   const safeRead = !rest || (store ? store.readOnly(method, url.pathname) : method === 'GET' || method === 'HEAD');
   if (isOffline() && (!safeRead || url.pathname.startsWith('/storage/v1/') && !['GET','HEAD'].includes(method))) return failure(OFFLINE_MESSAGE);
   if (rest && !safeRead && user && store?.owner() === user) {
@@ -83,23 +109,25 @@ export const offlineFetch: typeof fetch = async (input, init) => {
   }
   // A server error is not an offline signal. Never replace 401/403/500 with stale success.
   if (rest && response.ok && user && store && store.owner() === user) {
-    if (method === 'GET' && !url.pathname.includes('/rpc/')) {
+    if (cacheableRead) {
       const clone = response.clone();
-      void clone.json().then(async data => {
+      queueCapture(async () => {
+        const data = await clone.json();
         if (store.owner() !== user || location.pathname !== page) return;
         await store.capture(user, url.href, headers.get('accept'), headers.get('range'), data, page, order);
         if (url.pathname.endsWith('/equipment_list_items')) {
           const filter = url.searchParams.get('list_id');
           if (filter?.startsWith('eq.')) window.dispatchEvent(new CustomEvent('hems:offline-draft-read', { detail: filter.slice(3) }));
         }
-      }).catch(() => {});
-    } else if (method === 'POST' && safeRead && url.pathname.includes('/rpc/')) {
-      const rpc = url.pathname.split('/').pop();
-      void response.clone().json().then(data => {
+      });
+    } else if (cacheableRpc && safeRead) {
+      const clone = response.clone();
+      queueCapture(async () => {
+        const data = await clone.json();
         if (store.owner() !== user || location.pathname !== page) return;
         const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {};
-        return store.captureRPC(user, rpc, body, data, page, order);
-      }).catch(() => {});
+        await store.captureRPC(user, rpc, body, data, page, order);
+      });
     }
   }
   return response;

@@ -1,7 +1,8 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { createClient, readBrowserSession } from "@/lib/supabase/client";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { createBrowserId } from "@/lib/browserId";
 import { EQUIPMENT_LISTS_EVENT } from "@/lib/equipmentLists";
 
@@ -16,7 +17,7 @@ export default function ActionNotificationsProvider({children}:{children:ReactNo
   const [tasks,setTasks] = useState<ActionNotification[]>([]);
   const [revision,setRevision] = useState(0);
   useEffect(() => {
-    let disposed=false,owner:string|null=null,version=0;
+    let disposed=false,owner:string|null=null,version=0,lastRefresh=0;
     let timer:ReturnType<typeof setTimeout>|undefined;
     let channel:ReturnType<typeof supabase.channel>|null=null;
     async function refresh() {
@@ -28,11 +29,17 @@ export default function ActionNotificationsProvider({children}:{children:ReactNo
       const {data,error}=response;
       if(disposed || read!==version || user!==owner)return;
       if(error){console.error("action notifications load error",error);return;}
+      lastRefresh=Date.now();
       setTasks(Array.isArray(data)?data:[]);
       setRevision(value=>value+1);
       window.dispatchEvent(new Event("hems:notification-inbox-change"));
     }
-    function schedule() { clearTimeout(timer);timer=setTimeout(()=>void refresh(),250); }
+    function schedule() {
+      clearTimeout(timer);timer=setTimeout(()=>void refresh(),500);
+    }
+    function scheduleIfStale() {
+      if(Date.now()-lastRefresh>=30000)schedule();
+    }
     function syncOwner(next:string|null) {
       if(disposed || next===owner)return;
       owner=next;++version;clearTimeout(timer);setTasks([]);setRevision(value=>value+1);
@@ -46,15 +53,16 @@ export default function ActionNotificationsProvider({children}:{children:ReactNo
       schedule();
     }
     let authEvents=0;
-    const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>{++authEvents;syncOwner(session?.user.id || null);});
+    const {data:{subscription}}=supabase.auth.onAuthStateChange((_event:AuthChangeEvent,session:Session|null)=>{++authEvents;syncOwner(session?.user.id || null);});
     const observedAuthEvents=authEvents;
-    void supabase.auth.getSession().then(({data:{session}})=>{if(authEvents===observedAuthEvents)syncOwner(session?.user.id || null);});
-    const visible=()=>{if(document.visibilityState==="visible")schedule();};
-    window.addEventListener("focus",schedule);document.addEventListener("visibilitychange",visible);
+    void readBrowserSession().then(({data:{session}})=>{if(authEvents===observedAuthEvents)syncOwner(session?.user.id || null);});
+    const focus=()=>scheduleIfStale();
+    const visible=()=>{if(document.visibilityState==="visible")scheduleIfStale();};
+    window.addEventListener("focus",focus);document.addEventListener("visibilitychange",visible);
     window.addEventListener(EQUIPMENT_LISTS_EVENT,schedule);
     window.addEventListener("hems:maintenance-requests-change",schedule);
     return()=>{disposed=true;++version;clearTimeout(timer);subscription.unsubscribe();if(channel)void supabase.removeChannel(channel);
-      window.removeEventListener("focus",schedule);document.removeEventListener("visibilitychange",visible);
+      window.removeEventListener("focus",focus);document.removeEventListener("visibilitychange",visible);
       window.removeEventListener(EQUIPMENT_LISTS_EVENT,schedule);window.removeEventListener("hems:maintenance-requests-change",schedule);};
   },[supabase]);
   return <InboxContext.Provider value={{tasks,revision}}>{children}</InboxContext.Provider>;
