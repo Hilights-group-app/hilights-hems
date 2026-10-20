@@ -1,5 +1,7 @@
 "use client";
 
+import { useDraftDescriptions, draftDescriptionKey } from "@/lib/useDraftDescriptions";
+
 import { createBrowserId } from "@/lib/browserId";
 import { draftGroupRank, moveDraftGroup } from "@/lib/draftItemOrder";
 
@@ -704,6 +706,7 @@ export default function EquipmentListDetailsClient({
   const [currentDepartment, setCurrentDepartment] = useState("");
   const [list, setList] = useState<DetailedEquipmentList | null>(null);
   const [items, setItems] = useState<EquipmentListItem[]>([]);
+  const draftDescriptions = useDraftDescriptions(items);
   const [dragGroupKey, setDragGroupKey] = useState<string | null>(null);
   const [draftDrop, setDraftDrop] = useState<{ key: string; position: "before" | "after" } | null>(null);
   const [draftCategoryDrop, setDraftCategoryDrop] = useState<string | null>(null);
@@ -3280,6 +3283,11 @@ export default function EquipmentListDetailsClient({
                             )}
                           </div>
                           )}
+                          {draftDescriptions[draftDescriptionKey(firstItem)] ? (
+                            <div data-draft-description className="mt-1 whitespace-pre-wrap break-words text-[10px] font-normal leading-relaxed text-gray-500 sm:text-[11px]">
+                              {draftDescriptions[draftDescriptionKey(firstItem)]}
+                            </div>
+                          ) : null}
                           {displayParts.cabinetDetail ? (
                             <div className="mt-0.5 truncate text-[8px] font-normal text-slate-600 sm:text-[9px]">
                               {displayParts.cabinetDetail}

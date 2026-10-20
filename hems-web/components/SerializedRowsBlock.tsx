@@ -1,5 +1,11 @@
 "use client";
 
+import ReportTestingDate from "@/components/ReportTestingDate";
+import { commonTestingDate } from "@/lib/reportTestingDate";
+
+import { uploadEquipmentPhoto } from "@/lib/imageUploads";
+const uploadDamagePhoto = (file: File) => uploadEquipmentPhoto(file, "report");
+
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -130,14 +136,6 @@ function valuesMatch(a: unknown, b: unknown) {
   return String(a ?? "") === String(b ?? "");
 }
 
-async function fileToDataUrl(file: File): Promise<string> {
-  return await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Failed to read file"));
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.readAsDataURL(file);
-  });
-}
 
 export function SerializedRowsBlock({
   itemId,
@@ -161,6 +159,7 @@ export function SerializedRowsBlock({
     Record<string, UnitMovement>
   >({});
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+  const [photoError, setPhotoError] = useState("");
   const [filterQuery, setFilterQuery] = useState("");
   const [statusFilter, setStatusFilter] =
     useState<UnitReportStatusFilter>("all");
@@ -187,6 +186,21 @@ export function SerializedRowsBlock({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemId, workflowControlledStatus]);
+
+
+  async function saveReportTestingDate(date: string) {
+    if (!editable) throw new Error("This report is read only.");
+    const { count, error } = await supabase.from("units")
+      .update({ testing_date: date }, { count: "exact" }).eq("item_id", itemId);
+    if (error) throw new Error(error.message || "Testing date could not be saved.");
+    if (count === null || count < unitsRef.current.length) {
+      await loadUnits();
+      throw new Error("Not all units could be updated. Check your report permissions and retry.");
+    }
+    const next = unitsRef.current.map(unit => ({ ...unit, testing_date: date }));
+    unitsRef.current = next;
+    setUnits(next);
+  }
 
   async function loadUnitMovements(unitIds: string[]) {
     if (!workflowControlledStatus || unitIds.length === 0) {
@@ -395,7 +409,7 @@ export function SerializedRowsBlock({
         serial: "",
         status: "available",
         notes: "",
-        testing_date: null,
+        testing_date: commonTestingDate(unitsRef.current.map(unit => unit.testing_date)) || null,
         damage_photos: [],
       })
       .select("id, unit_no, serial, status, notes, testing_date, damage_photos")
@@ -477,7 +491,7 @@ export function SerializedRowsBlock({
             serial: assignment.serial,
             status: "available",
             notes: "",
-            testing_date: null,
+            testing_date: commonTestingDate(unitsRef.current.map(unit => unit.testing_date)) || null,
             damage_photos: [],
           })),
         );
@@ -559,10 +573,13 @@ export function SerializedRowsBlock({
 
     const remainingSlots = Math.max(0, 3 - currentPhotos.length);
     const picked = Array.from(files).slice(0, remainingSlots);
-    const dataUrls = await Promise.all(picked.map((file) => fileToDataUrl(file)));
-    const nextPhotos = [...currentPhotos, ...dataUrls].slice(0, 3);
-
-    await updateUnit(unitId, { damage_photos: nextPhotos });
+    try {
+      setPhotoError("");
+      const urls = await Promise.all(picked.map((file) => uploadDamagePhoto(file)));
+      await updateUnit(unitId, { damage_photos: [...currentPhotos, ...urls].slice(0, 3) });
+    } catch (error) {
+      setPhotoError(error instanceof Error ? error.message : "Photo upload failed.");
+    }
   }
 
   async function deleteDamagePhoto(unitId: string, photoIndex: number) {
@@ -602,6 +619,11 @@ export function SerializedRowsBlock({
       ) : null}
 
       <div className="min-w-0 overflow-hidden rounded-xl border border-gray-200 bg-white px-[2px] pb-5 pt-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)] lg:px-5 lg:pt-5">
+        <ReportTestingDate
+          values={units.map(unit => unit.testing_date)} count={units.length}
+          editable={editable} onSave={saveReportTestingDate}
+        />
+        {photoError ? <div role="alert" className="mb-3 text-[11px] text-red-600">{photoError}</div> : null}
         <UnitReportFilterBar
           query={filterQuery}
           status={statusFilter}
@@ -611,12 +633,11 @@ export function SerializedRowsBlock({
           onStatusChange={setStatusFilter}
         />
 
-        <div className="hidden min-w-0 grid-cols-[32px_minmax(0,0.9fr)_minmax(0,1.05fr)_minmax(0,1.45fr)_minmax(0,0.95fr)_minmax(0,1.45fr)_24px] items-center gap-1 pb-4 pt-2 text-[10px] font-semibold text-gray-600 lg:grid">
+        <div className="hidden min-w-0 grid-cols-[32px_minmax(0,0.9fr)_minmax(0,1.05fr)_minmax(0,1.8fr)_minmax(0,1.45fr)_24px] items-center gap-1 pb-4 pt-2 text-[10px] font-semibold text-gray-600 lg:grid">
           <div className="min-w-0 text-center">ID</div>
           <div className="min-w-0 truncate">Serial</div>
           <div className="min-w-0 truncate">Status</div>
           <div className="min-w-0 truncate">Note</div>
-          <div className="min-w-0 truncate">Test Date</div>
           <div className="min-w-0 truncate">Damage</div>
           <div aria-hidden="true" />
         </div>
@@ -841,7 +862,6 @@ function SerializedUnitRow({
   const [serial, setSerial] = useState(unit.serial || "");
   const [status, setStatus] = useState(unit.status || "available");
   const [notes, setNotes] = useState(unit.notes || "");
-  const [testingDate, setTestingDate] = useState(unit.testing_date || "");
   const fileRef = useRef<HTMLInputElement | null>(null);
   const timerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const didInitRef = useRef(false);
@@ -852,7 +872,6 @@ function SerializedUnitRow({
       setSerial(unit.serial || "");
       setStatus(unit.status || "available");
       setNotes(unit.notes || "");
-      setTestingDate(unit.testing_date || "");
       didInitRef.current = true;
     }
   }, [unit]);
@@ -977,30 +996,7 @@ function SerializedUnitRow({
             />
           </label>
 
-          <label className="rounded-xl bg-gray-50 p-2 col-span-2">
-            <div className="text-[10px] font-semibold text-gray-400">Test Date</div>
-            {editable ? (
-              <input
-                type="date"
-                value={testingDate}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setTestingDate(v);
-                  debounceSave("testing_date_mobile", () => {
-                    void onChange(unit.id, { testing_date: v || null });
-                  });
-                }}
-                onBlur={() => {
-                  void onChange(unit.id, { testing_date: testingDate || null });
-                }}
-                className="mt-1 w-full border-none bg-transparent p-0 text-[11px] text-gray-800 outline-none"
-              />
-            ) : (
-              <div className="mt-1 w-full rounded-lg bg-white px-1 py-1 text-[11px] font-medium text-gray-800">
-                {formatDisplayDate(testingDate)}
-              </div>
-            )}
-          </label>
+
         </div>
 
         <label className="mt-2 block rounded-xl bg-gray-50 p-2">
@@ -1073,7 +1069,7 @@ function SerializedUnitRow({
       </div>
 
       {/* DESKTOP TABLE STYLE */}
-      <div className="hidden min-w-0 grid-cols-[32px_minmax(0,0.9fr)_minmax(0,1.05fr)_minmax(0,1.45fr)_minmax(0,0.95fr)_minmax(0,1.45fr)_24px] items-center gap-1 lg:grid">
+      <div className="hidden min-w-0 grid-cols-[32px_minmax(0,0.9fr)_minmax(0,1.05fr)_minmax(0,1.8fr)_minmax(0,1.45fr)_24px] items-center gap-1 lg:grid">
         <input
           value={unitNo}
           readOnly={!editable}
@@ -1156,27 +1152,7 @@ function SerializedUnitRow({
           }}
         />
 
-        {editable ? (
-          <input
-            type="date"
-            value={testingDate}
-            onChange={(e) => {
-              const v = e.target.value;
-              setTestingDate(v);
-              debounceSave("testing_date", () => {
-                void onChange(unit.id, { testing_date: v || null });
-              });
-            }}
-            onBlur={() => {
-              void onChange(unit.id, { testing_date: testingDate || null });
-            }}
-            className="w-full min-w-0 rounded-lg border-none bg-white px-0.5 py-1 text-[10px] outline-none"
-          />
-        ) : (
-          <div className="w-full min-w-0 truncate rounded-lg bg-white px-1 py-1 text-[10px] font-medium text-gray-700">
-            {formatDisplayDate(testingDate)}
-          </div>
-        )}
+
 
         <div className="flex min-w-0 items-center gap-1 overflow-hidden">
           {editable ? (

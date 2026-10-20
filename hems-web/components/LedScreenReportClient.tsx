@@ -1,5 +1,10 @@
 "use client";
 
+import ReportTestingDate from "@/components/ReportTestingDate";
+
+import { uploadEquipmentPhoto } from "@/lib/imageUploads";
+const uploadReportPhoto = (file: File) => uploadEquipmentPhoto(file, "report");
+
 import { ledIssueRemaining, ledIssueRepairLabel, tracksLedStock, validLedRepairQuantity } from "@/lib/ledIssueRepair";
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 
@@ -36,6 +41,7 @@ type MatrixRow = {
   in_ksa_qty: number;
   cabinet_model: string | null;
   photo_data: string | null;
+  testing_date: string | null;
 };
 
 type MatrixModel = {
@@ -212,71 +218,7 @@ function allocationLabel(list: EquipmentList) {
   return summary ? `${type} · ${summary}` : type;
 }
 
-async function compressImageFile(
-  file: File,
-  maxSize = 900,
-  quality = 0.72
-): Promise<Blob> {
-  const imageUrl = URL.createObjectURL(file);
 
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error("Failed to load image"));
-      image.src = imageUrl;
-    });
-
-    const ratio = Math.min(maxSize / img.width, maxSize / img.height, 1);
-    const width = Math.max(1, Math.round(img.width * ratio));
-    const height = Math.max(1, Math.round(img.height * ratio));
-
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("Failed to prepare image");
-
-    ctx.drawImage(img, 0, 0, width, height);
-
-    const blob = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob(resolve, "image/webp", quality);
-    });
-
-    if (!blob) throw new Error("Failed to compress image");
-    return blob;
-  } finally {
-    URL.revokeObjectURL(imageUrl);
-  }
-}
-
-async function uploadReportPhoto(file: File): Promise<string> {
-  const supabase = createClient();
-  const compressed = await compressImageFile(file);
-
-  const fileName = `${Date.now()}-${Math.random()
-    .toString(36)
-    .slice(2)}.webp`;
-
-  const filePath = `led-report/thumbs/${fileName}`;
-
-  const { error } = await supabase.storage
-    .from("equipment-photos")
-    .upload(filePath, compressed, {
-      contentType: "image/webp",
-      cacheControl: "31536000",
-      upsert: false,
-    });
-
-  if (error) throw error;
-
-  const { data } = supabase.storage
-    .from("equipment-photos")
-    .getPublicUrl(filePath);
-
-  return data.publicUrl;
-}
 
 function normalizePhotoList(input: unknown, fallback?: string | null): string[] {
   let raw: unknown[] = [];
@@ -679,7 +621,7 @@ export default function LedScreenReportClient({
       const { data: rowData, error: rowError } = await supabase
         .from("matrix_rows")
         .select(
-          "id, model_id, size, cabinet_model, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data"
+          "id, model_id, size, cabinet_model, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data, testing_date"
         )
         .eq("id", rowId)
         .single();
@@ -736,7 +678,7 @@ export default function LedScreenReportClient({
     // The database trigger applies issue quantity changes atomically with the issue save.
     // Read back current stock; historical issue totals must not overwrite tested stock.
     const {data,error}=await supabase.from("matrix_rows")
-      .select("id, model_id, size, cabinet_model, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data")
+      .select("id, model_id, size, cabinet_model, qty, available_qty, in_use_qty, maintenance_qty, in_ksa_qty, photo_data, testing_date")
       .eq("id",row.id).single();
     if(error){console.error("refresh LED report stock",error);return;}
     if(data)setRow(data as MatrixRow);
@@ -1174,6 +1116,15 @@ export default function LedScreenReportClient({
     ? issues.find((issue) => issue.id === editIssueId) || null
     : null;
 
+  async function saveReportTestingDate(date: string) {
+    if (!editable || !row) throw new Error("This report is read only.");
+    const { error } = await supabase.rpc("hems_set_led_report_testing_date", {
+      p_row_id: row.id, p_testing_date: date,
+    });
+    if (error) throw new Error(error.message || "Testing date could not be saved.");
+    setRow(current => current ? { ...current, testing_date: date } : current);
+  }
+
   async function downloadReportPdf() {
     if (!row || pdfExporting) return;
 
@@ -1280,7 +1231,7 @@ export default function LedScreenReportClient({
       drawPageHeader();
 
       // Equipment header card -------------------------------------------------
-      const equipmentCardHeight = 37;
+      const equipmentCardHeight = 42;
       ensureSpace(equipmentCardHeight);
       pdf.setFillColor(255, 255, 255);
       pdf.setDrawColor(224, 224, 224);
@@ -1353,6 +1304,7 @@ export default function LedScreenReportClient({
           ? [["Cabinet", row.cabinet_model] as [string, string]]
           : []),
         ["Cabinet size", row.size || "-"],
+        ["Testing date", row.testing_date || "Not set"],
       ] as [string, string][];
 
       let detailY = cursorY + 16;
@@ -2206,6 +2158,8 @@ export default function LedScreenReportClient({
       />
 
       <div className="mx-auto w-full min-w-0 space-y-3">
+        <ReportTestingDate key={row.id} values={[row.testing_date]} count={row.qty}
+          editable={editable} onSave={saveReportTestingDate} />
         <div className="rounded-xl border border-gray-200 bg-white px-3 py-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)] sm:px-5 sm:py-6">
           <div className="flex flex-col items-stretch gap-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="flex min-w-0 items-start gap-3 pb-1 pt-1">

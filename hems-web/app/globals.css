@@ -207,23 +207,23 @@ html[data-hems-layout="compact"] {
 }
 
 /*
- * Matrix blocks live inside padded cards. Extend their sticky header across
+ * Inventory blocks live inside padded cards. Extend their sticky header across
  * that padding and add an opaque cap above it so rows never show through the
  * small gap while the page is scrolling.
  */
-[data-hems-matrix-block-header] {
+[data-hems-block-header] {
   isolation: isolate;
-  margin-left: -0.5rem;
-  margin-right: -0.5rem;
-  padding-left: 0.5rem;
-  padding-right: 0.5rem;
+  margin-left: calc(-1 * var(--hems-block-padding, 1.5rem));
+  margin-right: calc(-1 * var(--hems-block-padding, 1.5rem));
+  padding-left: var(--hems-block-padding, 1.5rem);
+  padding-right: var(--hems-block-padding, 1.5rem);
   background: #fff !important;
 }
-[data-hems-matrix-block-header]::before {
+[data-hems-block-header]::before {
   content: "";
   position: absolute;
   z-index: -1;
-  top: -16px;
+  top: -24px;
   right: 0;
   bottom: 0;
   left: 0;
@@ -234,12 +234,7 @@ html:not([data-hems-layout="compact"]) {
   [data-hems-block-header] { min-height: 48px; }
   [data-hems-block-header] h2,
   [data-hems-block-header] > button:not([draggable]) { font-size: 15px; }
-  [data-hems-matrix-block-header] {
-    margin-left: -1rem;
-    margin-right: -1rem;
-    padding-left: 1rem;
-    padding-right: 1rem;
-  }
+
 }
 html[data-hems-layout="compact"] {
   &[data-hems-mobile="new"] [data-hems-block-header] {
@@ -247,10 +242,21 @@ html[data-hems-layout="compact"] {
   }
 }
 @media print {
+  [data-hems-block-header]::before { display: none; }
   [data-hems-block-header] { position: static; }
 }
 
 html[data-hems-layout="compact"] [data-hems-header-row] > div:first-child > span:last-child:not([data-hems-mobile-brand]) { display: none; }
 html[data-hems-layout="compact"][data-hems-mobile="new"] [data-hems-main] button.fixed[aria-label^="Add"] {
   bottom: calc(124px + env(safe-area-inset-bottom));
+}
+
+/* Match each card's horizontal padding, including iPad/mobile breakpoints. */
+[data-hems-padded-block="matrix"] { --hems-block-padding: 0.5rem; }
+[data-hems-padded-block="projectors"] { --hems-block-padding: 1rem; }
+[data-hems-padded-block="ledscreen"] { --hems-block-padding: 0.75rem; }
+html[data-hems-layout="desktop"] {
+  [data-hems-padded-block="matrix"] { --hems-block-padding: 1rem; }
+  [data-hems-padded-block="projectors"] { --hems-block-padding: 1.5rem; }
+  [data-hems-padded-block="ledscreen"] { --hems-block-padding: 1rem; }
 }

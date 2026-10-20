@@ -1,6 +1,8 @@
 // components/SubcategoryClientChainHoist.tsx
 "use client";
 
+import { uploadEquipmentPhoto as uploadPhoto } from "@/lib/imageUploads";
+
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor";
 
@@ -108,69 +110,7 @@ function isExpired(expiry?: string | null) {
   return ed.getTime() < today.getTime();
 }
 
-async function compressImageFile(
-  file: File,
-  maxSize = 260,
-  quality = 0.72,
-): Promise<Blob> {
-  const imageUrl = URL.createObjectURL(file);
 
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error("Failed to load image"));
-      image.src = imageUrl;
-    });
-
-    const ratio = Math.min(maxSize / img.width, maxSize / img.height, 1);
-    const width = Math.max(1, Math.round(img.width * ratio));
-    const height = Math.max(1, Math.round(img.height * ratio));
-
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("Failed to prepare image");
-
-    ctx.drawImage(img, 0, 0, width, height);
-
-    const blob = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob(resolve, "image/webp", quality);
-    });
-
-    if (!blob) throw new Error("Failed to compress image");
-    return blob;
-  } finally {
-    URL.revokeObjectURL(imageUrl);
-  }
-}
-
-async function uploadPhoto(file: File): Promise<string> {
-  const supabase = createClient();
-  const compressed = await compressImageFile(file);
-
-  const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.webp`;
-
-  const filePath = `chain-hoist/thumbs/${fileName}`;
-
-  const { error } = await supabase.storage
-    .from("equipment-photos")
-    .upload(filePath, compressed, {
-      contentType: "image/webp",
-      cacheControl: "31536000",
-      upsert: false,
-    });
-
-  if (error) throw error;
-
-  const { data } = supabase.storage
-    .from("equipment-photos")
-    .getPublicUrl(filePath);
-
-  return data.publicUrl;
-}
 
 function StatPill({
   label,
@@ -1690,7 +1630,7 @@ export default function SubcategoryClientChainHoist({
       ) : (
         hoistGroups.map((group, groupIndex) => (
         <div key={`${group.block}:${groupIndex}`} className="bg-white border border-gray-200 rounded-2xl p-6">
-          <div data-hems-block-header className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
+          <div data-hems-block-header style={{ "--hems-block-padding": "1.5rem" } as React.CSSProperties} className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
             <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
             <h2>{group.block}</h2>
           </div>

@@ -1,5 +1,7 @@
 "use client";
 
+import { uploadEquipmentPhoto as uploadItemPhoto } from "@/lib/imageUploads";
+
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -34,14 +36,6 @@ type OnlineImage = {
   thumbnail?: string;
 };
 
-async function fileToDataUrl(file: File): Promise<string> {
-  return await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Failed to read file"));
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.readAsDataURL(file);
-  });
-}
 
 export default function ItemEditClientSerializedUnits({
   category,
@@ -178,13 +172,15 @@ export default function ItemEditClientSerializedUnits({
     if (!f) return;
 
     try {
-      const dataUrl = await fileToDataUrl(f);
+      const dataUrl = await uploadItemPhoto(f);
       await updateItem({ photo_url: dataUrl });
       setSaveMsg("Photo updated");
 
       setTimeout(() => {
         setSaveMsg((prev) => (prev === "Photo updated" ? "" : prev));
       }, 1500);
+    } catch (error) {
+      setSaveMsg(error instanceof Error ? error.message : "Photo upload failed.");
     } finally {
       e.target.value = "";
     }
@@ -245,13 +241,23 @@ export default function ItemEditClientSerializedUnits({
 
     if (!imageUrl) return;
 
-    await updateItem({ photo_url: imageUrl });
+    const response = await fetch("/api/optimize-image", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imageUrl }),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.url) {
+      setSaveMsg(result.error || "Photo optimization failed.");
+      return;
+    }
+    const optimizedUrl = String(result.url);
+    await updateItem({ photo_url: optimizedUrl });
 
     setItem((prev) =>
       prev
         ? {
             ...prev,
-            photo_url: imageUrl,
+            photo_url: optimizedUrl,
           }
         : prev
     );

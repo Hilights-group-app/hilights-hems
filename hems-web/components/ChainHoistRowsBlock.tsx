@@ -1,5 +1,11 @@
 "use client";
 
+import ReportTestingDate from "@/components/ReportTestingDate";
+import { commonTestingDate } from "@/lib/reportTestingDate";
+
+import { uploadEquipmentPhoto } from "@/lib/imageUploads";
+const uploadDamagePhoto = (file: File) => uploadEquipmentPhoto(file, "report");
+
 
 
 import Link from "next/link";
@@ -46,6 +52,8 @@ type Unit = {
   status: string;
 
   notes: string;
+
+  testing_date: string | null;
 
   cert_date: string | null;
 
@@ -257,21 +265,6 @@ function resizeNoteField(element: HTMLTextAreaElement | null) {
 
 
 
-async function fileToDataUrl(file: File): Promise<string> {
-
-  return await new Promise((resolve, reject) => {
-
-    const reader = new FileReader();
-
-    reader.onerror = () => reject(new Error("Failed to read file"));
-
-    reader.onload = () => resolve(String(reader.result || ""));
-
-    reader.readAsDataURL(file);
-
-  });
-
-}
 
 
 
@@ -330,6 +323,7 @@ export function ChainHoistRowsBlock({
   >({});
 
   const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+  const [photoError, setPhotoError] = useState("");
   const [filterQuery, setFilterQuery] = useState("");
   const [statusFilter, setStatusFilter] =
     useState<UnitReportStatusFilter>("all");
@@ -382,6 +376,21 @@ export function ChainHoistRowsBlock({
   }, [itemId, workflowControlledStatus]);
 
 
+
+
+  async function saveReportTestingDate(date: string) {
+    if (!editable) throw new Error("This report is read only.");
+    const { count, error } = await supabase.from("units")
+      .update({ testing_date: date }, { count: "exact" }).eq("item_id", itemId);
+    if (error) throw new Error(error.message || "Testing date could not be saved.");
+    if (count === null || count < unitsRef.current.length) {
+      await loadUnits();
+      throw new Error("Not all units could be updated. Check your report permissions and retry.");
+    }
+    const next = unitsRef.current.map(unit => ({ ...unit, testing_date: date }));
+    unitsRef.current = next;
+    setUnits(next);
+  }
 
   async function loadUnitMovements(unitIds: string[]) {
 
@@ -537,7 +546,7 @@ export function ChainHoistRowsBlock({
 
       .from("units")
 
-      .select("id, unit_no, serial, status, notes, cert_date, expiry_date, damage_photos")
+      .select("id, unit_no, serial, status, notes, testing_date, cert_date, expiry_date, damage_photos")
 
       .eq("item_id", itemId)
 
@@ -832,13 +841,13 @@ if (currentPhotos.length >= 3) return;
 
 
 
-const dataUrl = await fileToDataUrl(file);
-
-const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
-
-
-
-    await updateUnit(unitId, { damage_photos: nextPhotos });
+    try {
+      setPhotoError("");
+      const url = await uploadDamagePhoto(file);
+      await updateUnit(unitId, { damage_photos: [...currentPhotos, url].slice(0, 3) });
+    } catch (error) {
+      setPhotoError(error instanceof Error ? error.message : "Photo upload failed.");
+    }
 
   }
 
@@ -900,6 +909,8 @@ const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
 
         notes: "",
 
+        testing_date: commonTestingDate(unitsRef.current.map(unit => unit.testing_date)) || null,
+
         cert_date: null,
 
         expiry_date: null,
@@ -908,7 +919,7 @@ const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
 
       })
 
-      .select("id, unit_no, serial, status, notes, cert_date, expiry_date, damage_photos")
+      .select("id, unit_no, serial, status, notes, testing_date, cert_date, expiry_date, damage_photos")
 
       .single();
 
@@ -1004,7 +1015,9 @@ const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
             serial: assignment.serial,
             status: "available",
             notes: "",
-            cert_date: null,
+            testing_date: commonTestingDate(unitsRef.current.map(unit => unit.testing_date)) || null,
+
+        cert_date: null,
             expiry_date: null,
             damage_photos: [],
           })),
@@ -1161,7 +1174,12 @@ const nextPhotos = [...currentPhotos, dataUrl].slice(0, 3);
 
 
     <div className="w-full min-w-0 overflow-hidden bg-white border border-gray-200 rounded-xl px-[2px] sm:px-5 pt-4 sm:pt-5 pb-5 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
-      <UnitReportFilterBar
+      <ReportTestingDate
+          values={units.map(unit => unit.testing_date)} count={units.length}
+          editable={editable} onSave={saveReportTestingDate}
+        />
+        {photoError ? <div role="alert" className="mb-3 text-[11px] text-red-600">{photoError}</div> : null}
+        <UnitReportFilterBar
         query={filterQuery}
         status={statusFilter}
         validity={validityFilter}

@@ -1,3 +1,5 @@
+
+import { storeAvatarPhoto } from "@/lib/storeAvatarPhoto";
 import { NextResponse } from "next/server";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -39,7 +41,7 @@ export async function GET() {
   try {
     const { data: profiles, error: profilesError } = await supabaseAdmin
       .from("profiles")
-      .select("id, full_name, role, department, created_at")
+      .select("id, full_name, role, department, avatar_url, created_at")
       .order("created_at", { ascending: false })
       .limit(100);
 
@@ -82,7 +84,7 @@ export async function PATCH(req: Request) {
     const full_name = String(body?.full_name ?? "").trim();
     const role = String(body?.role ?? "") as UserRole;
     const departmentRaw = String(body?.department ?? "") as Department;
-    const avatar_url = String(body?.avatar_url ?? "").trim();
+    let avatar_url = String(body?.avatar_url ?? "").trim();
 
     if (!id) {
       return NextResponse.json({ error: "Missing user id." }, { status: 400 });
@@ -95,6 +97,8 @@ export async function PATCH(req: Request) {
     if (!["admin", "warehouse_manager", "viewer", "head"].includes(role)) {
       return NextResponse.json({ error: "Invalid role." }, { status: 400 });
     }
+
+    avatar_url = await storeAvatarPhoto(avatar_url);
 
     const department =
       role === "head" && ["lighting", "video", "rigging"].includes(departmentRaw)
@@ -115,7 +119,7 @@ export async function PATCH(req: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, avatar_url });
   } catch (error: any) {
     return NextResponse.json(
       { error: error?.message || "Failed to update user." },

@@ -1,5 +1,7 @@
 "use client";
 
+import { compressedAvatarPreview } from "@/lib/imageUploads";
+
 import SettingsFrame from "@/components/SettingsFrame";
 import styles from "@/components/SettingsStyles.module.css";
 import { useEffect, useRef, useState } from "react";
@@ -28,14 +30,6 @@ async function safeJsonResponse(res: Response) {
   }
 }
 
-async function fileToDataUrl(file: File): Promise<string> {
-  return await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Failed to read file"));
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.readAsDataURL(file);
-  });
-}
 
 function initials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -118,7 +112,7 @@ export default function AccountManagementClient() {
     if (!file) return;
 
     try {
-      const dataUrl = await fileToDataUrl(file);
+      const dataUrl = await compressedAvatarPreview(file);
       setAvatarUrl(dataUrl);
     } catch {
       setErr("Failed to read image.");
@@ -131,7 +125,7 @@ export default function AccountManagementClient() {
     if (!file) return;
 
     try {
-      const dataUrl = await fileToDataUrl(file);
+      const dataUrl = await compressedAvatarPreview(file);
       updateLocalUser(userId, { avatar_url: dataUrl });
       setMsg("Photo selected. Click Save to update user.");
       setErr(null);
@@ -210,6 +204,7 @@ export default function AccountManagementClient() {
         return;
       }
 
+      updateLocalUser(user.id, { avatar_url: json.avatar_url || "" });
       setMsg("User updated successfully.");
       await loadUsers();
     } catch (e: any) {

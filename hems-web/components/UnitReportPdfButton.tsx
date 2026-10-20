@@ -1,5 +1,7 @@
 "use client";
 
+import { testingDateSummary } from "@/lib/reportTestingDate";
+
 import { Download } from "lucide-react";
 import { useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -177,44 +179,21 @@ function unitTable(variant: ReportVariant, rows: UnitRow[]) {
 
   if (variant === "projector") {
     return {
-      head: [["ID", "Serial", "Status", "Lamp", "Test Date", "Note", "Photos"]],
-      body: rows.map((row) => [
-        String(row.unit_no ?? "-"),
-        row.serial || "-",
-        row.repair_label || statusLabel(row.status),
-        String(row.lamp_hours ?? 0),
-        row.testing_date || "-",
-        row.notes || "-",
-        String(normalizePhotos(row.damage_photos).length),
-      ]),
-      widths: {
-        0: { cellWidth: 12 },
-        1: { cellWidth: 29 },
-        2: { cellWidth: 24 },
-        3: { cellWidth: 15, halign: "center" as const },
-        4: { cellWidth: 23 },
-        6: { cellWidth: 13, halign: "center" as const },
-      },
+      head: [["ID", "Serial", "Status", "Lamp", "Note", "Photos"]],
+      body: rows.map(row => [String(row.unit_no ?? "-"), row.serial || "-",
+        row.repair_label || statusLabel(row.status), String(row.lamp_hours ?? 0),
+        row.notes || "-", String(normalizePhotos(row.damage_photos).length)]),
+      widths: { 0: { cellWidth: 12 }, 1: { cellWidth: 31 }, 2: { cellWidth: 28 },
+        3: { cellWidth: 15, halign: "center" as const }, 5: { cellWidth: 14, halign: "center" as const } },
     };
   }
-
   return {
-    head: [["ID", "Serial", "Status", "Test Date", "Note", "Photos"]],
-    body: rows.map((row) => [
-      String(row.unit_no ?? "-"),
-      row.serial || "-",
-      row.repair_label || statusLabel(row.status),
-      row.testing_date || "-",
-      row.notes || "-",
-      String(normalizePhotos(row.damage_photos).length),
-    ]),
-    widths: {
-      0: { cellWidth: 12 },
-      1: { cellWidth: 31 },
-      2: { cellWidth: 25 },
-      3: { cellWidth: 24 },
-      5: { cellWidth: 13, halign: "center" as const },
-    },
+    head: [["ID", "Serial", "Status", "Note", "Photos"]],
+    body: rows.map(row => [String(row.unit_no ?? "-"), row.serial || "-",
+      row.repair_label || statusLabel(row.status), row.notes || "-",
+      String(normalizePhotos(row.damage_photos).length)]),
+    widths: { 0: { cellWidth: 12 }, 1: { cellWidth: 36 }, 2: { cellWidth: 30 },
+      4: { cellWidth: 14, halign: "center" as const } },
   };
 }
 
@@ -313,7 +292,7 @@ export default function UnitReportPdfButton({
       drawHeader();
 
       const cardY = 29;
-      const cardHeight = 22;
+      const cardHeight = 27;
       pdf.setFillColor(255, 255, 255);
       pdf.setDrawColor(225, 225, 225);
       pdf.roundedRect(margin, cardY, pageWidth - margin * 2, cardHeight, 3, 3, "FD");
@@ -342,7 +321,8 @@ export default function UnitReportPdfButton({
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(6.8);
       pdf.setTextColor(120, 120, 120);
-      pdf.text(`Generated: ${new Date().toLocaleString()}`, textX, cardY + 17);
+      pdf.text(`Testing date: ${testingDateSummary(rows.map(row => row.testing_date))}`, textX, cardY + 17);
+      pdf.text(`Generated: ${new Date().toLocaleString()}`, textX, cardY + 22);
 
       let summaryX = pageWidth - margin - 4;
       pdf.setFont("helvetica", "bold");

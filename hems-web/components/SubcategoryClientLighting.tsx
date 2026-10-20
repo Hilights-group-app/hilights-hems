@@ -1,5 +1,7 @@
 "use client";
 
+import { uploadEquipmentPhoto as uploadPhoto } from "@/lib/imageUploads";
+
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor";
 
@@ -113,73 +115,8 @@ const ACTIVE_LIST_SELECT = `
   updated_at
 `;
 
-async function compressImageFile(
-  file: File,
-  maxSize = 260,
-  quality = 0.72,
-): Promise<Blob> {
-  const imageUrl = URL.createObjectURL(file);
 
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error("Failed to load image"));
-      image.src = imageUrl;
-    });
 
-    const ratio = Math.min(maxSize / img.width, maxSize / img.height, 1);
-    const width = Math.max(1, Math.round(img.width * ratio));
-    const height = Math.max(1, Math.round(img.height * ratio));
-
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("Failed to prepare image");
-
-    ctx.drawImage(img, 0, 0, width, height);
-
-    const blob = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob(resolve, "image/webp", quality);
-    });
-
-    if (!blob) throw new Error("Failed to compress image");
-    return blob;
-  } finally {
-    URL.revokeObjectURL(imageUrl);
-  }
-}
-
-async function uploadPhotoBlob(blob: Blob): Promise<string> {
-  const supabase = createClient();
-
-  const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.webp`;
-
-  const filePath = `items/thumbs/${fileName}`;
-
-  const { error } = await supabase.storage
-    .from("equipment-photos")
-    .upload(filePath, blob, {
-      contentType: "image/webp",
-      cacheControl: "31536000",
-      upsert: false,
-    });
-
-  if (error) throw error;
-
-  const { data } = supabase.storage
-    .from("equipment-photos")
-    .getPublicUrl(filePath);
-
-  return data.publicUrl;
-}
-
-async function uploadPhoto(file: File): Promise<string> {
-  const compressed = await compressImageFile(file);
-  return uploadPhotoBlob(compressed);
-}
 
 function splitBrandModel(name: string) {
   const parts = name.split(" - ");
@@ -2274,7 +2211,7 @@ export default function SubcategoryClientLighting({
           key={group.type}
           className="bg-white border border-gray-200 rounded-2xl p-6"
         >
-          <div data-hems-block-header className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
+          <div data-hems-block-header style={{ "--hems-block-padding": "1.5rem" } as React.CSSProperties} className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
             <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
             <h2 className="text-[8px] font-semibold uppercase tracking-wide text-gray-500">
               {group.type}
@@ -2289,7 +2226,7 @@ export default function SubcategoryClientLighting({
 
       {uncategorizedItems.length > 0 ? (
         <div className="bg-white border border-gray-200 rounded-2xl p-6">
-          <div data-hems-block-header className="mb-5">
+          <div data-hems-block-header style={{ "--hems-block-padding": "1.5rem" } as React.CSSProperties} className="mb-5">
             <h2 className="text-[13px] font-semibold text-gray-900">
               Other Fixtures
             </h2>

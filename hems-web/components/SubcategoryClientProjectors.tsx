@@ -1,5 +1,7 @@
 "use client";
 
+import { uploadEquipmentPhoto as uploadPhoto } from "@/lib/imageUploads";
+
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor";
 
@@ -83,74 +85,8 @@ function toStatus(v: any): UnitStatus {
   return "available";
 }
 
-async function compressImageFile(
-  file: File,
-  maxSize = 260,
-  quality = 0.72,
-): Promise<Blob> {
-  const imageUrl = URL.createObjectURL(file);
 
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error("Failed to load image"));
-      image.src = imageUrl;
-    });
 
-    const ratio = Math.min(maxSize / img.width, maxSize / img.height, 1);
-    const width = Math.max(1, Math.round(img.width * ratio));
-    const height = Math.max(1, Math.round(img.height * ratio));
-
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("Failed to prepare image");
-
-    ctx.drawImage(img, 0, 0, width, height);
-
-    const blob = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob(resolve, "image/webp", quality);
-    });
-
-    if (!blob) throw new Error("Failed to compress image");
-
-    return blob;
-  } finally {
-    URL.revokeObjectURL(imageUrl);
-  }
-}
-
-async function uploadPhotoBlob(blob: Blob): Promise<string> {
-  const supabase = createClient();
-
-  const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.webp`;
-
-  const filePath = `projectors/thumbs/${fileName}`;
-
-  const { error } = await supabase.storage
-    .from("equipment-photos")
-    .upload(filePath, blob, {
-      contentType: "image/webp",
-      cacheControl: "31536000",
-      upsert: false,
-    });
-
-  if (error) throw error;
-
-  const { data } = supabase.storage
-    .from("equipment-photos")
-    .getPublicUrl(filePath);
-
-  return data.publicUrl;
-}
-
-async function uploadPhoto(file: File): Promise<string> {
-  const compressed = await compressImageFile(file);
-  return uploadPhotoBlob(compressed);
-}
 
 function StatPill({
   label,
@@ -1764,7 +1700,7 @@ export default function SubcategoryClientProjectors({
       ) : (
         projectorGroups.map((group) => (
         <div key={group.block} className="rounded-2xl border border-gray-200 bg-white p-4 hems-wide:p-6">
-          <div data-hems-block-header className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
+          <div data-hems-block-header data-hems-padded-block="projectors" className="mb-3 flex items-center gap-2 border-b border-gray-100 pb-2">
             <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
             <h2>{group.block}</h2>
           </div>

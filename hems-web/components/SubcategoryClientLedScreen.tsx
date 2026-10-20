@@ -1,4 +1,6 @@
 "use client";
+
+import { uploadEquipmentPhoto as uploadPhoto } from "@/lib/imageUploads";
 import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor";
 
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
@@ -138,75 +140,8 @@ function normalizeText(v: string) {
   return v.trim().replace(/\s+/g, " ");
 }
 
-async function compressImageFile(
-  file: File,
-  maxSize = 260,
-  quality = 0.72
-): Promise<Blob> {
-  const imageUrl = URL.createObjectURL(file);
 
-  try {
-    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error("Failed to load image"));
-      image.src = imageUrl;
-    });
 
-    const ratio = Math.min(maxSize / img.width, maxSize / img.height, 1);
-    const width = Math.max(1, Math.round(img.width * ratio));
-    const height = Math.max(1, Math.round(img.height * ratio));
-
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("Failed to prepare image");
-
-    ctx.drawImage(img, 0, 0, width, height);
-
-    const blob = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob(resolve, "image/webp", quality);
-    });
-
-    if (!blob) throw new Error("Failed to compress image");
-    return blob;
-  } finally {
-    URL.revokeObjectURL(imageUrl);
-  }
-}
-
-async function uploadPhotoBlob(blob: Blob): Promise<string> {
-  const supabase = useMemo(() => createClient(), []);
-
-  const fileName = `${Date.now()}-${Math.random()
-    .toString(36)
-    .slice(2)}.webp`;
-
-  const filePath = `led-screen/thumbs/${fileName}`;
-
-  const { error } = await supabase.storage
-    .from("equipment-photos")
-    .upload(filePath, blob, {
-      contentType: "image/webp",
-      cacheControl: "31536000",
-      upsert: false,
-    });
-
-  if (error) throw error;
-
-  const { data } = supabase.storage
-    .from("equipment-photos")
-    .getPublicUrl(filePath);
-
-  return data.publicUrl;
-}
-
-async function uploadPhoto(file: File): Promise<string> {
-  const compressed = await compressImageFile(file);
-  return uploadPhotoBlob(compressed);
-}
 
 function parseLedName(name: string): ParsedLedName {
   const clean = normalizeText(name);
@@ -2877,7 +2812,7 @@ function LedModelCard({
           : "border-gray-200"
       }`}
     >
-      <div data-hems-block-header className="flex items-center justify-between gap-2 min-w-0 mb-3">
+      <div data-hems-block-header data-hems-padded-block="ledscreen" className="flex items-center justify-between gap-2 min-w-0 mb-3">
         <button
           type="button"
           data-led-model-select="true"

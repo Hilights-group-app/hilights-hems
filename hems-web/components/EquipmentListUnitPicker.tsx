@@ -22,6 +22,7 @@ type PickerItem = {
   name: string;
   photo_url?: string | null;
   fixture_type?: string | null;
+  description?: string | null;
 };
 
 function unitLabel(unit: UnitRow) {
@@ -228,6 +229,7 @@ export default function EquipmentListUnitPicker({
         unit_no: unit.unit_no,
         fixture_type: item.fixture_type || null,
         photo_url: item.photo_url || null,
+        description: item.description || null,
       },
     }));
 

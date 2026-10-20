@@ -1,5 +1,11 @@
 "use client";
 
+import ReportTestingDate from "@/components/ReportTestingDate";
+import { commonTestingDate } from "@/lib/reportTestingDate";
+
+import { uploadEquipmentPhoto } from "@/lib/imageUploads";
+const uploadDamagePhoto = (file: File) => uploadEquipmentPhoto(file, "report");
+
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -153,14 +159,6 @@ function valuesMatch(a: unknown, b: unknown) {
   return String(a ?? "") === String(b ?? "");
 }
 
-async function fileToDataUrl(file: File): Promise<string> {
-  return await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Failed to read file"));
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.readAsDataURL(file);
-  });
-}
 
 /* ===================================================== */
 /* SHARED ROWS BLOCK */
@@ -256,6 +254,21 @@ export function ProjectorRowsBlock({
         onSaveMessageChange?.("");
       }, clearAfterMs);
     }
+  }
+
+
+  async function saveReportTestingDate(date: string) {
+    if (!editable) throw new Error("This report is read only.");
+    const { count, error } = await supabase.from("units")
+      .update({ testing_date: date }, { count: "exact" }).eq("item_id", itemId);
+    if (error) throw new Error(error.message || "Testing date could not be saved.");
+    if (count === null || count < unitsRef.current.length) {
+      await loadUnits();
+      throw new Error("Not all units could be updated. Check your report permissions and retry.");
+    }
+    const next = unitsRef.current.map(unit => ({ ...unit, testing_date: date }));
+    unitsRef.current = next;
+    setUnits(next);
   }
 
   async function loadUnitMovements(unitIds: string[]) {
@@ -427,12 +440,7 @@ export function ProjectorRowsBlock({
       updated_at: nextPatch.updated_at,
     };
 
-    if (showTestingDate) {
-      payload.testing_date =
-        nextPatch.testing_date !== undefined
-          ? nextPatch.testing_date
-          : current.testing_date;
-    }
+    // Testing dates are saved independently by the report-wide control.
 
     const { data, error } = await supabase
       .from("units")
@@ -517,7 +525,7 @@ export function ProjectorRowsBlock({
       updated_at: updatedAt,
     };
 
-    if (showTestingDate) insertPayload.testing_date = null;
+    if (showTestingDate) insertPayload.testing_date = commonTestingDate(unitsRef.current.map(unit => unit.testing_date)) || null;
 
     const { data, error } = await supabase
       .from("units")
@@ -616,7 +624,7 @@ export function ProjectorRowsBlock({
             updated_by: editorName,
             updated_at: updatedAt,
           };
-          if (showTestingDate) row.testing_date = null;
+          if (showTestingDate) row.testing_date = commonTestingDate(unitsRef.current.map(unit => unit.testing_date)) || null;
           return row;
         });
         const { error: insertError } = await supabase
@@ -723,7 +731,7 @@ export function ProjectorRowsBlock({
 
       const remainingSlots = Math.max(0, 3 - currentPhotos.length);
       const picked = Array.from(files).slice(0, remainingSlots);
-      const dataUrls = await Promise.all(picked.map((file) => fileToDataUrl(file)));
+      const dataUrls = await Promise.all(picked.map((file) => uploadDamagePhoto(file)));
       const nextPhotos = [...currentPhotos, ...dataUrls].slice(0, 3);
 
       await updateUnit(unitId, { damage_photos: nextPhotos });
@@ -770,6 +778,10 @@ export function ProjectorRowsBlock({
       ) : null}
 
       <div className="min-w-0 overflow-hidden rounded-xl border border-gray-200 bg-white px-[2px] pb-5 pt-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)] lg:px-5 lg:pt-5">
+        {showTestingDate ? <ReportTestingDate
+          values={units.map(unit => unit.testing_date)} count={units.length}
+          editable={editable} onSave={saveReportTestingDate}
+        /> : null}
         <UnitReportFilterBar
           query={filterQuery}
           status={statusFilter}
@@ -781,9 +793,7 @@ export function ProjectorRowsBlock({
 
         <div
           className={`hidden min-w-0 items-center gap-1 pb-4 pt-2 text-[10px] font-semibold text-gray-600 lg:grid ${
-            showTestingDate
-              ? "grid-cols-[32px_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.55fr)_minmax(0,1.4fr)_minmax(0,0.9fr)_minmax(0,1.4fr)_24px]"
-              : "grid-cols-[32px_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.55fr)_minmax(0,1.5fr)_minmax(0,1.5fr)_24px]"
+            "grid-cols-[32px_minmax(0,0.9fr)_minmax(0,1fr)_minmax(0,0.55fr)_minmax(0,1.5fr)_minmax(0,1.5fr)_24px]"
           }`}
         >
           <div className="min-w-0 text-center">ID</div>
@@ -791,9 +801,7 @@ export function ProjectorRowsBlock({
           <div className="min-w-0 truncate">Status</div>
           <div className="min-w-0 truncate">Lamp</div>
           <div className="min-w-0 truncate">Note</div>
-          {showTestingDate ? (
-            <div className="min-w-0 truncate">Test Date</div>
-          ) : null}
+
           <div className="min-w-0 truncate">Damage</div>
           <div aria-hidden="true" />
         </div>
@@ -813,7 +821,7 @@ export function ProjectorRowsBlock({
               editable={editable}
               workflowControlledStatus={workflowControlledStatus}
               movement={movementByUnit[unit.id]}
-              showTestingDate={showTestingDate}
+              showTestingDate={false}
               onChange={updateUnit}
               onPickDamagePhotos={onPickDamagePhotos}
               onDeleteDamagePhoto={deleteDamagePhoto}

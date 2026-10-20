@@ -1,3 +1,5 @@
+
+import { storeAvatarPhoto } from "@/lib/storeAvatarPhoto";
 import { NextResponse } from "next/server";
 import { createClient as createServerSupabase } from "@/lib/supabase/server";
 import { supabaseAdmin } from "@/lib/supabase/admin";
@@ -44,7 +46,7 @@ export async function POST(req: Request) {
     const password = String(body?.password ?? "");
     const role = String(body?.role ?? "") as UserRole;
     const departmentRaw = String(body?.department ?? "") as Department;
-    const avatar_url = String(body?.avatar_url ?? "").trim();
+    let avatar_url = String(body?.avatar_url ?? "").trim();
 
     if (!full_name) {
       return NextResponse.json({ error: "Full name is required." }, { status: 400 });
@@ -64,6 +66,8 @@ export async function POST(req: Request) {
     if (!["admin", "warehouse_manager", "viewer", "head"].includes(role)) {
       return NextResponse.json({ error: "Invalid role." }, { status: 400 });
     }
+
+    avatar_url = await storeAvatarPhoto(avatar_url);
 
     const department =
       role === "head" && ["lighting", "video", "rigging"].includes(departmentRaw)
