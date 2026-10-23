@@ -2582,17 +2582,8 @@ export default function SubcategoryClientMatrix({
 
           </div>
 
-          <div className="mt-5 overflow-x-auto pr-0">
-            <div className="min-w-[330px] overflow-hidden rounded-2xl border border-gray-200 bg-white">
-              <div className="grid grid-cols-[minmax(76px,1.3fr)_repeat(4,minmax(44px,.75fr))_42px] items-center gap-[1px] bg-gray-100 px-2 py-1.5 text-[7px] font-bold text-gray-600 hems-desktop:grid-cols-[minmax(120px,1.4fr)_repeat(4,minmax(70px,.8fr))_56px] hems-desktop:px-6 hems-desktop:py-2 hems-desktop:text-[9px]">
-                <div className="text-left">Length</div>
-                <div className="text-center">Total</div>
-                <div className="text-center">Available</div>
-                <div className="text-center">Maintenance</div>
-                <div className="text-center text-blue-700">In KSA</div>
-                <div />
-              </div>
-
+          <div className="mt-5">
+            <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
               {cableRows.length === 0 ? (
                 <div className="px-2 hems-desktop:px-6 py-3 text-[10px] hems-desktop:text-[12px] text-gray-400">
                   No cable lengths yet.
@@ -2614,7 +2605,7 @@ export default function SubcategoryClientMatrix({
                         setSelectedItemId(null);
                         setSelectedBlockName(null);
                       }}
-                      className={`grid grid-cols-[minmax(76px,1.3fr)_repeat(4,minmax(44px,.75fr))_42px] items-center gap-[1px] border-t border-gray-100 px-2 py-1 text-[7px] text-gray-900 hems-desktop:grid-cols-[minmax(120px,1.4fr)_repeat(4,minmax(70px,.8fr))_56px] hems-desktop:px-6 hems-desktop:py-1.5 hems-desktop:text-[9px] ${
+                      className={`flex items-center gap-2 border-t border-gray-100 px-3 py-3 first:border-t-0 text-gray-900 hems-wide:gap-3 hems-wide:px-6 ${
                         selectedCableRow?.rowId === row.id
                           ? "ring-2 ring-inset ring-black"
                           : editable
@@ -2622,47 +2613,74 @@ export default function SubcategoryClientMatrix({
                             : ""
                       }`}
                     >
-                      <div className="min-w-0 text-left">
-                        <div className="truncate font-bold" title={row.cable_length}>{row.cable_length}</div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 hems-wide:hidden">
+                          <span className="w-10 shrink-0 break-words text-[9px] font-bold">
+                            {row.cable_length}
+                          </span>
+                          <div
+                            className="grid min-w-0 flex-1 gap-2 text-center"
+                            style={{ gridTemplateColumns: `repeat(${2 + Number(s.maintenance > 0) + Number(s.inKsa > 0)}, minmax(0, 1fr))` }}
+                          >
+                            <div className="min-w-0">
+                              <div className="mb-1 text-[8px] font-semibold text-gray-500">Total</div>
+                              <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">{s.total}</div>
+                            </div>
+                            <div className="min-w-0">
+                              <div className="mb-1 text-[8px] font-semibold text-gray-500">Available</div>
+                              <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">{s.available}</div>
+                            </div>
+                            {s.maintenance > 0 ? (
+                              <div className="min-w-0">
+                                <div className="mb-1 break-words text-[8px] font-semibold text-gray-500">Maintenance</div>
+                                <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">{s.maintenance}</div>
+                              </div>
+                            ) : null}
+                            {s.inKsa > 0 ? (
+                              <div className="min-w-0">
+                                <div className="mb-1 text-[8px] font-semibold text-blue-700">In KSA</div>
+                                <Link
+                                  href={`/inventory/ksa?search=${encodeURIComponent(it.name)}`}
+                                  onClick={(event) => event.stopPropagation()}
+                                  title={`${s.inKsa} pcs in KSA`}
+                                  className="block rounded-md bg-blue-100 px-1 py-0.5 text-[9px] font-semibold text-blue-800 hover:bg-blue-200"
+                                >
+                                  {s.inKsa}
+                                </Link>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="hidden flex-wrap items-center gap-x-3 gap-y-1.5 hems-wide:flex">
+                          <span className="min-w-10 max-w-full break-words text-[9px] font-bold hems-wide:min-w-12 hems-wide:text-[10px]">
+                            {row.cable_length}
+                          </span>
+                          <span className="inline-flex rounded-lg bg-gray-100 px-2 py-1 text-[7px] font-bold hems-wide:text-[8px]">
+                            Total Qty: {s.total}
+                          </span>
+                          <span className="inline-flex rounded-lg bg-green-100 px-2 py-1 text-[7px] font-bold text-green-900 hems-wide:text-[8px]">
+                            Available Qty: {s.available}
+                          </span>
+                          {s.maintenance > 0 ? (
+                            <span className="inline-flex rounded-lg bg-yellow-100 px-2 py-1 text-[7px] font-bold text-yellow-900 hems-wide:text-[8px]">
+                              Maintenance: {s.maintenance}
+                            </span>
+                          ) : null}
+                          {s.inKsa > 0 ? (
+                            <Link
+                              href={`/inventory/ksa?search=${encodeURIComponent(it.name)}`}
+                              onClick={(event) => event.stopPropagation()}
+                              title={`${s.inKsa} pcs in KSA`}
+                              className="inline-flex rounded-lg bg-blue-100 px-2 py-1 text-[7px] font-bold text-blue-800 transition hover:bg-blue-200 hems-wide:text-[8px]"
+                            >
+                              In KSA: {s.inKsa}
+                            </Link>
+                          ) : null}
+                        </div>
                         <AllocationBadges allocations={rowAllocations} />
                       </div>
 
-                      <div className="text-center">
-                        {s.total}
-                      </div>
-
-                      <div className="text-center">
-                        <span className="inline-flex min-w-5 hems-desktop:min-w-7 justify-center rounded-md hems-desktop:rounded-lg bg-green-100 px-1 hems-desktop:px-1.5 py-0 hems-desktop:py-[2px] font-bold">
-                          {s.available}
-                        </span>
-                      </div>
-
-                      <div className="text-center">
-                        {s.maintenance > 0 ? (
-                          <span className="inline-flex min-w-5 justify-center rounded-md bg-yellow-100 px-1 py-0 font-bold hems-desktop:min-w-7 hems-desktop:rounded-lg hems-desktop:px-1.5 hems-desktop:py-[2px]">
-                            {s.maintenance}
-                          </span>
-                        ) : (
-                          <span className="text-gray-300">—</span>
-                        )}
-                      </div>
-
-                      <div className="text-center">
-                        {s.inKsa > 0 ? (
-                          <Link
-                            href={`/inventory/ksa?search=${encodeURIComponent(it.name)}`}
-                            onClick={(event) => event.stopPropagation()}
-                            title={`${s.inKsa} pcs in KSA`}
-                            className="inline-flex min-w-5 justify-center rounded-md bg-blue-100 px-1 py-0 font-bold text-blue-800 transition hover:bg-blue-200 hems-desktop:min-w-7 hems-desktop:rounded-lg hems-desktop:px-1.5 hems-desktop:py-[2px]"
-                          >
-                            {s.inKsa}
-                          </Link>
-                        ) : (
-                          <span className="text-gray-300">—</span>
-                        )}
-                      </div>
-
-                      <div className="text-center">
+                      <div className="shrink-0">
                         <EquipmentListMatrixQuantityAction
                           target={{
                             id: row.id,
