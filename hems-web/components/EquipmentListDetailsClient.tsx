@@ -1910,7 +1910,8 @@ export default function EquipmentListDetailsClient({
 
     for (const group of sortedGroups) {
       const firstItem = group.items[0];
-      const category = categoryLabel(metadataText(firstItem, "category"));
+      const rawCategory = categoryLabel(metadataText(firstItem, "category"));
+      const category = rawCategory.toLowerCase() === "rigging" ? "Truss & Rigging" : rawCategory;
       const quantity = group.items.reduce(
         (total, item) => total + (item.requested_quantity || 0),
         0,
@@ -1982,8 +1983,9 @@ export default function EquipmentListDetailsClient({
             })
           : [];
       const hasAreaDetail = squareMetres > 0 && !isGenericMatrix;
+      const descriptionDetail = draftDescriptions[draftDescriptionKey(firstItem)] || "";
       const hasDetailRows = Boolean(
-        blockDetail ||
+        descriptionDetail || blockDetail ||
           customDetail ||
           isMatrixChildCollection ||
           rackDetails.length > 0 ||
@@ -2047,7 +2049,7 @@ export default function EquipmentListDetailsClient({
         },
       ]);
 
-      for (const detail of [blockDetail, customDetail].filter(Boolean)) {
+      for (const detail of [descriptionDetail, blockDetail, customDetail].filter(Boolean)) {
         body.push([
           {
             content: detail,
@@ -2057,7 +2059,7 @@ export default function EquipmentListDetailsClient({
               textColor: [80, 80, 80],
               fontStyle: "normal",
               fontSize: 6.5,
-              cellPadding: { top: 1.5, right: 4, bottom: 1.5, left: 6 },
+              cellPadding: { top: 1.0, right: 4, bottom: 1.5, left: hasItemPhoto ? 15 : 3 },
               lineColor: [236, 236, 236],
               lineWidth: { bottom: 0.08 },
             },
@@ -2116,7 +2118,7 @@ export default function EquipmentListDetailsClient({
                 textColor: [45, 45, 45],
                 fontStyle: "normal",
                 fontSize: 7,
-                cellPadding: { top: 1.8, right: 3, bottom: 1.8, left: 6 },
+                cellPadding: { top: 1.0, right: 3, bottom: 1.8, left: hasItemPhoto ? 15 : 3 },
                 lineColor: [235, 235, 235],
                 lineWidth: { bottom: 0.1 },
               },
@@ -3195,7 +3197,7 @@ export default function EquipmentListDetailsClient({
                 <Fragment key={group.key}>
                 {currentCategoryLabel !== previousCategoryLabel ? (
                   <div className="bg-gray-50 px-4 py-2 text-[9px] font-bold uppercase tracking-wide text-gray-600 sm:px-5">
-                    {currentCategoryLabel}
+                    {currentCategoryLabel === "Rigging" ? "Truss & Rigging" : currentCategoryLabel}
                   </div>
                 ) : null}
                 <div
@@ -3901,7 +3903,7 @@ function CustomItemDialog({
               >
                 <option value="lighting">Lighting</option>
                 <option value="video">Video</option>
-                <option value="rigging">Rigging</option>
+                <option value="rigging">Truss &amp; Rigging</option>
                 <option value="audio">Audio</option>
                 <option value="power">Power</option>
                 <option value="other">Other</option>
