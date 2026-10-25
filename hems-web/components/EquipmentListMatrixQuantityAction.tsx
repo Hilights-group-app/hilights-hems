@@ -1,4 +1,5 @@
 "use client";
+import { canAppendDispatchedList } from "@/lib/equipmentLists";
 
 import { Loader2, PackagePlus, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -203,7 +204,7 @@ export default function EquipmentListMatrixQuantityAction({
   const [message, setMessage] = useState("");
 
   const maintenanceList = activeList?.list_type === "maintenance";
-  const available = maintenanceList
+  const available = (canAppendDispatchedList(activeList, canManageEquipmentLists()) ? qty(existingLine?.requested_quantity) : 0) + (maintenanceList
     ? Math.max(0, qty(target.maintenance) - qty(target.activeMaintenance))
     : Math.max(
         0,
@@ -211,7 +212,7 @@ export default function EquipmentListMatrixQuantityAction({
           qty(target.inUse) -
           qty(target.maintenance) -
           qty(target.inKsa),
-      );
+      ));
   const canUseMaintenanceList =
     !maintenanceList ||
     canManageEquipmentLists() ||
@@ -345,7 +346,7 @@ export default function EquipmentListMatrixQuantityAction({
       !list ||
       saving ||
       !(
-        list.status === "draft" ||
+        canAppendDispatchedList(list, canManageEquipmentLists()) || list.status === "draft" ||
         (list.status === "pending" && canManageEquipmentLists())
       )
     ) {
@@ -655,7 +656,7 @@ export default function EquipmentListMatrixQuantityAction({
           >
             <button
               type="button"
-              disabled={saving}
+              disabled={saving || canAppendDispatchedList(activeList, canManageEquipmentLists())}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();

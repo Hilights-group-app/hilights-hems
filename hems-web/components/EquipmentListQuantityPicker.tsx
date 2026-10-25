@@ -1,4 +1,6 @@
 "use client";
+import { canAppendDispatchedList } from "@/lib/equipmentLists";
+import { canManageEquipmentLists } from "@/lib/authStore";
 import EquipmentListPickerOverlay from "@/components/EquipmentListPickerOverlay";
 
 import { Loader2, PackagePlus, X } from "lucide-react";
@@ -102,7 +104,7 @@ export default function EquipmentListQuantityPicker({
   const [error, setError] = useState("");
 
   const maintenanceList = list.list_type === "maintenance";
-  const availableQuantity = maintenanceList
+  const availableQuantity = (canAppendDispatchedList(list, canManageEquipmentLists()) ? clampQty(existingLine?.requested_quantity) : 0) + (maintenanceList
     ? Math.max(
         0,
         clampQty(row.maintenance_qty) - clampQty(activeMaintenanceQuantity),
@@ -112,7 +114,7 @@ export default function EquipmentListQuantityPicker({
         clampQty(row.qty) -
           clampQty(row.maintenance_qty) -
           clampQty(activeAllocatedQuantity),
-      );
+      ));
   const cabinetArea = cabinetAreaFromSize(row.size);
   const requestedSquareMetres = Math.max(0, Number(squareMetres) || 0);
   const quantity =
@@ -193,7 +195,7 @@ export default function EquipmentListQuantityPicker({
     if (
       saving ||
       !(
-        list.status === "draft" ||
+        canAppendDispatchedList(list, canManageEquipmentLists()) || list.status === "draft" ||
         (allowPendingReview && list.status === "pending")
       )
     ) {
@@ -447,7 +449,7 @@ export default function EquipmentListQuantityPicker({
               quantity > availableQuantity ||
               cabinetArea <= 0 ||
               !(
-                list.status === "draft" ||
+                canAppendDispatchedList(list, canManageEquipmentLists()) || list.status === "draft" ||
                 (allowPendingReview && list.status === "pending")
               )
             }

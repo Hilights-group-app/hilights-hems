@@ -71,6 +71,11 @@ export type EquipmentListItem = {
 };
 
 export const ACTIVE_EQUIPMENT_LIST_KEY = "hems:active-equipment-list-id";
+export function canAppendDispatchedList(list: EquipmentList | null, manager: boolean) {
+  return Boolean(manager && list && ["local_event", "dry_hire", "transfer_out"].includes(list.list_type)
+    && (["active", "partially_returned"].includes(list.status)
+      || (list.list_type === "transfer_out" && list.status === "closed")));
+}
 export const ACTIVE_EQUIPMENT_LIST_EVENT =
   "hems:active-equipment-list-change";
 export const EQUIPMENT_LISTS_EVENT = "hems:equipment-lists-change";
@@ -106,7 +111,7 @@ export function canEditEquipmentDraft(
 // Selecting/editing a Transfer In is allowed; ordinary Dubai-stock pickers
 // still use canAddToEquipmentList and direct incoming selections to KSA.
 export function canEditWorkingEquipmentList(list: EquipmentList | null, userId: string | null, manager: boolean) {
-  return Boolean(list && userId && ((list.status === "pending" && manager)
+  return Boolean(list && userId && (canAppendDispatchedList(list, manager) || (list.status === "pending" && manager)
     || canEditEquipmentDraft(list, userId, manager)));
 }
 
@@ -115,7 +120,7 @@ export function canAddToEquipmentList(
   userId: string | null,
   manager: boolean,
 ) {
-  return Boolean(list && userId && list.list_type !== "transfer_in" && ((list.status === "pending" && manager)
+  return Boolean(list && userId && list.list_type !== "transfer_in" && (canAppendDispatchedList(list, manager) || (list.status === "pending" && manager)
     || canEditEquipmentDraft(list, userId, manager)));
 }
 

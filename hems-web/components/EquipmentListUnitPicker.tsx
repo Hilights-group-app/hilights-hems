@@ -1,5 +1,7 @@
 "use client";
 import EquipmentListPickerOverlay from "@/components/EquipmentListPickerOverlay";
+import { canAppendDispatchedList } from "@/lib/equipmentLists";
+import { canManageEquipmentLists } from "@/lib/authStore";
 
 import { Check, Loader2, PackagePlus, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -170,6 +172,7 @@ export default function EquipmentListUnitPicker({
     selectableIds.length > 0 &&
     selectableIds.every((unitId) => selectedIds.has(unitId));
   const canAddToList =
+    canAppendDispatchedList(list, canManageEquipmentLists()) ||
     list.status === "draft" ||
     (allowPendingReview && list.status === "pending");
 

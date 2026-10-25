@@ -1,6 +1,7 @@
 "use client";
 
 import { useDraftDescriptions, draftDescriptionKey } from "@/lib/useDraftDescriptions";
+import { canAppendDispatchedList } from "@/lib/equipmentLists";
 
 import { createBrowserId } from "@/lib/browserId";
 import { draftGroupRank, moveDraftGroup } from "@/lib/draftItemOrder";
@@ -2869,6 +2870,14 @@ export default function EquipmentListDetailsClient({
 
       {list.status === "cancelled" ? <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-xs text-red-800">This list was cancelled before dispatch. Its equipment and notes remain saved for reference.</div> : null}
 
+      {canAppendDispatchedList(list, isManager) ? (
+        <div className="flex flex-wrap items-center gap-3"><button type="button" className="inline-flex items-center gap-2 self-start rounded-xl bg-black px-4 py-2 text-xs font-bold text-white"
+          onClick={() => {
+            localStorage.setItem(ACTIVE_EQUIPMENT_LIST_KEY, list.id);
+            window.dispatchEvent(new CustomEvent(ACTIVE_EQUIPMENT_LIST_EVENT, { detail: { listId: list.id } }));
+            router.push("/inventory");
+          }}><Plus size={14} /> Add items</button><span className="text-[10px] text-gray-500">New additions are dispatched immediately.</span></div>
+      ) : null}
       {list.status === "pending" ? (
         <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900">
           <Clock3 size={17} className="mt-0.5 shrink-0" />
@@ -3440,6 +3449,15 @@ export default function EquipmentListDetailsClient({
                           </div>
                           ) : null}
 
+                          {!isMatrixChildCollection && !isSerializedGroup && canReceiveReturns
+                            && firstItem.inventory_record_type !== "item" && firstItem.metadata?.custom_item !== true
+                            && firstItem.approved_quantity > firstItem.returned_ok_quantity + firstItem.returned_maintenance_quantity ? (
+                            <button type="button" onClick={() => openQuantityReturn(firstItem)}
+                              disabled={Boolean(returningItemId)} title="Received" aria-label={`Receive ${group.displayName}`}
+                              className="inline-flex h-7 w-7 shrink-0 items-center justify-center gap-1 rounded-lg bg-black text-white disabled:opacity-50 sm:w-auto sm:px-2 sm:text-[8px] sm:font-bold">
+                              <RotateCcw size={12} /><span className="hidden sm:inline">Received</span>
+                            </button>
+                          ) : null}
                           {isSerializedGroup ? (
                             <button
                               type="button"
@@ -3616,7 +3634,7 @@ export default function EquipmentListDetailsClient({
                                       className="inline-flex items-center gap-1 rounded-lg bg-black px-2 py-1.5 text-[8px] font-bold text-white hover:bg-gray-800 disabled:opacity-50"
                                     >
                                       <RotateCcw size={9} />
-                                      Received
+                                      <span className="sr-only sm:not-sr-only">Received</span>
                                     </button>
                                   ) : !canChangeItems && (returnedOk > 0 || returnedMaintenance > 0) ? (
                                     <span
@@ -3686,10 +3704,11 @@ export default function EquipmentListDetailsClient({
                           }
 
                           if (canReceiveReturns && item.inventory_record_type !== "item" && item.metadata?.custom_item !== true && remaining > 0) {
+                            if (isQuantityRecord) return null;
                             return (
                               <div
                                 key={item.id}
-                                className="flex max-w-full flex-wrap items-center gap-1 rounded-lg border border-gray-200 bg-gray-50 p-1"
+                                className="flex max-w-full flex-wrap items-center gap-1"
                               >
                                 <span className="max-w-[180px] truncate px-1.5 text-[9px] font-semibold text-gray-700">
                                   {unitLabel(item)}
@@ -3708,7 +3727,7 @@ export default function EquipmentListDetailsClient({
                                     className="inline-flex items-center gap-1 rounded-lg bg-black px-2 py-1.5 text-[8px] font-bold text-white hover:bg-gray-800 disabled:opacity-50"
                                   >
                                     <RotateCcw size={9} />
-                                    Received
+                                    <span className="sr-only sm:not-sr-only">Received</span>
                                   </button>
                                 ) : (
                                   <button
@@ -3722,7 +3741,7 @@ export default function EquipmentListDetailsClient({
                                     ) : (
                                       <RotateCcw size={9} />
                                     )}
-                                    Received
+                                    <span className="sr-only sm:not-sr-only">Received</span>
                                   </button>
                                 )}
                               </div>

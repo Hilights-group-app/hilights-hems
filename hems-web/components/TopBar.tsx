@@ -274,7 +274,7 @@ export default function TopBar() {
         return;
       }
       const { data } = await readWorkingDraft(supabase, listId, force);
-      const usable = data?.status === "draft" &&
+      const usable = Boolean(data) &&
         canAddToEquipmentList(data, getUserId(), canManageEquipmentLists());
       if (!cancelled) setActiveSearchDraft(usable ? data : null);
     }

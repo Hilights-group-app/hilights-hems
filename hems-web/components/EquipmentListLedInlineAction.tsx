@@ -1,4 +1,6 @@
 "use client";
+import { canAppendDispatchedList } from "@/lib/equipmentLists";
+import { canManageEquipmentLists } from "@/lib/authStore";
 
 import { Loader2, Minus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -74,7 +76,7 @@ export default function EquipmentListLedInlineAction({
   const [saving, setSaving] = useState(false);
 
   const area = cabinetAreaFromSize(row.size);
-  const available =
+  const available = (canAppendDispatchedList(list, canManageEquipmentLists()) ? clampQty(line?.requested_quantity) : 0) + (
     list?.list_type === "maintenance"
       ? Math.max(
           0,
@@ -85,7 +87,7 @@ export default function EquipmentListLedInlineAction({
           clampQty(row.qty) -
             clampQty(row.maintenance_qty) -
             clampQty(activeAllocatedQuantity),
-        );
+        ));
   const quantity = line ? clampQty(line.requested_quantity) : 0;
 
   useEffect(() => {
@@ -226,7 +228,7 @@ export default function EquipmentListLedInlineAction({
       >
         <button
           type="button"
-          disabled={saving}
+          disabled={saving || canAppendDispatchedList(list, canManageEquipmentLists())}
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
