@@ -62,6 +62,8 @@ import {
 import EquipmentListUnitPicker from "@/components/EquipmentListUnitPicker";
 import EquipmentDraftShareButton from "@/components/EquipmentDraftShareButton";
 import CustomDraftItemInline from "@/components/CustomDraftItemInline";
+import ActiveListQuantity from "@/components/ActiveListQuantity";
+import { showActiveReturnQuantities } from "@/lib/listReturnQuantities";
 
 type DetailedEquipmentList = EquipmentList & {
   submitted_by?: string | null;
@@ -2638,6 +2640,7 @@ export default function EquipmentListDetailsClient({
 
   const dates = scheduleRows(list);
   const isLocalEventList = list.list_type === "local_event";
+  const showReturnQuantities = showActiveReturnQuantities(list);
   const localEventTitle = list.event_name?.trim() || "Event";
   const localEventMeta = [list.reference, list.venue?.trim()]
     .filter(Boolean)
@@ -3433,6 +3436,8 @@ export default function EquipmentListDetailsClient({
                               >
                                 {formatUnitQuantity(quantity)}
                               </button>
+                            ) : showReturnQuantities && !isCustomItem && firstItem.metadata?.custom_item !== true ? (
+                              <ActiveListQuantity items={group.items} squareMetres={hasSquareMetreQuantity} />
                             ) : (
                               <span className="whitespace-nowrap text-[11px] font-bold tabular-nums text-gray-900 sm:text-[12px]">
                                 {quantityText}
@@ -3611,6 +3616,8 @@ export default function EquipmentListDetailsClient({
                                           : "Units"}
                                       </span>
                                     </div>
+                                  ) : showReturnQuantities && item.metadata?.custom_item !== true ? (
+                                    <ActiveListQuantity items={[item]} compact />
                                   ) : (
                                     <span className="whitespace-nowrap text-[9px] font-bold text-gray-900">
                                       {formatUnitQuantity(
@@ -3636,7 +3643,7 @@ export default function EquipmentListDetailsClient({
                                       <RotateCcw size={9} />
                                       <span className="sr-only sm:not-sr-only">Received</span>
                                     </button>
-                                  ) : !canChangeItems && (returnedOk > 0 || returnedMaintenance > 0) ? (
+                                  ) : !canChangeItems && !showReturnQuantities && (returnedOk > 0 || returnedMaintenance > 0) ? (
                                     <span
                                       className={`rounded-md px-2 py-1 text-[8px] font-medium ${
                                         returnedMaintenance > 0

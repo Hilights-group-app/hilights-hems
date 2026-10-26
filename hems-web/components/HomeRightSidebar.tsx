@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { AlertTriangle, Clock3, Wrench } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { createRefreshQueue, MAINTENANCE_ALERTS_EVENT, NOTIFICATION_FEED_EVENT } from "@/lib/workspaceRefresh";
 import InventoryImportClient from "@/components/InventoryImportClient";
 import {
   CATALOG_CACHE_KEY,
@@ -180,229 +181,178 @@ export default function HomeRightSidebar() {
 
   useEffect(() => {
     // Inventory subcategory pages render their own tools in this sidebar.
-    // Avoid loading home alerts, certificates and activity behind those tools.
     if (showInventoryTools) return;
-
     let cancelled = false;
-    let readVersion=0;
-    let refreshTimer:ReturnType<typeof setTimeout>|undefined;
-
-    const userId=getUserId();
-    if(!userId){setAlerts([]);setActivity([]);return;}
-    const alertsCacheKey=`${ALERTS_CACHE_KEY}:${userId}:${getUserRole()}:${getUserDepartment()}`;
-    const activityCacheKey=`${ACTIVITY_CACHE_KEY}:${userId}`;
+    let lastActivityRead = 0, lastMaintenanceRead = 0, lastCertificateRead = 0;
+    const userId = getUserId();
+    if (!userId) { setAlerts([]); setActivity([]); return; }
+    const isCurrent = () => !cancelled && userId === getUserId();
+    const alertsCacheKey = `${ALERTS_CACHE_KEY}:${userId}:${getUserRole()}:${getUserDepartment()}`;
+    const activityCacheKey = `${ACTIVITY_CACHE_KEY}:${userId}`;
     const cachedAlerts = readCache<Alert[]>(alertsCacheKey);
     const cachedActivity = readCache<Activity[]>(activityCacheKey);
-
+    let maintenanceAlerts = (cachedAlerts ?? []).filter(alert => alert.kind === "maintenance");
+    let certificateAlerts = (cachedAlerts ?? []).filter(alert => alert.kind === "certificate");
     if (cachedAlerts !== null) setAlerts(cachedAlerts);
-    if (cachedActivity !== null) setActivity(cachedActivity.filter(entry=>entry.actor_id!==userId && isImportantActivity(entry)));
+    if (cachedActivity !== null) setActivity(cachedActivity.filter(entry => entry.actor_id !== userId && isImportantActivity(entry)));
 
-    async function load() {
-      const version=++readVersion;
-      const role = getUserRole() ?? "";
-      const department = getUserDepartment() ?? "";
-
-      let maintenanceQuery: any = null;
-      if (role === "admin" || role === "warehouse_manager" || role === "head") {
-        maintenanceQuery = supabase
-          .from("maintenance_requests")
-          .select(
-            "id,display_name,serial_number,quantity,department,source_reference,source_type,source_summary,report_href,status,created_at",
-          )
-          .in("status", ["pending_report", "sent"])
-          .order("created_at", { ascending: false })
-          .limit(20);
-
-        if (role === "head") {
-          maintenanceQuery = maintenanceQuery.eq("department", department);
-        }
-      }
-
-      const [notificationResult, unitResult, maintenanceResult] =
-        await Promise.all([
-          supabase
-            .from("notifications")
-            .select("id,title,message,link,created_at,actor_name,actor_id")
-            .or(IMPORTANT_ACTIVITY_FILTER)
-            .order("created_at", { ascending: false })
-            .limit(8),
-          supabase
-            .from("units")
-            .select("id,item_id,unit_no,serial,expiry_date")
-            .not("expiry_date", "is", null)
-            .order("expiry_date", { ascending: true })
-            .limit(100),
-          maintenanceQuery ?? Promise.resolve({ data: [], error: null }),
-        ]);
-
-      if (cancelled || version!==readVersion || userId!==getUserId()) return;
-
-      if (!notificationResult.error) {
-        const nextActivity = ((notificationResult.data ?? []) as Activity[]).filter(entry=>entry.actor_id!==userId && isImportantActivity(entry));
-        setActivity(nextActivity);
-        writeCache(activityCacheKey, nextActivity);
-      }
-
-      const maintenanceAlerts = maintenanceResult.error
-        ? []
-        : ((maintenanceResult.data ?? []) as MaintenanceRequest[]).map(
-            (request): Alert => {
-              const reportHref = request.report_href || "/inventory";
-              const separator = reportHref.includes("?") ? "&" : "?";
-              const serial = request.serial_number?.trim()
-                ? ` · ${request.serial_number.trim()}`
-                : request.quantity > 1
-                  ? ` · ${request.quantity} pcs`
-                  : "";
-
-              return {
-                id: `maintenance:${request.id}`,
-                title: `${request.display_name}${serial}`,
-                description:
-                  request.source_type === "maintenance"
-                    ? request.status === "received"
-                      ? `Received from repair · Awaiting Test · ${request.source_reference}`
-                      : `${request.source_summary || "At external repair"} · ${request.source_reference}`
-                    : `Returned to Maintenance from ${request.source_reference}${
-                        request.source_summary ? ` · ${request.source_summary}` : ""
-                      }`,
-                href: `${reportHref}${separator}maintenanceRequest=${encodeURIComponent(
-                  request.id,
-                )}`,
-                expired:
-                  request.status === "pending_report" ||
-                  request.status === "received",
-                time: new Date(request.created_at).getTime(),
-                kind: "maintenance",
-              };
-            },
-          );
-
-      if (unitResult.error) {
-        setAlerts(maintenanceAlerts);
-        writeCache(alertsCacheKey, maintenanceAlerts);
-        return;
-      }
-
-      const units = (unitResult.data ?? []) as any[];
-      const itemIds = [...new Set(units.map((unit) => unit.item_id))].filter(
-        Boolean,
-      );
-      let certificateAlerts: Alert[] = [];
-
-      if (itemIds.length > 0) {
-        const itemResult = await supabase
-          .from("items")
-          .select("id,name,subcategory_id")
-          .in("id", itemIds);
-        if (cancelled || version!==readVersion || userId!==getUserId()) return;
-
-        if (!itemResult.error) {
-          const items = (itemResult.data ?? []) as any[];
-          const subIds = [
-            ...new Set(items.map((item) => item.subcategory_id)),
-          ].filter(Boolean);
-          const subResult = subIds.length
-            ? await supabase
-                .from("subcategories")
-                .select("id,slug,category_id")
-                .in("id", subIds)
-            : { data: [], error: null };
-
-          if (cancelled || version!==readVersion || userId!==getUserId()) return;
-
-          if (!subResult.error) {
-            const subs = (subResult.data ?? []) as any[];
-            const categoryIds = [
-              ...new Set(subs.map((sub) => sub.category_id)),
-            ].filter(Boolean);
-            const categoryResult = categoryIds.length
-              ? await supabase
-                  .from("categories")
-                  .select("id,slug")
-                  .in("id", categoryIds)
-              : { data: [], error: null };
-
-            if (cancelled || version!==readVersion || userId!==getUserId()) return;
-
-            if (!categoryResult.error) {
-              const itemMap = new Map(items.map((item) => [item.id, item]));
-              const subMap = new Map(subs.map((sub) => [sub.id, sub]));
-              const categoryMap = new Map(
-                (categoryResult.data ?? []).map((category: any) => [
-                  category.id,
-                  category,
-                ]),
-              );
-              const alertLimit = Date.now() + 30 * 86_400_000;
-
-              certificateAlerts = units
-                .map((unit): Alert | null => {
-                  const time = new Date(unit.expiry_date).getTime();
-                  if (!Number.isFinite(time) || time > alertLimit) return null;
-
-                  const item: any = itemMap.get(unit.item_id);
-                  const sub: any = item
-                    ? subMap.get(item.subcategory_id)
-                    : null;
-                  const category: any = sub
-                    ? categoryMap.get(sub.category_id)
-                    : null;
-                  if (!item || !sub?.slug || !category?.slug) return null;
-
-                  const unitName =
-                    unit.unit_no !== null
-                      ? `Unit #${unit.unit_no}`
-                      : unit.serial
-                        ? `Serial ${unit.serial}`
-                        : "Unit";
-
-                  return {
-                    id: `certificate:${unit.id}`,
-                    title: `${item.name} — ${unitName}`,
-                    description: expiryText(time),
-                    href: `/inventory/${encodeURIComponent(
-                      category.slug,
-                    )}/${encodeURIComponent(sub.slug)}/${encodeURIComponent(
-                      item.id,
-                    )}`,
-                    expired: time < Date.now(),
-                    time,
-                    kind: "certificate",
-                  };
-                })
-                .filter((item): item is Alert => item !== null)
-                .sort((a, b) => a.time - b.time)
-                .slice(0, 5);
-            }
-          }
-        }
-      }
-
+    function publishAlerts() {
+      if (!isCurrent()) return;
       const next = [...maintenanceAlerts, ...certificateAlerts].slice(0, 8);
       setAlerts(next);
       writeCache(alertsCacheKey, next);
     }
 
-    void load();
-
-    function refreshInBackground() {
-      clearTimeout(refreshTimer);
-      refreshTimer=setTimeout(()=>void load(),250);
+    async function loadActivity() {
+      if (!isCurrent()) return;
+      const result = await supabase.from("notifications")
+        .select("id,title,message,link,created_at,actor_name,actor_id")
+        .or(IMPORTANT_ACTIVITY_FILTER).order("created_at", { ascending: false }).limit(8);
+      if (!isCurrent() || result.error) return;
+      lastActivityRead = Date.now();
+      const next = ((result.data ?? []) as Activity[])
+        .filter(entry => entry.actor_id !== userId && isImportantActivity(entry));
+      // Publish as soon as this read finishes, not after certificates/repairs.
+      setActivity(next);
+      writeCache(activityCacheKey, next);
     }
 
-    window.addEventListener("hems:notification-inbox-change", refreshInBackground);
-    window.addEventListener(
-      "hems:maintenance-requests-change",
-      refreshInBackground,
-    );
+    async function loadMaintenance() {
+      if (!isCurrent()) return;
+      const role = getUserRole() ?? "";
+      if (!["admin", "warehouse_manager", "head"].includes(role)) {
+        maintenanceAlerts = [];
+        lastMaintenanceRead = Date.now();
+        publishAlerts();
+        return;
+      }
+      let query = supabase.from("maintenance_requests")
+        .select("id,display_name,serial_number,quantity,department,source_reference,source_type,source_summary,report_href,status,created_at")
+        .in("status", ["pending_report", "sent"])
+        .order("created_at", { ascending: false }).limit(20);
+      if (role === "head") query = query.eq("department", getUserDepartment() ?? "");
+      const result = await query;
+      if (!isCurrent() || result.error) return;
+      lastMaintenanceRead = Date.now();
+      maintenanceAlerts = ((result.data ?? []) as MaintenanceRequest[]).map((request): Alert => {
+        const reportHref = request.report_href || "/inventory";
+        const separator = reportHref.includes("?") ? "&" : "?";
+        const serial = request.serial_number?.trim()
+          ? ` · ${request.serial_number.trim()}`
+          : request.quantity > 1 ? ` · ${request.quantity} pcs` : "";
+        return {
+          id: `maintenance:${request.id}`,
+          title: `${request.display_name}${serial}`,
+          description: request.source_type === "maintenance"
+            ? request.status === "received"
+              ? `Received from repair · Awaiting Test · ${request.source_reference}`
+              : `${request.source_summary || "At external repair"} · ${request.source_reference}`
+            : `Returned to Maintenance from ${request.source_reference}${request.source_summary ? ` · ${request.source_summary}` : ""}`,
+          href: `${reportHref}${separator}maintenanceRequest=${encodeURIComponent(request.id)}`,
+          expired: request.status === "pending_report" || request.status === "received",
+          time: new Date(request.created_at).getTime(),
+          kind: "maintenance",
+        };
+      });
+      publishAlerts();
+    }
+
+    async function loadCertificates() {
+      if (!isCurrent()) return;
+      const unitResult = await supabase.from("units")
+        .select("id,item_id,unit_no,serial,expiry_date")
+        .not("expiry_date", "is", null).order("expiry_date", { ascending: true }).limit(100);
+      if (!isCurrent() || unitResult.error) return;
+      const units = (unitResult.data ?? []) as any[];
+      const itemIds = [...new Set(units.map(unit => unit.item_id))].filter(Boolean);
+      let nextCertificates: Alert[] = [];
+      if (itemIds.length > 0) {
+        const itemResult = await supabase.from("items").select("id,name,subcategory_id").in("id", itemIds);
+        if (!isCurrent() || itemResult.error) return;
+        const items = (itemResult.data ?? []) as any[];
+        const subIds = [...new Set(items.map(item => item.subcategory_id))].filter(Boolean);
+        const subResult = subIds.length
+          ? await supabase.from("subcategories").select("id,slug,category_id").in("id", subIds)
+          : { data: [], error: null };
+        if (!isCurrent() || subResult.error) return;
+        const subs = (subResult.data ?? []) as any[];
+        const categoryIds = [...new Set(subs.map(sub => sub.category_id))].filter(Boolean);
+        const categoryResult = categoryIds.length
+          ? await supabase.from("categories").select("id,slug").in("id", categoryIds)
+          : { data: [], error: null };
+        if (!isCurrent() || categoryResult.error) return;
+        const itemMap = new Map(items.map(item => [item.id, item]));
+        const subMap = new Map(subs.map(sub => [sub.id, sub]));
+        const categoryMap = new Map((categoryResult.data ?? []).map((category: any) => [category.id, category]));
+        const alertLimit = Date.now() + 30 * 86_400_000;
+        nextCertificates = units.map((unit): Alert | null => {
+          const time = new Date(unit.expiry_date).getTime();
+          if (!Number.isFinite(time) || time > alertLimit) return null;
+          const item: any = itemMap.get(unit.item_id);
+          const sub: any = item ? subMap.get(item.subcategory_id) : null;
+          const category: any = sub ? categoryMap.get(sub.category_id) : null;
+          if (!item || !sub?.slug || !category?.slug) return null;
+          const unitName = unit.unit_no !== null
+            ? `Unit #${unit.unit_no}`
+            : unit.serial ? `Serial ${unit.serial}` : "Unit";
+          return {
+            id: `certificate:${unit.id}`,
+            title: `${item.name} — ${unitName}`,
+            description: expiryText(time),
+            href: `/inventory/${encodeURIComponent(category.slug)}/${encodeURIComponent(sub.slug)}/${encodeURIComponent(item.id)}`,
+            expired: time < Date.now(),
+            time,
+            kind: "certificate",
+          };
+        }).filter((alert): alert is Alert => alert !== null)
+          .sort((a, b) => a.time - b.time).slice(0, 5);
+      }
+      certificateAlerts = nextCertificates;
+      lastCertificateRead = Date.now();
+      publishAlerts();
+    }
+
+    const activityQueue = createRefreshQueue(loadActivity, {
+      onError: error => { if (isCurrent()) console.error("recent activity load error", error); },
+    });
+    const maintenanceQueue = createRefreshQueue(loadMaintenance, {
+      onError: error => { if (isCurrent()) console.error("maintenance alerts load error", error); },
+    });
+    const certificateQueue = createRefreshQueue(loadCertificates, {
+      onError: error => { if (isCurrent()) console.error("certificate alerts load error", error); },
+    });
+
+    function refreshActivity(event: Event) {
+      activityQueue.schedule();
+      const certificateChanged = (event as CustomEvent<{certificateChanged?: boolean}>).detail?.certificateChanged;
+      // A normal activity insert does not require walking units/items/catalog.
+      if (certificateChanged || Date.now() - lastCertificateRead >= 60000) {
+        if (certificateChanged || !certificateQueue.isPending()) certificateQueue.schedule();
+      }
+    }
+    function refreshMaintenance() { maintenanceQueue.schedule(); }
+    function wake() {
+      if (document.visibilityState !== "visible") return;
+      activityQueue.resume(); maintenanceQueue.resume(); certificateQueue.resume();
+      if (!activityQueue.isPending() && Date.now() - lastActivityRead >= 30000) activityQueue.request();
+      if (!maintenanceQueue.isPending() && Date.now() - lastMaintenanceRead >= 30000) maintenanceQueue.request();
+      if (!certificateQueue.isPending() && Date.now() - lastCertificateRead >= 60000) certificateQueue.request();
+    }
+
+    activityQueue.request(); maintenanceQueue.request(); certificateQueue.request();
+    window.addEventListener(NOTIFICATION_FEED_EVENT, refreshActivity);
+    window.addEventListener(MAINTENANCE_ALERTS_EVENT, refreshMaintenance);
+    window.addEventListener("hems:maintenance-requests-change", refreshMaintenance);
+    window.addEventListener("focus", wake);
+    document.addEventListener("visibilitychange", wake);
     return () => {
-      cancelled = true;++readVersion;clearTimeout(refreshTimer);
-      window.removeEventListener("hems:notification-inbox-change", refreshInBackground);
-      window.removeEventListener(
-        "hems:maintenance-requests-change",
-        refreshInBackground,
-      );
+      cancelled = true;
+      activityQueue.dispose(); maintenanceQueue.dispose(); certificateQueue.dispose();
+      window.removeEventListener(NOTIFICATION_FEED_EVENT, refreshActivity);
+      window.removeEventListener(MAINTENANCE_ALERTS_EVENT, refreshMaintenance);
+      window.removeEventListener("hems:maintenance-requests-change", refreshMaintenance);
+      window.removeEventListener("focus", wake);
+      document.removeEventListener("visibilitychange", wake);
     };
   }, [showInventoryTools, supabase]);
 

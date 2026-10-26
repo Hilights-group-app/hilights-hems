@@ -29,6 +29,7 @@ import {
   getUserName,
 } from "@/lib/authStore";
 import { createClient } from "@/lib/supabase/client";
+import { createRefreshQueue } from "@/lib/workspaceRefresh";
 import {
   ACTIVE_EQUIPMENT_LIST_EVENT,
   ACTIVE_EQUIPMENT_LIST_KEY,
@@ -273,6 +274,8 @@ export default function EquipmentListsSidebar() {
     let listLoadVersion = 0;
     let lastLoadedAt = 0;
     let locationsLoaded = false;
+    const owner = getUserId();
+    const isCurrent = () => !cancelled && owner === getUserId();
 
     setMounted(true);
     setCanCreateLists(canCreateEquipmentLists());
@@ -287,6 +290,7 @@ export default function EquipmentListsSidebar() {
     }
 
     async function load(showLoading = true) {
+      if (!isCurrent()) return;
       const version = ++listLoadVersion;
       if (showLoading) setLoading(true);
       setError("");
@@ -309,14 +313,9 @@ export default function EquipmentListsSidebar() {
         return { error, data: Array.from(combined.values()).sort((a, b) => b.created_at.localeCompare(a.created_at)) };
       };
 
-      let [listResult, locationResult] = await Promise.all([
-        queryLists(),
-        locationsLoaded ? Promise.resolve({ data: null, error: null }) : supabase
-          .from("inventory_locations")
-          .select("id,code,name")
-          .eq("enabled", true)
-          .order("name", { ascending: true }),
-      ]);
+      // Locations belong to the create form. A slow location read must not
+      // hold the list sidebar open or cause another copy on each list event.
+      let listResult = await queryLists();
 
       if (
         listResult.error &&
@@ -329,7 +328,7 @@ export default function EquipmentListsSidebar() {
         listResult = await queryLists();
       }
 
-      if (cancelled || version !== listLoadVersion) return;
+      if (!isCurrent() || version !== listLoadVersion) return;
 
       if (listResult.error) {
         console.error("equipment lists load error", listResult.error);
@@ -344,29 +343,47 @@ export default function EquipmentListsSidebar() {
         lastLoadedAt = Date.now();
       }
 
-      if (!locationResult.error && locationResult.data) {
-        setLocations((locationResult.data ?? []) as InventoryLocation[]);
-        locationsLoaded = true;
-      }
-
       setLoading(false);
     }
 
+    const listQueue = createRefreshQueue(() => load(false), {
+      onError: (loadError) => {
+        if (!isCurrent()) return;
+        console.error("equipment lists load error", loadError);
+        setError("Equipment lists could not load. Please refresh and try again.");
+        setLoading(false);
+      },
+    });
+    const locationQueue = createRefreshQueue(async () => {
+      if (!isCurrent() || locationsLoaded) return;
+      const result = await supabase.from("inventory_locations")
+        .select("id,code,name").eq("enabled", true).order("name", { ascending: true });
+      if (!isCurrent() || result.error) return;
+      setLocations((result.data ?? []) as InventoryLocation[]);
+      locationsLoaded = true;
+    });
+
     function handleListsChange() {
-      void load(false);
+      listQueue.schedule();
     }
 
-    let timer: ReturnType<typeof setTimeout> | undefined;
     function scheduleReload() {
-      clearTimeout(timer);
-      timer = setTimeout(() => void load(false), 120);
+      listQueue.schedule();
     }
     function focus() {
-      if (document.visibilityState === "visible" && Date.now() - lastLoadedAt > 30000) scheduleReload();
+      if (document.visibilityState !== "visible") return;
+      listQueue.resume(); locationQueue.resume();
+      if (!listQueue.isPending() && Date.now() - lastLoadedAt > 30000) listQueue.request();
+      if (!locationsLoaded && !locationQueue.isPending()) locationQueue.request();
     }
+    let subscribedBefore = false;
     const channel = supabase.channel(`draft-sidebar:${createBrowserId()}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "equipment_lists" }, scheduleReload)
-      .subscribe();
+      .subscribe((status: string) => {
+        if (status !== "SUBSCRIBED" || !isCurrent()) return;
+        if (subscribedBefore) scheduleReload();
+        subscribedBefore = true;
+      });
     function handleActiveListChange(event: Event) {
       const detail = (event as CustomEvent<{listId?:string|null; list?:EquipmentList}>).detail;
       if (detail?.list && detail.list.created_by === getUserId()) {
@@ -381,7 +398,8 @@ export default function EquipmentListsSidebar() {
     function handleSelectionStorage(event: StorageEvent) {
       if (event.key === ACTIVE_EQUIPMENT_LIST_KEY) setActiveListId(event.newValue);
     }
-    void load(true);
+    listQueue.request();
+    locationQueue.request();
     window.addEventListener(ACTIVE_EQUIPMENT_LIST_EVENT, handleActiveListChange);
     window.addEventListener("storage", handleSelectionStorage);
     window.addEventListener(EQUIPMENT_LISTS_EVENT, handleListsChange);
@@ -390,7 +408,7 @@ export default function EquipmentListsSidebar() {
 
     return () => {
       cancelled = true;
-      clearTimeout(timer);
+      listQueue.dispose(); locationQueue.dispose();
       window.removeEventListener(ACTIVE_EQUIPMENT_LIST_EVENT, handleActiveListChange);
       window.removeEventListener("storage", handleSelectionStorage);
       window.removeEventListener(EQUIPMENT_LISTS_EVENT, handleListsChange);
@@ -479,9 +497,12 @@ export default function EquipmentListsSidebar() {
 
   useEffect(() => {
     let cancelled = false;
+    const owner = getUserId();
+    let lastItemsRead = 0;
 
     let readVersion = 0;
     async function loadListItems(showLoading = false) {
+      if (cancelled || owner !== getUserId()) return;
       const version = ++readVersion;
       if (!activeListId) {
         setActiveListItems([]);
@@ -498,16 +519,17 @@ export default function EquipmentListsSidebar() {
           .select(LIST_ITEM_SELECT)
           .eq("list_id", activeListId)
           .order("created_at", { ascending: true });
-        if (cancelled || version !== readVersion) return;
+        if (cancelled || owner !== getUserId() || version !== readVersion) return;
         if (itemsError) {
           console.error("equipment list items load error", itemsError);
         } else {
           setActiveListItems((data ?? []) as EquipmentListItem[]);
+          lastItemsRead = Date.now();
         }
       } catch (itemsError) {
-        if (!cancelled && version === readVersion) console.error("equipment list items refresh error", itemsError);
+        if (!cancelled && owner === getUserId() && version === readVersion) console.error("equipment list items refresh error", itemsError);
       } finally {
-        if (!cancelled && version === readVersion) setLoadingListItems(false);
+        if (!cancelled && owner === getUserId() && version === readVersion) setLoadingListItems(false);
       }
     }
 
@@ -520,23 +542,38 @@ export default function EquipmentListsSidebar() {
       }
     }
 
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    const itemsQueue = createRefreshQueue(() => loadListItems());
     function scheduleItemsRefresh() {
-      clearTimeout(timer);
-      timer = setTimeout(() => void loadListItems(), 120);
+      itemsQueue.schedule();
     }
+    function wakeItems() {
+      if (document.visibilityState !== "visible") return;
+      itemsQueue.resume();
+      if (!itemsQueue.isPending() && Date.now() - lastItemsRead >= 30000) itemsQueue.request();
+    }
+    let subscribedBefore = false;
     const channel = activeListId ? supabase.channel(`draft-sidebar-items:${activeListId}:${createBrowserId()}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "equipment_list_items", filter: `list_id=eq.${activeListId}` }, scheduleItemsRefresh)
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "equipment_list_items", filter: `list_id=eq.${activeListId}` }, scheduleItemsRefresh)
       .on("postgres_changes", { event: "DELETE", schema: "public", table: "equipment_list_items" }, scheduleItemsRefresh)
-      .subscribe() : null;
-    void loadListItems(true);
+      .subscribe((status: string) => {
+        if (status !== "SUBSCRIBED" || cancelled) return;
+        if (subscribedBefore) scheduleItemsRefresh();
+        subscribedBefore = true;
+      }) : null;
+    setActiveListItems([]);
+    setLoadingListItems(Boolean(activeListId));
+    if (activeListId) itemsQueue.request();
     window.addEventListener(EQUIPMENT_LIST_ITEMS_EVENT, handleItemsChange);
+    window.addEventListener("focus", wakeItems);
+    document.addEventListener("visibilitychange", wakeItems);
 
     return () => {
       cancelled = true;
-      clearTimeout(timer);
+      itemsQueue.dispose();
       window.removeEventListener(EQUIPMENT_LIST_ITEMS_EVENT, handleItemsChange);
+      window.removeEventListener("focus", wakeItems);
+      document.removeEventListener("visibilitychange", wakeItems);
       if (channel) void supabase.removeChannel(channel);
     };
   }, [activeListId, supabase]);
