@@ -1837,10 +1837,7 @@ export default function SubcategoryClientLedScreen({
 
         {selectedCabinetAllocations.length > 0 ? (
           <div className="rounded-xl border border-blue-100 bg-blue-50 p-2.5">
-            <div className="text-[8px] font-bold uppercase tracking-wider text-blue-500">
-              Active Movements
-            </div>
-            <div className="mt-2 flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-1.5">
               {selectedCabinetAllocations.map((allocation) => (
                 <Link
                   key={allocation.listId}

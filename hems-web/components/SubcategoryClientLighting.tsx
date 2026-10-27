@@ -1472,10 +1472,6 @@ export default function SubcategoryClientLighting({
                 editable && activeDraftList ? "hems-wide:pr-36" : "hems-wide:pr-20"
               }`}
             >
-              <div className="mb-1 text-[8px] font-bold uppercase tracking-wider text-gray-400">
-                Active Movements / Repair
-              </div>
-
               <div className="flex flex-wrap gap-1.5">
                 {allocations.map((allocation) => (
                   <Link
