@@ -135,6 +135,7 @@ function environment(options = {}) {
     'lucide-react': new Proxy({}, { get: (_obj, key) => key }),
     '@/components/ActionRequiredAlerts': { default: 'ActionRequiredAlerts' },
     '@/components/InventoryImportClient': { default: 'InventoryImportClient' },
+    '@/components/ClosedListFolders': { default: 'ClosedListFolders' },
     '@/lib/supabase/client': { createClient: () => client, readBrowserSession: () => Promise.resolve(userResult()) },
     '@/lib/browserId': { createBrowserId: () => 'test-tab' },
     '@/lib/workspaceRefresh': refresh,

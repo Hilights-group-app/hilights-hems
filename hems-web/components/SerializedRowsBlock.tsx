@@ -1,6 +1,8 @@
 "use client";
 
 import ReportTestingDate from "@/components/ReportTestingDate";
+import ReportAddRows from "@/components/ReportAddRows";
+import { buildReportRowBatch } from "@/lib/reportRowBatch";
 import { commonTestingDate } from "@/lib/reportTestingDate";
 
 import { uploadEquipmentPhoto } from "@/lib/imageUploads";
@@ -155,6 +157,10 @@ export function SerializedRowsBlock({
   const supabase = createClient();
   const [units, setUnits] = useState<Unit[]>([]);
   const unitsRef = useRef<Unit[]>([]);
+  const addingRowsRef = useRef(false);
+  const loadedItemRef = useRef<string | null>(null);
+  const currentItemRef = useRef(itemId);
+  currentItemRef.current = itemId;
   const [movementByUnit, setMovementByUnit] = useState<
     Record<string, UnitMovement>
   >({});
@@ -276,7 +282,7 @@ export function SerializedRowsBlock({
     setMovementByUnit(nextMovements);
   }
 
-  async function loadUnits() {
+async function loadUnits() {
     const { data, error } = await supabase
       .from("units")
       .select("id, unit_no, serial, status, notes, testing_date, damage_photos")
@@ -289,6 +295,8 @@ export function SerializedRowsBlock({
     }
 
     const nextUnits = (data ?? []) as Unit[];
+    if (currentItemRef.current !== itemId) return;
+    loadedItemRef.current = itemId;
     unitsRef.current = nextUnits;
     setUnits(nextUnits);
     await loadUnitMovements(nextUnits.map((unit) => unit.id));
@@ -388,51 +396,52 @@ export function SerializedRowsBlock({
     await logActivity({ title, message, link: activityLink });
   }
 
-  async function addRow() {
-    if (!editable) return;
-
-    const nextNumber =
-      units.length > 0
-        ? Math.max(
-            ...units.map((u) => {
-              const n = Number(u.unit_no);
-              return Number.isFinite(n) ? n : 0;
-            })
-          ) + 1
-        : 1;
-
-    const { data, error } = await supabase
-      .from("units")
-      .insert({
-        item_id: itemId,
-        unit_no: nextNumber,
-        serial: "",
-        status: "available",
-        notes: "",
-        testing_date: commonTestingDate(unitsRef.current.map(unit => unit.testing_date)) || null,
-        damage_photos: [],
-      })
-      .select("id, unit_no, serial, status, notes, testing_date, damage_photos")
-      .single();
-
-    if (error) {
-      console.error("addRow error:", error);
-      return;
-    }
-    
-    const nextUnits = [...unitsRef.current, data as Unit];
-    unitsRef.current = nextUnits;
-    setUnits(nextUnits);
-
-    await logActivity({
-      title: `added a unit to ${itemName || "equipment"}`,
-      message: `Unit #${(data as Unit).unit_no ?? nextNumber} was added`,
-      link: activityLink,
+async function addRow(count = 1): Promise<number> {
+    if (!editable) throw new Error("This report is read only.");
+    if (addingRowsRef.current || bulkPasting) throw new Error("Another row operation is running. Please wait.");
+    if (loadedItemRef.current !== itemId) throw new Error("Wait for this report to finish loading before adding rows.");
+    const payload = buildReportRowBatch({
+      itemId, count, units: unitsRef.current, kind: "serialized",
+      testingDate: commonTestingDate(unitsRef.current.map(unit => unit.testing_date)) || null,
+      
     });
+    addingRowsRef.current = true;
+    try {
+      const { data, error } = await supabase.from("units").insert(payload)
+        .select("id, unit_no, serial, status, notes, testing_date, damage_photos");
+      if (error) throw new Error(error.message || "Rows could not be added.");
+      const addedUnits = (data ?? []) as unknown as Unit[];
+      if (addedUnits.length !== payload.length) {
+        await loadUnits();
+        throw new Error("The addition could not be fully confirmed. Refresh the report before adding rows again.");
+      }
+      addedUnits.sort((a, b) => Number(a.unit_no) - Number(b.unit_no));
+      if (currentItemRef.current === itemId) {
+        const knownIds = new Set(unitsRef.current.map(unit => unit.id));
+        const nextUnits = [...unitsRef.current, ...addedUnits.filter(unit => !knownIds.has(unit.id))];
+        unitsRef.current = nextUnits;
+        setUnits(nextUnits);
+      }
+      
+      // One activity per batch. A log failure cannot turn a saved insertion
+      // into a failed addition and invite a duplicate retry.
+      void logActivity({
+        title: addedUnits.length === 1
+          ? `added a unit to ${itemName || "equipment"}`
+          : `added ${addedUnits.length} units to ${itemName || "equipment"}`,
+        message: addedUnits.length === 1
+          ? `Unit #${addedUnits[0].unit_no} was added`
+          : `Units #${addedUnits[0].unit_no}–${addedUnits[addedUnits.length - 1].unit_no} were added`,
+        link: activityLink,
+      }).catch(activityError => console.error("Report row activity could not be logged:", activityError));
+      return addedUnits.length;
+    } finally {
+      addingRowsRef.current = false;
+    }
   }
 
   async function pasteSerialColumn(unitId: string, clipboardText: string) {
-    if (!editable || bulkPasting) return;
+    if (!editable || bulkPasting || addingRowsRef.current) return;
 
     const plan = buildSerialPastePlan(
       unitsRef.current,
@@ -667,17 +676,7 @@ export function SerializedRowsBlock({
           ))
         )}
 
-        {editable ? (
-          <div className="flex justify-start mt-8 pb-4">
-            <button
-              type="button"
-              onClick={addRow}
-              className="px-2.5 py-1 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
-            >
-              + Add Row
-            </button>
-          </div>
-        ) : null}
+{editable ? <ReportAddRows key={itemId} onAdd={addRow} disabled={bulkPasting} /> : null}
       </div>
     </>
   );

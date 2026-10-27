@@ -5,7 +5,6 @@ import { createBrowserId } from "@/lib/browserId";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
-  Archive,
   BriefcaseBusiness,
   Building2,
   CalendarDays,
@@ -30,6 +29,7 @@ import {
 } from "@/lib/authStore";
 import { createClient } from "@/lib/supabase/client";
 import { createRefreshQueue } from "@/lib/workspaceRefresh";
+import ClosedListFolders from "@/components/ClosedListFolders";
 import {
   ACTIVE_EQUIPMENT_LIST_EVENT,
   ACTIVE_EQUIPMENT_LIST_KEY,
@@ -260,7 +260,6 @@ export default function EquipmentListsSidebar() {
     null,
   );
   const [createOpen, setCreateOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [internalUseOpen, setInternalUseOpen] = useState(false);
   const [maintenanceActiveOpen, setMaintenanceActiveOpen] = useState(false);
   const [transferOutOpen, setTransferOutOpen] = useState(false);
@@ -601,7 +600,7 @@ export default function EquipmentListsSidebar() {
   );
 
   const transferOutLists = useMemo(
-    () => accessibleLists.filter((list) => list.list_type === "transfer_out"), [accessibleLists],
+    () => visibleLists.filter((list) => list.list_type === "transfer_out"), [visibleLists],
   );
 
   const maintenanceActiveLists = useMemo(
@@ -610,16 +609,6 @@ export default function EquipmentListsSidebar() {
         (list) =>
           list.list_type === "maintenance" &&
           (list.status === "active" || list.status === "partially_returned"),
-      ),
-    [accessibleLists],
-  );
-
-  const historyLists = useMemo(
-    () =>
-      accessibleLists.filter(
-        (list) =>
-          list.list_type !== "internal_use" && list.list_type !== "transfer_out" &&
-          (list.status === "closed" || list.status === "cancelled"),
       ),
     [accessibleLists],
   );
@@ -1434,79 +1423,6 @@ export default function EquipmentListsSidebar() {
                 </section>
               ) : null}
 
-              {historyLists.length > 0 ? (
-                <section>
-                  <button
-                    type="button"
-                    onClick={() => setHistoryOpen((current) => !current)}
-                    aria-expanded={historyOpen}
-                    className="flex w-full items-center justify-between rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-left transition hover:border-gray-300 hover:bg-gray-100"
-                  >
-                    <span className="flex items-center gap-2">
-                      <Archive size={13} className="text-gray-500" />
-                      <span className="text-[9px] font-bold uppercase tracking-wider text-gray-500">
-                        History
-                      </span>
-                    </span>
-
-                    <span className="flex items-center gap-2">
-                      <span className="rounded-full bg-white px-1.5 py-0.5 text-[9px] font-bold text-gray-500">
-                        {historyLists.length}
-                      </span>
-                      <ChevronDown
-                        size={13}
-                        className={`text-gray-500 transition-transform ${
-                          historyOpen ? "rotate-180" : ""
-                        }`}
-                      />
-                    </span>
-                  </button>
-
-                  {historyOpen ? (
-                    <div className="mt-2 space-y-2">
-                      {historyLists.map((list) => (
-                        <Link
-                          key={list.id}
-                          href={`/inventory/lists/${list.id}`}
-                          className="block w-full rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-left transition hover:border-gray-300 hover:shadow-sm"
-                        >
-                          <span className="flex items-start gap-2">
-                            <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-gray-100 text-gray-500">
-                              {typeIcon(list.list_type, 13)}
-                            </span>
-
-                            <span className="min-w-0 flex-1">
-                              <span className="flex items-center gap-1.5">
-                                <span className="truncate text-[11px] font-bold text-gray-900">
-                                  {list.reference}
-                                </span>
-                                <span
-                                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[8px] font-bold ${statusClass(
-                                    list.status,
-                                  )}`}
-                                >
-                                  {equipmentListStatusLabel(list.status)}
-                                </span>
-                              </span>
-
-                              <span className="mt-1 block truncate text-[10px] text-gray-600">
-                                {equipmentListSummary(list)}
-                              </span>
-
-                              {listDates(list) ? (
-                                <span className="mt-1 flex items-center gap-1 text-[9px] text-gray-400">
-                                  <CalendarDays size={9} />
-                                  {listDates(list)}
-                                </span>
-                              ) : null}
-                            </span>
-                          </span>
-                        </Link>
-                      ))}
-                    </div>
-                  ) : null}
-                </section>
-              ) : null}
 
               {internalUseLists.length > 0 ? (
                 <section>
@@ -1596,6 +1512,8 @@ export default function EquipmentListsSidebar() {
               ) : null}
             </>
           )}
+          {currentUserId ? <ClosedListFolders key={currentUserId} owner={currentUserId}
+            select={LIST_SELECT} refreshToken={lists} /> : null}
         </div>
       ) : null}
     </div>

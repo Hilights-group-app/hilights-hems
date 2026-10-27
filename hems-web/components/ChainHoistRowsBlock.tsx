@@ -1,6 +1,8 @@
 "use client";
 
 import ReportTestingDate from "@/components/ReportTestingDate";
+import ReportAddRows from "@/components/ReportAddRows";
+import { buildReportRowBatch } from "@/lib/reportRowBatch";
 import { commonTestingDate } from "@/lib/reportTestingDate";
 
 import { uploadEquipmentPhoto } from "@/lib/imageUploads";
@@ -315,6 +317,10 @@ export function ChainHoistRowsBlock({
   const [units, setUnits] = useState<Unit[]>([]);
 
   const unitsRef = useRef<Unit[]>([]);
+  const addingRowsRef = useRef(false);
+  const loadedItemRef = useRef<string | null>(null);
+  const currentItemRef = useRef(itemId);
+  currentItemRef.current = itemId;
 
   const [movementByUnit, setMovementByUnit] = useState<
 
@@ -540,7 +546,7 @@ export function ChainHoistRowsBlock({
 
 
 
-  async function loadUnits() {
+async function loadUnits() {
 
     const { data, error } = await supabase
 
@@ -565,6 +571,9 @@ export function ChainHoistRowsBlock({
 
 
     const nextUnits = (data ?? []) as Unit[];
+
+    if (currentItemRef.current !== itemId) return;
+    loadedItemRef.current = itemId;
 
     unitsRef.current = nextUnits;
 
@@ -877,86 +886,52 @@ if (currentPhotos.length >= 3) return;
 
 
 
-  async function addRow() {
-
-    if (!allowAdd) return;
-
-
-
-    const nextNo =
-
-      units.length > 0
-
-        ? Math.max(...units.map((u) => Number(u.unit_no || 0))) + 1
-
-        : 1;
-
-
-
-    const { data, error } = await supabase
-
-      .from("units")
-
-      .insert({
-
-        item_id: itemId,
-
-        unit_no: String(nextNo),
-
-        serial: "",
-
-        status: "available",
-
-        notes: "",
-
-        testing_date: commonTestingDate(unitsRef.current.map(unit => unit.testing_date)) || null,
-
-        cert_date: null,
-
-        expiry_date: null,
-
-        damage_photos: [],
-
-      })
-
-      .select("id, unit_no, serial, status, notes, testing_date, cert_date, expiry_date, damage_photos")
-
-      .single();
-
-
-
-    if (error) {
-
-      console.error("addRow error:", error);
-
-      return;
-
-    }
-
-
-
-    const nextUnits = [...unitsRef.current, data as Unit];
-
-    unitsRef.current = nextUnits;
-
-    setUnits(nextUnits);
-
-
-
-    await logActivity({
-
-      title: `added a unit to ${itemName || "Chain Hoist"}`,
-
-      message: `Unit #${(data as Unit).unit_no ?? nextNo} was added`,
-
-      link: activityLink,
-
+async function addRow(count = 1): Promise<number> {
+    if (!allowAdd) throw new Error("This report is read only.");
+    if (addingRowsRef.current || bulkPasting) throw new Error("Another row operation is running. Please wait.");
+    if (loadedItemRef.current !== itemId) throw new Error("Wait for this report to finish loading before adding rows.");
+    const payload = buildReportRowBatch({
+      itemId, count, units: unitsRef.current, kind: "chain_hoist",
+      testingDate: commonTestingDate(unitsRef.current.map(unit => unit.testing_date)) || null,
+      
     });
-
+    addingRowsRef.current = true;
+    try {
+      const { data, error } = await supabase.from("units").insert(payload)
+        .select("id, unit_no, serial, status, notes, testing_date, cert_date, expiry_date, damage_photos");
+      if (error) throw new Error(error.message || "Rows could not be added.");
+      const addedUnits = (data ?? []) as unknown as Unit[];
+      if (addedUnits.length !== payload.length) {
+        await loadUnits();
+        throw new Error("The addition could not be fully confirmed. Refresh the report before adding rows again.");
+      }
+      addedUnits.sort((a, b) => Number(a.unit_no) - Number(b.unit_no));
+      if (currentItemRef.current === itemId) {
+        const knownIds = new Set(unitsRef.current.map(unit => unit.id));
+        const nextUnits = [...unitsRef.current, ...addedUnits.filter(unit => !knownIds.has(unit.id))];
+        unitsRef.current = nextUnits;
+        setUnits(nextUnits);
+      }
+      
+      // One activity per batch. A log failure cannot turn a saved insertion
+      // into a failed addition and invite a duplicate retry.
+      void logActivity({
+        title: addedUnits.length === 1
+          ? `added a unit to ${itemName || "Chain Hoist"}`
+          : `added ${addedUnits.length} units to ${itemName || "Chain Hoist"}`,
+        message: addedUnits.length === 1
+          ? `Unit #${addedUnits[0].unit_no} was added`
+          : `Units #${addedUnits[0].unit_no}–${addedUnits[addedUnits.length - 1].unit_no} were added`,
+        link: activityLink,
+      }).catch(activityError => console.error("Report row activity could not be logged:", activityError));
+      return addedUnits.length;
+    } finally {
+      addingRowsRef.current = false;
+    }
   }
 
   async function pasteSerialColumn(unitId: string, clipboardText: string) {
-    if (!editable || !allowAdd || bulkPasting) return;
+    if (!editable || !allowAdd || bulkPasting || addingRowsRef.current) return;
 
     const plan = buildSerialPastePlan(
       unitsRef.current,
@@ -1266,27 +1241,7 @@ if (currentPhotos.length >= 3) return;
 
 
 
-      {allowAdd ? (
-
-        <div className="flex justify-start mt-8 pb-4">
-
-          <button
-
-            type="button"
-
-            onClick={addRow}
-
-            className="px-2.5 py-1 rounded-full border border-gray-300 text-[10px] font-medium text-gray-700 bg-white transition-all duration-150 ease-out hover:bg-red-50 hover:border-red-200 hover:text-red-700 hover:shadow-sm active:scale-[0.98]"
-
-          >
-
-            + Add Row
-
-          </button>
-
-        </div>
-
-      ) : null}
+{allowAdd ? <ReportAddRows key={itemId} onAdd={addRow} disabled={bulkPasting} /> : null}
 
         </div>
 

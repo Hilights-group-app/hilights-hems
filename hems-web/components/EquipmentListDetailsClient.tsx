@@ -63,6 +63,8 @@ import EquipmentListUnitPicker from "@/components/EquipmentListUnitPicker";
 import EquipmentDraftShareButton from "@/components/EquipmentDraftShareButton";
 import CustomDraftItemInline from "@/components/CustomDraftItemInline";
 import ActiveListQuantity from "@/components/ActiveListQuantity";
+import CompactListHeading from "@/components/CompactListHeading";
+import headerStyles from "./EquipmentListHeader.module.css";
 import { showActiveReturnQuantities } from "@/lib/listReturnQuantities";
 
 type DetailedEquipmentList = EquipmentList & {
@@ -2700,17 +2702,28 @@ export default function EquipmentListDetailsClient({
       ) : null}
 
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
-        <div className="p-4 sm:p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className={`p-4 sm:p-5 ${headerStyles.headerPadding}`}>
+        <div className={`flex flex-wrap items-start justify-between gap-3 ${headerStyles.headingLayout}`}>
           <div className="min-w-0">
             <Link
               href="/inventory"
-              className="mb-3 inline-flex items-center gap-1 text-[10px] font-medium text-gray-500 hover:text-red-600"
+              className={`mb-3 inline-flex items-center gap-1 text-[10px] font-medium text-gray-500 hover:text-red-600 ${headerStyles.backLink}`}
             >
               <ArrowLeft size={11} />
               Inventory
             </Link>
 
+            <CompactListHeading
+              reference={list.reference}
+              typeLabel={equipmentListTypeLabel(list.list_type)}
+              title={isLocalEventList ? localEventTitle : equipmentListTypeLabel(list.list_type)}
+              details={isLocalEventList ? list.venue?.trim() || "" : equipmentListSummary(list)}
+              statusLabel={displayedStatusLabel(list)}
+              statusClassName={statusClass(list.status)}
+              dates={dates}
+            />
+
+            <div className={headerStyles.desktopHeading}>
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-bold tracking-tight text-gray-900 sm:text-2xl">
                 {isLocalEventList ? localEventTitle : list.reference}
@@ -2729,9 +2742,10 @@ export default function EquipmentListDetailsClient({
                 ? localEventMeta
                 : `${equipmentListTypeLabel(list.list_type)} · ${equipmentListSummary(list)}`}
             </div>
+            </div>
           </div>
 
-          <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+          <div className={`flex max-w-full flex-wrap items-center justify-end gap-2 ${headerStyles.actions}`}>
             {canShareDraft ? (
               <EquipmentDraftShareButton list={list} onSaved={(userIds) => {
                 listReadVersion.current += 1;
@@ -2743,6 +2757,8 @@ export default function EquipmentListDetailsClient({
             <button
               type="button"
               onClick={() => void shareList()}
+              aria-label="Share PDF"
+              title="Share PDF"
               disabled={Boolean(pdfAction) || rackRowsLoading}
               className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-[10px] font-semibold text-gray-700 transition hover:border-black hover:text-black disabled:opacity-40"
             >
@@ -2751,12 +2767,14 @@ export default function EquipmentListDetailsClient({
               ) : (
                 <Share2 size={12} />
               )}
-              Share PDF
+              <span>Share PDF</span>
             </button>
 
             <button
               type="button"
               onClick={() => void downloadPdf()}
+              aria-label="Download PDF"
+              title="Download PDF"
               disabled={Boolean(pdfAction) || rackRowsLoading}
               className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-gray-300 bg-white px-3 py-2.5 text-[10px] font-semibold text-gray-700 transition hover:border-black hover:text-black disabled:opacity-40"
             >
@@ -2765,7 +2783,7 @@ export default function EquipmentListDetailsClient({
               ) : (
                 <Download size={12} />
               )}
-              PDF
+              <span>PDF</span>
             </button>
 
             {canDeleteDraft ? (
@@ -2773,6 +2791,8 @@ export default function EquipmentListDetailsClient({
                 <button
                   type="button"
                   onClick={() => void deleteDraftList()}
+                  aria-label="Delete draft"
+                  title="Delete draft"
                   disabled={deletingList}
                   className="inline-flex items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-white px-3 py-2.5 text-[10px] font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-40"
                 >
@@ -2781,13 +2801,15 @@ export default function EquipmentListDetailsClient({
                   ) : (
                     <Trash2 size={12} />
                   )}
-                  Delete
+                  <span>Delete</span>
                 </button>
 
                 {canSubmitDraft ? (
                   <button
                     type="button"
                     onClick={() => void submitForApproval()}
+                    aria-label={submitting ? "Submitting..." : "Submit for approval"}
+                    title="Submit for approval"
                     disabled={submitting || savingDraftOrder || pendingCustomEdits > 0 || items.length === 0}
                     className="inline-flex items-center justify-center gap-2 rounded-xl bg-black px-4 py-2.5 text-[10px] font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
                   >
@@ -2796,22 +2818,25 @@ export default function EquipmentListDetailsClient({
                     ) : (
                       <Send size={13} />
                     )}
-                    {submitting ? "Submitting..." : "Submit"}
+                    <span>{submitting ? "Submitting..." : "Submit"}</span>
                   </button>
                 ) : null}
               </>
             ) : null}
 
             {canReview ? <button type="button" onClick={() => void cancelPendingList()}
+              aria-label={cancellingList ? "Cancelling…" : "Cancel List"} title="Cancel List"
               disabled={cancellingList || approving || savingDraftOrder || pendingCustomEdits>0}
               className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-700 disabled:opacity-40">
-              {cancellingList ? <Loader2 size={13} className="animate-spin"/> : <X size={13}/>} {cancellingList ? "Cancelling…" : "Cancel List"}
+              {cancellingList ? <Loader2 size={13} className="animate-spin"/> : <X size={13}/>} <span>{cancellingList ? "Cancelling…" : "Cancel List"}</span>
             </button> : null}
 
             {canReview ? (
               <button
                 type="button"
                 onClick={() => void approveAndDispatch()}
+                aria-label={approving ? "Approving..." : isMaintenanceList ? "Approve & Send" : list.list_type === "transfer_in" ? "Approve Transfer In" : "Approve & Dispatch"}
+                title={isMaintenanceList ? "Approve & Send" : list.list_type === "transfer_in" ? "Approve Transfer In" : "Approve & Dispatch"}
                 disabled={approving || cancellingList || items.length === 0}
                 className="flex items-center justify-center gap-2 rounded-xl bg-green-600 px-4 py-2.5 text-[11px] font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-40"
               >
@@ -2820,11 +2845,11 @@ export default function EquipmentListDetailsClient({
                 ) : (
                   <ShieldCheck size={14} />
                 )}
-                {approving
+                <span>{approving
                   ? "Approving..."
                   : isMaintenanceList
                     ? "Approve & Send"
-                    : list.list_type === "transfer_in" ? "Approve Transfer In" : "Approve & Dispatch"}
+                    : list.list_type === "transfer_in" ? "Approve Transfer In" : "Approve & Dispatch"}</span>
               </button>
             ) : null}
           </div>
@@ -2832,7 +2857,7 @@ export default function EquipmentListDetailsClient({
 
         </div>
 
-        <div className="grid grid-cols-2 gap-px border-t border-gray-200 bg-gray-200 lg:grid-cols-4">
+        <div className={`grid grid-cols-2 gap-px border-t border-gray-200 bg-gray-200 lg:grid-cols-4 ${headerStyles.desktopGrid}`}>
           <InfoCard label="Type" value={equipmentListTypeLabel(list.list_type)} />
           <InfoCard label="Details" value={equipmentListSummary(list)} />
           {dates.map((row) => (
@@ -2841,7 +2866,7 @@ export default function EquipmentListDetailsClient({
         </div>
 
         {list.notes ? (
-          <div className="border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5">
+          <div className={`border-t border-gray-200 bg-gray-50 px-4 py-3 sm:px-5 ${headerStyles.notes}`}>
             <div className="text-[9px] font-bold uppercase tracking-wider text-gray-400">
               Notes
             </div>
@@ -2851,7 +2876,7 @@ export default function EquipmentListDetailsClient({
           </div>
         ) : null}
 
-        <div className="flex flex-wrap gap-x-4 gap-y-1 border-t border-gray-200 px-4 py-2.5 text-[9px] text-gray-400 sm:px-5">
+        <div className={`flex flex-wrap gap-x-4 gap-y-1 border-t border-gray-200 px-4 py-2.5 text-[9px] text-gray-400 sm:px-5 ${headerStyles.audit}`}>
           <span>Created by {list.created_by_name || "Unknown"}</span>
           {sharedDraft ? <span className="font-semibold text-blue-700">Shared with you</span> : null}
           <span>{formatDateTime(list.created_at)}</span>

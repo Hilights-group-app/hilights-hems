@@ -1,0 +1,127 @@
+.mobileHeading {
+  display: none;
+}
+
+/* Phone only: no desktop/tablet header or dialog-button overrides. */
+@media (max-width: 639px) {
+  .headerPadding {
+    padding: 12px 14px;
+  }
+  .headingLayout {
+    display: block;
+  }
+  .backLink {
+    margin-bottom: 8px;
+  }
+  .desktopHeading,
+  .desktopGrid {
+    display: none;
+  }
+  .mobileHeading {
+    display: block;
+    min-width: 0;
+  }
+  .referenceRow {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 5px;
+  }
+  .reference {
+    font-size: 10px;
+    line-height: 16px;
+    font-weight: 600;
+    color: #6b7280;
+    overflow-wrap: anywhere;
+  }
+  .status {
+    border-radius: 999px;
+    padding: 3px 8px;
+    font-size: 9px;
+    line-height: 14px;
+    font-weight: 700;
+  }
+  .title {
+    margin: 0;
+    color: #111827;
+    font-size: 19px;
+    line-height: 25px;
+    font-weight: 750;
+    letter-spacing: -0.02em;
+    overflow-wrap: anywhere;
+  }
+  .type {
+    margin-top: 2px;
+    color: #6b7280;
+    font-size: 10px;
+    line-height: 15px;
+    font-weight: 600;
+  }
+  .details {
+    margin: 3px 0 0;
+    color: #374151;
+    font-size: 13px;
+    line-height: 19px;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+  .dates {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px 14px;
+    margin: 7px 0 0;
+    font-size: 10px;
+    line-height: 16px;
+    color: #4b5563;
+  }
+  .dates > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    min-width: 0;
+  }
+  .dates dt {
+    font-weight: 500;
+    color: #6b7280;
+  }
+  .dates dd {
+    margin: 0;
+    font-weight: 600;
+  }
+  .actions {
+    justify-content: flex-start;
+    gap: 7px;
+    margin-top: 11px;
+  }
+  .actions > button {
+    width: 40px;
+    height: 40px;
+    min-height: 40px;
+    flex: 0 0 40px;
+    padding: 0;
+    gap: 0;
+    border-radius: 11px;
+  }
+  .actions > button > span {
+    display: none;
+  }
+  .actions > button > svg {
+    width: 16px;
+    height: 16px;
+  }
+  .notes {
+    padding: 8px 14px;
+  }
+  .notes > div:last-child {
+    margin-top: 2px;
+    line-height: 16px;
+  }
+  .audit {
+    gap: 2px 10px;
+    padding: 7px 14px;
+    font-size: 9px;
+    line-height: 14px;
+  }
+}
