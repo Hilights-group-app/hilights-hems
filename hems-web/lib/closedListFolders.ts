@@ -8,6 +8,7 @@ export const CLOSED_LIST_FOLDERS: readonly {
   { key: "local_event", label: "Local Event", listTypes: ["local_event"] },
   { key: "dry_hire", label: "Dry Hire", listTypes: ["dry_hire"] },
   { key: "maintenance", label: "Maintenance", listTypes: ["maintenance"] },
+  { key: "internal_use", label: "Internal Use", listTypes: ["internal_use"] },
 ];
 export type ClosedListFolder = typeof CLOSED_LIST_FOLDERS[number];
 export const CLOSED_FOLDER_PAGE_SIZE = 30;

@@ -529,6 +529,9 @@ export default function SubcategoryClientMatrix({
   const reorderable = canReorderInventory();
 
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const addItemBusyRef = useRef(false);
+  const [addingItem, setAddingItem] = useState(false);
+  const [addItemError, setAddItemError] = useState<string | null>(null);
   const listPhotoFileRef = useRef<HTMLInputElement | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -1485,7 +1488,7 @@ export default function SubcategoryClientMatrix({
   }
 
   async function onAdd() {
-    if (!editable || !categoryId || !subcategoryId) return;
+    if (!editable || !categoryId || !subcategoryId || addItemBusyRef.current) return;
 
     const nm = itemName.trim();
     if (!nm) return;
@@ -1499,6 +1502,9 @@ export default function SubcategoryClientMatrix({
           ? "Racks"
           : splitBrandModel(nm).brand || "Other");
 
+    addItemBusyRef.current = true;
+    setAddingItem(true);
+    setAddItemError(null);
     setErr(null);
 
     try {
@@ -1566,7 +1572,11 @@ export default function SubcategoryClientMatrix({
         setSaveMsg((prev) => (prev === "Item added" ? "" : prev));
       }, 1500);
     } catch (e: any) {
+      setAddItemError(e?.message || "Add failed. Check the list before trying again.");
       setErr(e?.message || "Add failed");
+    } finally {
+      addItemBusyRef.current = false;
+      setAddingItem(false);
     }
   }
 
@@ -3183,12 +3193,15 @@ export default function SubcategoryClientMatrix({
             </div>
 
             <button
+              type="button"
               onClick={onAdd}
-              disabled={!canAdd}
+              disabled={!canAdd || addingItem}
+              aria-busy={addingItem}
               className="h-11 w-full rounded-2xl border border-black bg-black px-4 text-[12px] font-medium text-white shadow-sm transition hover:opacity-90 disabled:opacity-40"
             >
-              + Add
+              {addingItem ? "Adding…" : "+ Add"}
             </button>
+            {addItemError ? <div role="alert" className="text-[11px] text-red-600 md:col-span-full">{addItemError}</div> : null}
           </div>
 
           {photo ? (

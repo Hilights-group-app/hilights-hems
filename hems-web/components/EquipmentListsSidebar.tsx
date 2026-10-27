@@ -587,11 +587,11 @@ export default function EquipmentListsSidebar() {
 
   const internalUseLists = useMemo(
     () =>
-      accessibleLists.filter(
+      visibleLists.filter(
         (list) =>
           list.list_type === "internal_use" && list.status !== "cancelled",
       ),
-    [accessibleLists],
+    [visibleLists],
   );
 
   const workflowLists = useMemo(

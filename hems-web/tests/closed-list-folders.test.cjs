@@ -35,13 +35,21 @@ function harness() {
 const row = (id, patch = {}) => ({id: String(id), list_type: 'transfer_out', status: 'closed', ...patch});
 const page = (start, n) => Array.from({length:n}, (_, i) => row(start+i));
 
-test('four folders have the requested order and shipment includes both transfer directions', () => {
+test('five folders have the requested order and shipment includes both transfer directions', () => {
   const h=harness();
-  assert.deepEqual(Array.from(h.api.CLOSED_LIST_FOLDERS, f=>f.label), ['Shipment','Local Event','Dry Hire','Maintenance']);
+  assert.deepEqual(Array.from(h.api.CLOSED_LIST_FOLDERS, f=>f.label), ['Shipment','Local Event','Dry Hire','Maintenance','Internal Use']);
   assert.equal(h.api.belongsToClosedFolder(row(1),h.folder),true);
   assert.equal(h.api.belongsToClosedFolder(row(2,{list_type:'transfer_in'}),h.folder),true);
   for (const status of ['draft','pending','active','partially_returned','cancelled']) assert.equal(h.api.belongsToClosedFolder(row(1,{status}),h.folder),false);
   assert.equal(h.api.belongsToClosedFolder(row(1,{list_type:'local_event'}),h.folder),false);
+});
+test('Internal Use archive contains only closed internal lists',()=>{
+  const h=harness(),folder=h.api.CLOSED_LIST_FOLDERS.find(f=>f.key==='internal_use');
+  assert.equal(h.api.belongsToClosedFolder(row(1,{list_type:'internal_use'}),folder),true);
+  for(const status of ['draft','pending','active','partially_returned','cancelled'])assert.equal(h.api.belongsToClosedFolder(row(1,{list_type:'internal_use',status}),folder),false);
+  assert.equal(h.api.belongsToClosedFolder(row(1),folder),false);
+  const source=fs.readFileSync(path.join(root,'components/EquipmentListsSidebar.tsx'),'utf8');
+  assert.match(source,/const internalUseLists = useMemo\(\s*\(\) =>\s*visibleLists\.filter/);
 });
 test('closed folders make no requests on mount or while invalidated collapsed', async()=>{
   const h=harness();h.pager.invalidate();await h.tick(5000);assert.equal(h.calls.length,0);

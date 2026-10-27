@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { Building2, CalendarDays, ChevronDown, Folder, Loader2, Package, Wrench } from "lucide-react";
+import { BriefcaseBusiness, Building2, CalendarDays, ChevronDown, Folder, Loader2, Package, Wrench } from "lucide-react";
 import { getUserId } from "@/lib/authStore";
 import { createClient } from "@/lib/supabase/client";
 import { equipmentListSummary, equipmentListTypeLabel, type EquipmentList } from "@/lib/equipmentLists";
@@ -15,6 +15,7 @@ const themes = {
   local_event: { button: "border-rose-200 bg-rose-50 text-rose-800 hover:bg-rose-100", icon: CalendarDays },
   dry_hire: { button: "border-violet-200 bg-violet-50 text-violet-800 hover:bg-violet-100", icon: Building2 },
   maintenance: { button: "border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100", icon: Wrench },
+  internal_use: { button: "border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100", icon: BriefcaseBusiness },
 };
 
 function ClosedFolder({ owner, select, refreshToken, folder }: Props & { folder: ClosedListFolder }) {
