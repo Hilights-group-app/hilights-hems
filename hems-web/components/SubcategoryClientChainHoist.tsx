@@ -471,7 +471,8 @@ export default function SubcategoryClientChainHoist({
       const itemId = String((u as any).item_id || "");
       const st = toStatus((u as any).status);
       const expiryDate = (u as any).expiry_date || null;
-      const expired = isExpired(expiryDate);
+      // Match the report: a Failed unit is not also an expired certificate.
+      const expired = st !== "maintenance" && isExpired(expiryDate);
 
       if (!map[itemId]) {
         map[itemId] = {
@@ -1723,7 +1724,11 @@ export default function SubcategoryClientChainHoist({
                       {/* Mobile stats */}
                       <div className="mt-2 hems-wide:hidden">
                         <div className={`grid gap-x-2 gap-y-1 text-center ${
-                          st.maintenance > 0 ? "grid-cols-4" : "grid-cols-3"
+                          st.maintenance > 0 && st.expired > 0
+                            ? "grid-cols-4"
+                            : st.maintenance > 0 || st.expired > 0
+                              ? "grid-cols-3"
+                              : "grid-cols-2"
                         }`}>
                           <div className="text-[8px] font-semibold text-gray-500">
                             Total
@@ -1733,12 +1738,14 @@ export default function SubcategoryClientChainHoist({
                           </div>
                           {st.maintenance > 0 ? (
                             <div className="text-[8px] font-semibold text-gray-500">
-                              Maintenance
+                              Failed
                             </div>
                           ) : null}
-                          <div className="text-[8px] font-semibold text-gray-500">
-                            Expired
-                          </div>
+                          {st.expired > 0 ? (
+                            <div className="text-[8px] font-semibold text-gray-500">
+                              Expired
+                            </div>
+                          ) : null}
 
                           <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
                             {st.total}
@@ -1747,13 +1754,15 @@ export default function SubcategoryClientChainHoist({
                             {st.available}
                           </div>
                           {st.maintenance > 0 ? (
-                            <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
+                            <div className="rounded-md bg-red-100 px-1 py-0.5 text-[9px] font-semibold text-red-700 whitespace-nowrap">
                               {st.maintenance}
                             </div>
                           ) : null}
-                          <div className="rounded-md bg-red-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
-                            {st.expired}
-                          </div>
+                          {st.expired > 0 ? (
+                            <div className="rounded-md bg-red-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
+                              {st.expired}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
 
@@ -1768,16 +1777,18 @@ export default function SubcategoryClientChainHoist({
                           />
                           {st.maintenance > 0 ? (
                             <StatPill
-                              label="Maintenance"
+                              label="Failed"
                               value={st.maintenance}
-                              tone="yellow"
+                              tone="red"
                             />
                           ) : null}
-                          <StatPill
-                            label="Expired"
-                            value={st.expired}
-                            tone="red"
-                          />
+                          {st.expired > 0 ? (
+                            <StatPill
+                              label="Expired"
+                              value={st.expired}
+                              tone="red"
+                            />
+                          ) : null}
                         </div>
                       </div>
 

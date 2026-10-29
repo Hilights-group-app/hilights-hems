@@ -159,7 +159,7 @@ async function requireInventoryEditor() {
   if (
     profileError ||
     !profile ||
-    !["admin", "warehouse_manager"].includes(profile.role)
+    profile.role !== "admin"
   ) {
     return { error: "Forbidden", status: 403 as const };
   }

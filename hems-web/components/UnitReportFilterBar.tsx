@@ -15,6 +15,7 @@ export default function UnitReportFilterBar({
   onQueryChange,
   onStatusChange,
   onValidityChange,
+  maintenanceLabel = "Maintenance",
 }: {
   query: string;
   status: UnitReportStatusFilter;
@@ -24,6 +25,7 @@ export default function UnitReportFilterBar({
   onQueryChange: (value: string) => void;
   onStatusChange: (value: UnitReportStatusFilter) => void;
   onValidityChange?: (value: ChainValidityFilter) => void;
+  maintenanceLabel?: string;
 }) {
   const filtered = Boolean(
     query.trim() || status !== "all" || (validity && validity !== "all"),
@@ -62,7 +64,7 @@ export default function UnitReportFilterBar({
         >
           <option value="all">All Statuses</option>
           <option value="available">Available</option>
-          <option value="maintenance">Maintenance</option>
+          <option value="maintenance">{maintenanceLabel}</option>
           <option value="assigned">Assigned to List</option>
         </select>
 

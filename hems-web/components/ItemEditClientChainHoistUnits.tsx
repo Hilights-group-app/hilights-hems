@@ -476,9 +476,13 @@ export default function ItemEditClientChainHoistUnits({
 
               <div className="min-w-0 flex-1 flex flex-col justify-center">
 
-                <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                <div className="flex min-w-0 items-start gap-1.5 sm:gap-2">
 
-                  <h1 className="text-[14px] sm:text-[25px] font-bold text-gray-900 leading-tight mt-0 mb-1.5 sm:mb-4 truncate">
+                  <h1
+                    data-chain-hoist-report-title="true"
+                    title={item.name}
+                    className="min-w-0 flex-1 whitespace-normal break-words [overflow-wrap:anywhere] text-[12px] sm:text-[15px] xl:text-[17px] font-bold text-gray-900 leading-snug mt-0 mb-1.5 sm:mb-3"
+                  >
 
                     {item.name}
 
@@ -528,19 +532,21 @@ export default function ItemEditClientChainHoistUnits({
 
                     {stats.maintenance > 0 ? (
 
-                      <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-yellow-100 text-black">
+                      <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-red-100 text-red-700">
 
-                        Maintenance: {stats.maintenance}
+                        Failed: {stats.maintenance}
 
                       </span>
 
                     ) : null}
 
-                    <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-red-100 text-black">
+                    {stats.expired > 0 ? (
+                      <span className="whitespace-nowrap px-[3px] sm:px-2 py-[2px] sm:py-1 rounded-md sm:rounded-lg bg-red-100 text-black">
 
-                      Expired: {stats.expired}
+                        Expired: {stats.expired}
 
-                    </span>
+                      </span>
+                    ) : null}
 
                   </div>
 
@@ -574,9 +580,11 @@ export default function ItemEditClientChainHoistUnits({
                   { label: "Total", value: stats.total },
                   { label: "Available", value: stats.available },
                   ...(stats.maintenance > 0
-                    ? [{ label: "Maintenance", value: stats.maintenance }]
+                    ? [{ label: "Failed", value: stats.maintenance }]
                     : []),
-                  { label: "Expired", value: stats.expired },
+                  ...(stats.expired > 0
+                    ? [{ label: "Expired", value: stats.expired }]
+                    : []),
                 ]}
               />
               <Link

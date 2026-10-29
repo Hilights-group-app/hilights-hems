@@ -19,6 +19,8 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { getAppLayout } from "@/lib/appLayout";
 import { useEffect, useMemo, useState } from "react";
 import {
   canCreateEquipmentLists,
@@ -201,6 +203,56 @@ function sidebarStatusLabel(list: EquipmentList) {
   return equipmentListStatusLabel(list.status);
 }
 
+function SidebarListHeading({
+  list,
+  badgeClassName,
+  badgeLabel,
+}: {
+  list: EquipmentList;
+  badgeClassName?: string;
+  badgeLabel?: string;
+}) {
+  const localEvent = list.list_type === "local_event";
+  const title = localEvent
+    ? list.event_name?.trim() || equipmentListTypeLabel(list.list_type)
+    : equipmentListSummary(list).trim() || equipmentListTypeLabel(list.list_type);
+  const location = localEvent ? list.venue?.trim() : "";
+
+  return (
+    <span className="block min-w-0" data-sidebar-list-heading>
+      <span
+        className="block break-words text-[12px] font-bold leading-4 text-gray-900"
+        data-sidebar-list-title
+      >
+        {title}
+      </span>
+      {location ? (
+        <span
+          className="mt-0.5 block break-words text-[11px] font-medium leading-4 text-gray-700"
+          data-sidebar-list-location
+        >
+          {location}
+        </span>
+      ) : null}
+      <span className="mt-1.5 flex flex-wrap items-center gap-1.5">
+        <span
+          className="break-all text-[9px] font-medium leading-3 text-gray-500"
+          data-sidebar-list-reference
+        >
+          {list.reference}
+        </span>
+        <span
+          className={`shrink-0 rounded-full px-1.5 py-0.5 text-[8px] font-bold ${
+            badgeClassName || statusClass(list.status)
+          }`}
+        >
+          {badgeLabel || sidebarStatusLabel(list)}
+        </span>
+      </span>
+    </span>
+  );
+}
+
 function isEquipmentListsSetupError(error: {
   code?: string;
   message?: string;
@@ -240,6 +292,7 @@ function listItemUnitLabel(item: EquipmentListItem) {
 }
 
 export default function EquipmentListsSidebar() {
+  const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
   const [mounted, setMounted] = useState(false);
   const [canCreateLists, setCanCreateLists] = useState(false);
@@ -662,7 +715,29 @@ export default function EquipmentListsSidebar() {
     return canEditWorkingEquipmentList(list, currentUserId, canManageLists);
   }
 
+  function clearActiveList() {
+    setActiveListId(null);
+    try { localStorage.removeItem(ACTIVE_EQUIPMENT_LIST_KEY); } catch {}
+    // Selection context only: this never deletes a list or its equipment.
+    // The existing listener also closes the compact drawer immediately.
+    window.dispatchEvent(new CustomEvent(ACTIVE_EQUIPMENT_LIST_EVENT, {
+      detail: { listId: null },
+    }));
+  }
+
+  function handleListLinkClick() {
+    if (getAppLayout() === "compact") clearActiveList();
+  }
+
   function chooseActiveList(list: EquipmentList) {
+    if (getAppLayout() === "compact") {
+      // Opening a list is not a request to pick Inventory. Add equipment on
+      // its full details page already activates the correct list for picking.
+      clearActiveList();
+      router.push(`/inventory/lists/${encodeURIComponent(list.id)}`);
+      return;
+    }
+
     if (!canEditWorkingList(list)) {
       window.location.href = `/inventory/lists/${encodeURIComponent(list.id)}`;
       return;
@@ -1042,27 +1117,12 @@ export default function EquipmentListsSidebar() {
                   </span>
 
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
-                      <span className="truncate text-[11px] font-bold text-gray-900">
-                        {activeList.reference}
-                      </span>
-                      <span
-                        className={`shrink-0 rounded-full px-1.5 py-0.5 text-[8px] font-bold ${statusClass(
-                          activeList.status,
-                        )}`}
-                      >
-                        {sidebarStatusLabel(activeList)}
-                      </span>
-                    </div>
-
-                    <div className="mt-0.5 truncate text-[9px] text-gray-500">
-                      {equipmentListSummary(activeList)}
-                    </div>
+                    <SidebarListHeading list={activeList} />
                   </div>
 
                   <button
                     type="button"
-                    onClick={() => chooseActiveList(activeList)}
+                    onClick={clearActiveList}
                     title="Collapse current list"
                     aria-label="Collapse current list"
                     className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-gray-200 bg-white text-gray-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
@@ -1174,6 +1234,7 @@ export default function EquipmentListsSidebar() {
 
                 <Link
                   href={`/inventory/lists/${activeList.id}`}
+                  onClick={handleListLinkClick}
                   className="mt-2 flex w-full items-center justify-center rounded-xl bg-black px-3 py-2.5 text-[10px] font-semibold text-white transition hover:bg-gray-800"
                 >
                   Open List
@@ -1238,22 +1299,7 @@ export default function EquipmentListsSidebar() {
                             </span>
 
                             <span className="min-w-0 flex-1">
-                              <span className="flex items-center gap-1.5">
-                                <span className="truncate text-[11px] font-bold text-gray-900">
-                                  {list.reference}
-                                </span>
-                                <span
-                                  className={`shrink-0 rounded-full px-1.5 py-0.5 text-[8px] font-bold ${statusClass(
-                                    list.status,
-                                  )}`}
-                                >
-                                  {sidebarStatusLabel(list)}
-                                </span>
-                              </span>
-
-                              <span className="mt-1 block truncate text-[10px] text-gray-600">
-                                {equipmentListSummary(list)}
-                              </span>
+                              <SidebarListHeading list={list} />
 
                               {isSharedEquipmentDraft(list, currentUserId) ? (
                                 <span className="mt-1 block text-[9px] font-semibold text-blue-700">Shared with you · {list.created_by_name || "Team member"}</span>
@@ -1319,6 +1365,7 @@ export default function EquipmentListsSidebar() {
                         <Link
                           key={list.id}
                           href={`/inventory/lists/${list.id}`}
+                          onClick={handleListLinkClick}
                           className="block w-full rounded-xl border border-blue-200 bg-white px-3 py-2.5 text-left transition hover:border-blue-300 hover:shadow-sm"
                         >
                           <span className="flex items-start gap-2">
@@ -1327,17 +1374,10 @@ export default function EquipmentListsSidebar() {
                             </span>
 
                             <span className="min-w-0 flex-1">
-                              <span className="flex items-center gap-1.5">
-                                <span className="truncate text-[11px] font-bold text-gray-900">
-                                  {list.reference}
-                                </span>
-                                <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[8px] font-bold text-blue-800">
-                                  {sidebarStatusLabel(list)}
-                                </span>
-                              </span>
-                              <span className="mt-1 block truncate text-[10px] font-semibold text-gray-700">
-                                {equipmentListSummary(list)}
-                              </span>
+                              <SidebarListHeading
+                                list={list}
+                                badgeClassName="bg-blue-100 text-blue-800"
+                              />
                               {listDates(list) ? (
                                 <span className="mt-1 flex items-center gap-1 text-[9px] text-gray-400">
                                   <CalendarDays size={9} />
@@ -1389,6 +1429,7 @@ export default function EquipmentListsSidebar() {
                         <Link
                           key={list.id}
                           href={`/inventory/lists/${list.id}`}
+                          onClick={handleListLinkClick}
                           className="block w-full rounded-xl border border-amber-200 bg-white px-3 py-2.5 text-left transition hover:border-amber-300 hover:shadow-sm"
                         >
                           <span className="flex items-start gap-2">
@@ -1397,17 +1438,11 @@ export default function EquipmentListsSidebar() {
                             </span>
 
                             <span className="min-w-0 flex-1">
-                              <span className="flex items-center gap-1.5">
-                                <span className="truncate text-[11px] font-bold text-gray-900">
-                                  {list.reference}
-                                </span>
-                                <span className="shrink-0 rounded-full bg-amber-100 px-1.5 py-0.5 text-[8px] font-bold text-amber-800">
-                                  Repair
-                                </span>
-                              </span>
-                              <span className="mt-1 block truncate text-[10px] text-gray-600">
-                                {equipmentListSummary(list)}
-                              </span>
+                              <SidebarListHeading
+                                list={list}
+                                badgeClassName="bg-amber-100 text-amber-800"
+                                badgeLabel="Repair"
+                              />
                               {listDates(list) ? (
                                 <span className="mt-1 flex items-center gap-1 text-[9px] text-gray-400">
                                   <CalendarDays size={9} />
@@ -1482,18 +1517,11 @@ export default function EquipmentListsSidebar() {
                               </span>
 
                               <span className="min-w-0 flex-1">
-                                <span className="flex items-center gap-1.5">
-                                  <span className="truncate text-[11px] font-bold text-gray-900">
-                                    {list.reference}
-                                  </span>
-                                  <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[8px] font-bold text-blue-700">
-                                    Internal
-                                  </span>
-                                </span>
-
-                                <span className="mt-1 block truncate text-[10px] text-gray-600">
-                                  {equipmentListSummary(list)}
-                                </span>
+                                <SidebarListHeading
+                                  list={list}
+                                  badgeClassName="bg-blue-100 text-blue-700"
+                                  badgeLabel="Internal"
+                                />
 
                                 {selected ? (
                                   <span className="mt-2 flex items-center gap-1 border-t border-gray-200 pt-2 text-[9px] font-semibold text-gray-600">

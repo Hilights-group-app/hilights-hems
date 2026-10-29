@@ -111,12 +111,10 @@ export function isHead(): boolean {
 }
 
 export function canEditInventory(): boolean {
-  const role = getUserRole();
-
-  return (
-    role === "admin" ||
-    role === "warehouse_manager"
-  );
+  // Warehouse management is a Lists capability, not permission to change stock.
+  // Keep this separate from canManageEquipmentLists so picking, dispatch and
+  // receiving equipment remain available to Warehouse Managers.
+  return getUserRole() === "admin";
 }
 
 export function canReorderInventory(): boolean {

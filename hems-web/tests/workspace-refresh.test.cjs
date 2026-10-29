@@ -131,7 +131,8 @@ function environment(options = {}) {
   };
   const imports = {
     react, 'react/jsx-runtime': { jsx: (type, props) => ({ type, props }), jsxs: (type, props) => ({ type, props }) },
-    'next/link': { default: 'Link' }, 'next/navigation': { usePathname: () => options.pathname ?? '/' },
+    'next/link': { default: 'Link' }, 'next/navigation': { usePathname: () => options.pathname ?? '/', useRouter: () => ({ push() {} }) },
+    '@/lib/appLayout': { getAppLayout: () => 'desktop' },
     'lucide-react': new Proxy({}, { get: (_obj, key) => key }),
     '@/components/ActionRequiredAlerts': { default: 'ActionRequiredAlerts' },
     '@/components/InventoryImportClient': { default: 'InventoryImportClient' },

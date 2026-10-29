@@ -116,8 +116,11 @@ html[data-hems-layout="compact"] {
     height: 34px;
   }
   &[data-hems-mobile="new"] [data-hems-main] {
-    padding: 12px 10px calc(150px + env(safe-area-inset-bottom));
+    padding: 12px 10px calc(88px + env(safe-area-inset-bottom));
     background: #f5f6f8;
+  }
+  &[data-hems-mobile="new"][data-hems-inventory-picking="true"] [data-hems-main] {
+    padding-bottom: calc(150px + env(safe-area-inset-bottom));
   }
   /* Reserve an actual footer for add controls, including long equipment names. */
   &[data-hems-mobile="new"] .relative:has(> .absolute > [data-hems-mobile-add]),
@@ -248,6 +251,9 @@ html[data-hems-layout="compact"] {
 
 html[data-hems-layout="compact"] [data-hems-header-row] > div:first-child > span:last-child:not([data-hems-mobile-brand]) { display: none; }
 html[data-hems-layout="compact"][data-hems-mobile="new"] [data-hems-main] button.fixed[aria-label^="Add"] {
+  bottom: calc(72px + env(safe-area-inset-bottom));
+}
+html[data-hems-layout="compact"][data-hems-mobile="new"][data-hems-inventory-picking="true"] [data-hems-main] button.fixed[aria-label^="Add"] {
   bottom: calc(124px + env(safe-area-inset-bottom));
 }
 

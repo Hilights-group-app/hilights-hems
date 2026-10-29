@@ -160,9 +160,9 @@ function unitTable(variant: ReportVariant, rows: UnitRow[]) {
       body: rows.map((row) => [
         String(row.unit_no ?? "-"),
         row.serial || "-",
-        row.repair_label || statusLabel(row.status),
-        row.cert_date || "-",
-        row.expiry_date || "-",
+        row.repair_label || (row.status === "maintenance" ? "Failed" : statusLabel(row.status)),
+        row.status === "maintenance" ? "" : row.cert_date || "-",
+        row.status === "maintenance" ? "" : row.expiry_date || "-",
         row.notes || "-",
         String(normalizePhotos(row.damage_photos).length),
       ]),

@@ -193,7 +193,7 @@ function getStatusTextColor(status: string | null) {
 
     case "maintenance":
 
-      return "#ca8a04";
+      return "#dc2626";
 
     case "in_ksa":
 
@@ -215,7 +215,7 @@ function getStatusLabel(status: string | null) {
 
   if (status === "in_ksa") return "In KSA";
 
-  if (status === "maintenance") return "Maintenance";
+  if (status === "maintenance") return "Failed";
 
   return "Available";
 
@@ -321,6 +321,9 @@ export function ChainHoistRowsBlock({
   const loadedItemRef = useRef<string | null>(null);
   const currentItemRef = useRef(itemId);
   currentItemRef.current = itemId;
+  const unitWriteQueuesRef = useRef(new Map<string, Promise<unknown>>());
+  const unitWriteRevisionsRef = useRef(new Map<string, number>());
+  const [saveError, setSaveError] = useState("");
 
   const [movementByUnit, setMovementByUnit] = useState<
 
@@ -587,6 +590,9 @@ async function loadUnits() {
 
   function isExpired(unit: Unit) {
 
+    // A failed test cannot be counted as a valid/expired certificate.
+    if (unit.status === "maintenance") return false;
+
     if (!unit.expiry_date) return false;
 
 
@@ -663,6 +669,13 @@ async function loadUnits() {
 
   }, [units, onStatsChange]);
 
+  function changeStatusFilter(nextStatus: UnitReportStatusFilter) {
+    setStatusFilter(nextStatus);
+    // Failed rows have no active certificate. An old Valid/Expired selection
+    // must not hide the very rows the user is asking to see.
+    if (nextStatus === "maintenance") setValidityFilter("all");
+  }
+
   const filteredUnits = useMemo(() => {
     const query = filterQuery.trim().toLocaleLowerCase();
 
@@ -676,7 +689,7 @@ async function loadUnits() {
         (statusFilter === "assigned" && assigned);
       const validity = validStatus(unit);
       const validityMatches =
-        validityFilter === "all" || validityFilter === validity;
+        statusFilter === "maintenance" || validityFilter === "all" || validityFilter === validity;
 
       if (!statusMatches || !validityMatches) return false;
       if (!query) return true;
@@ -691,7 +704,7 @@ async function loadUnits() {
 
   async function updateUnit(id: string, patch: UnitPatch) {
 
-    if (!editable) return;
+    if (!editable || currentItemRef.current !== itemId) return;
 
 
 
@@ -719,6 +732,16 @@ async function loadUnits() {
 
     }
 
+    // Keep the existing non-available stock status for compatibility with
+    // dispatch/repair workflows. Failed is the Chain Hoist report label.
+    // Both dates are cleared in the SAME update as the selected Failed status.
+    // A delayed certificate edit must not repopulate a row that is now Failed.
+    if (patch.status === "maintenance" ||
+      (previous.status === "maintenance" && patch.status === undefined && patch.cert_date !== undefined)) {
+      nextPatch.cert_date = null;
+      nextPatch.expiry_date = null;
+    }
+
 
 
     const changedEntries = Object.entries(nextPatch).filter(
@@ -743,18 +766,33 @@ async function loadUnits() {
 
 
 
-    const { error } = await supabase.from("units").update(nextPatch).eq("id", id);
-
-
-
-    if (error) {
-
+    setSaveError("");
+    const revision = (unitWriteRevisionsRef.current.get(id) ?? 0) + 1;
+    unitWriteRevisionsRef.current.set(id, revision);
+    // Finish an already-started date save before saving Failed. Different
+    // units remain independent; no report-wide queue or additional reads.
+    const previousWrite = unitWriteQueuesRef.current.get(id) ?? Promise.resolve();
+    const request = previousWrite.catch(() => {}).then(async () => {
+      let write = supabase.from("units").update(nextPatch).eq("id", id).eq("item_id", itemId);
+      // Another device may have marked this unit Failed since we loaded it.
+      // Do not let a stale certificate edit overwrite that newer state.
+      if (patch.cert_date !== undefined && patch.status === undefined) write = write.eq("status", previous.status);
+      const { data, error } = await write.select("id").maybeSingle();
+      if (error) throw error;
+      if (data?.id !== id) throw new Error("The row could not be saved. Check your report permissions and try again.");
+    });
+    unitWriteQueuesRef.current.set(id, request);
+    try {
+      await request;
+    } catch (error) {
       console.error("updateUnit error:", error);
-
-      await loadUnits();
-
+      if (currentItemRef.current === itemId && unitWriteRevisionsRef.current.get(id) === revision) {
+        setSaveError((error as { message?: string } | null)?.message || "The row could not be saved. Please retry.");
+        await loadUnits();
+      }
       return;
-
+    } finally {
+      if (unitWriteQueuesRef.current.get(id) === request) unitWriteQueuesRef.current.delete(id);
     }
 
 
@@ -818,13 +856,15 @@ async function loadUnits() {
 
       link: activityLink,
 
-    });
+    }).catch((error) => console.error("chain hoist activity error:", error));
 
   }
 
 
 
   function validStatus(unit: Unit) {
+
+    if (unit.status === "maintenance") return "failed";
 
     return isExpired(unit) ? "expired" : "valid";
 
@@ -1154,15 +1194,17 @@ async function addRow(count = 1): Promise<number> {
           editable={editable} onSave={saveReportTestingDate}
         />
         {photoError ? <div role="alert" className="mb-3 text-[11px] text-red-600">{photoError}</div> : null}
+        {saveError ? <div role="alert" className="mb-3 text-[11px] text-red-600">{saveError}</div> : null}
         <UnitReportFilterBar
         query={filterQuery}
         status={statusFilter}
-        validity={validityFilter}
+        validity={statusFilter === "maintenance" ? undefined : validityFilter}
         resultCount={filteredUnits.length}
         totalCount={units.length}
         onQueryChange={setFilterQuery}
-        onStatusChange={setStatusFilter}
+        onStatusChange={changeStatusFilter}
         onValidityChange={setValidityFilter}
+        maintenanceLabel="Failed"
       />
 
 
@@ -1515,7 +1557,7 @@ function ChainHoistStatusField({
 
         {!workflowControlledStatus ? <option value="in_use">In Use</option> : null}
 
-        <option value="maintenance">Maintenance</option>
+        <option value="maintenance">Failed</option>
 
         {!workflowControlledStatus ? <option value="in_ksa">In KSA</option> : null}
 
@@ -1579,7 +1621,7 @@ function ChainHoistEditableRow({
 
   unit: Unit;
 
-  validStatus: "valid" | "expired";
+  validStatus: "valid" | "expired" | "failed";
 
   editable: boolean;
 
@@ -1649,6 +1691,31 @@ function ChainHoistEditableRow({
 
   }, [unit]);
 
+  // Reconcile status/dates after saves, errors or workflow reloads without
+  // clobbering an unrelated in-progress serial/note edit.
+  useEffect(() => {
+    setStatus(unit.status || "available");
+    setCertDate(unit.status === "maintenance" ? "" : unit.cert_date || "");
+    setExpiryDate(unit.status === "maintenance" ? "" : unit.expiry_date || "");
+  }, [unit.id, unit.status, unit.cert_date, unit.expiry_date]);
+
+  useEffect(() => () => {
+    Object.values(timerRef.current).forEach(clearTimeout);
+  }, []);
+
+  function changeStatus(nextStatus: string) {
+    if (!editable) return;
+    setStatus(nextStatus);
+    if (nextStatus === "maintenance") {
+      for (const key of ["cert_mobile", "cert_date"]) {
+        clearTimeout(timerRef.current[key]);
+        delete timerRef.current[key];
+      }
+      setCertDate("");
+      setExpiryDate("");
+    }
+    void onSave(unit.id, { status: nextStatus });
+  }
 
 
   function debounceSave(key: string, fn: () => void) {
@@ -1668,6 +1735,9 @@ function ChainHoistEditableRow({
     workflowControlledStatus &&
 
     (isMovementStatus(status) || Boolean(movement));
+
+  const failed = status === "maintenance";
+  const displayedValidity = failed ? "failed" : validStatus;
 
 
 
@@ -1763,7 +1833,7 @@ function ChainHoistEditableRow({
 
               className={`rounded-full px-2 py-1 text-[10px] font-semibold ${
 
-                validStatus === "expired"
+                displayedValidity !== "valid"
 
                   ? "bg-red-100 text-red-700"
 
@@ -1773,7 +1843,7 @@ function ChainHoistEditableRow({
 
             >
 
-              {validStatus === "expired" ? "Expired" : "Valid"}
+              {displayedValidity === "failed" ? "Failed" : displayedValidity === "expired" ? "Expired" : "Valid"}
 
             </span>
 
@@ -1867,13 +1937,7 @@ function ChainHoistEditableRow({
 
                 movement={movement}
 
-                onChange={(nextStatus) => {
-
-                  setStatus(nextStatus);
-
-                  void onSave(unit.id, { status: nextStatus });
-
-                }}
+                onChange={changeStatus}
 
               />
 
@@ -1887,7 +1951,7 @@ function ChainHoistEditableRow({
 
             <div className="text-[10px] font-semibold text-gray-400">Cert Date</div>
 
-            {editable ? (
+            {editable && !failed ? (
 
               <input
 
@@ -1931,7 +1995,7 @@ function ChainHoistEditableRow({
 
               <div className="mt-1 w-full text-[11px] text-gray-800">
 
-                {certDate || "-"}
+                {failed ? "" : certDate || "-"}
 
               </div>
 
@@ -1947,7 +2011,7 @@ function ChainHoistEditableRow({
 
             <div className="mt-1 w-full text-[11px] text-gray-500">
 
-              {expiryDate || "-"}
+              {failed ? "" : expiryDate || "-"}
 
             </div>
 
@@ -2191,7 +2255,7 @@ function ChainHoistEditableRow({
 
 
 
-        {editable ? (
+        {editable && !failed ? (
 
           <input
 
@@ -2231,7 +2295,7 @@ function ChainHoistEditableRow({
 
           <div className="w-full min-w-0 truncate rounded-lg bg-white px-1 py-1 text-[10px] text-gray-700">
 
-            {certDate || "-"}
+            {failed ? "" : certDate || "-"}
 
           </div>
 
@@ -2241,7 +2305,7 @@ function ChainHoistEditableRow({
 
         <div className="w-full min-w-0 truncate rounded-lg bg-white px-1 py-1 text-[10px] text-gray-500">
 
-          {expiryDate || "-"}
+          {failed ? "" : expiryDate || "-"}
 
         </div>
 
@@ -2251,7 +2315,7 @@ function ChainHoistEditableRow({
 
           className={`w-full min-w-0 truncate rounded-lg px-1 py-1 text-[9px] font-semibold text-center ${
 
-            validStatus === "expired"
+            displayedValidity !== "valid"
 
               ? "bg-red-100 text-red-700"
 
@@ -2261,7 +2325,7 @@ function ChainHoistEditableRow({
 
         >
 
-          {validStatus === "expired" ? "Expired" : "Valid"}
+          {displayedValidity === "failed" ? "Failed" : displayedValidity === "expired" ? "Expired" : "Valid"}
 
         </div>
 
@@ -2279,13 +2343,7 @@ function ChainHoistEditableRow({
 
           compact
 
-          onChange={(nextStatus) => {
-
-            setStatus(nextStatus);
-
-            void onSave(unit.id, { status: nextStatus });
-
-          }}
+          onChange={changeStatus}
 
         />
 
