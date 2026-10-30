@@ -21,6 +21,7 @@ import { Trash2 } from "lucide-react";
 import EquipmentListAddUnitsAction from "@/components/EquipmentListAddUnitsAction";
 import MaintenanceRepairBadge from "@/components/MaintenanceRepairBadge";
 import OnlineImageSearchPanel from "@/components/OnlineImageSearchPanel";
+import { useChainHoistAllocations, type ChainHoistAllocation } from "@/lib/useChainHoistAllocations";
 
 type UnitStatus = "available" | "in_use" | "maintenance" | "in_ksa";
 
@@ -143,6 +144,25 @@ function StatPill({
   );
 }
 
+function ChainHoistMovementLinks({ allocations }: { allocations: ChainHoistAllocation[] }) {
+  if (!allocations.length) return null;
+  return (
+    <div data-chain-hoist-active-allocations className="mt-2 flex flex-wrap gap-1.5 pl-[76px] pr-2">
+      {allocations.map(allocation => (
+        <Link
+          key={allocation.listId}
+          href={`/inventory/lists/${encodeURIComponent(allocation.listId)}`}
+          title={allocation.title}
+          onClick={event => event.stopPropagation()}
+          className="max-w-full break-words rounded-lg bg-blue-100 px-2 py-1 text-[9px] font-semibold text-blue-800 transition hover:bg-blue-200"
+        >
+          {allocation.quantity} pcs · {allocation.label}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
 function ItemPhoto({
   photo,
   name,
@@ -218,6 +238,8 @@ export default function SubcategoryClientChainHoist({
   );
 
   const [stats, setStats] = useState<Record<string, ItemStats>>({});
+  const { byItem: allocationsByItem, error: allocationError, retry: retryAllocations } =
+    useChainHoistAllocations(items.map(item => item.id));
   const [saveMsg, setSaveMsg] = useState("");
   const [sidebarTarget, setSidebarTarget] = useState<HTMLElement | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
@@ -1624,6 +1646,13 @@ export default function SubcategoryClientChainHoist({
         {selectedPhotoSearchPanel}
       </div>
 
+      {allocationError ? (
+        <div role="status" className="flex flex-wrap items-center gap-2 rounded-xl bg-amber-50 px-3 py-2 text-[10px] text-amber-800">
+          <span>{allocationError}</span>
+          <button type="button" onClick={retryAllocations} className="font-semibold underline">Retry locations</button>
+        </div>
+      ) : null}
+
       {items.length === 0 ? (
         <div className="bg-white border border-gray-200 rounded-xl px-5 py-6 shadow-[0_1px_2px_rgba(0,0,0,0.03)] text-gray-900">
           No items yet.
@@ -1795,6 +1824,7 @@ export default function SubcategoryClientChainHoist({
                       
                     </div>
                   </button>
+<ChainHoistMovementLinks allocations={allocationsByItem[it.id] ?? []} />
 <div className="pl-[76px]"><MaintenanceRepairBadge itemId={it.id} /></div>
 </div>
 
