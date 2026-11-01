@@ -848,7 +848,7 @@ if (!notifCache) {
             </Link>
 
             <span data-hems-brand-divider className="h-3 w-px shrink-0 bg-black/30 hems-wide:h-5" />
-            <span data-hems-mobile-brand className="hidden text-sm font-bold tracking-tight">HEMS</span>
+            <span data-hems-mobile-brand className="hidden text-sm font-bold tracking-tight"><span className="sm:hidden">EMS</span><span className="hidden sm:inline">HEMS</span></span>
 
             <span className="hidden truncate text-xs font-semibold tracking-wide text-gray-900 hems-desktop:block">
               Equipment Management System

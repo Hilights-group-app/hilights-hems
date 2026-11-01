@@ -2,6 +2,8 @@
 
 import { useDraftDescriptions, draftDescriptionKey } from "@/lib/useDraftDescriptions";
 import { canAppendDispatchedList } from "@/lib/equipmentLists";
+import { isOffline } from "@/lib/offline";
+import { isSerialAvailabilityError, readDispatchUnitIssues, type DispatchUnitIssue } from "@/lib/dispatchAvailability";
 
 import { createBrowserId } from "@/lib/browserId";
 import { draftGroupRank, moveDraftGroup } from "@/lib/draftItemOrder";
@@ -746,6 +748,15 @@ export default function EquipmentListDetailsClient({
     null,
   );
   const [error, setError] = useState("");
+  const [dispatchIssues, setDispatchIssues] = useState<DispatchUnitIssue[]>([]);
+  const dispatchContext = useRef({ listId, owner: getUserId() });
+  dispatchContext.current = { listId, owner: getUserId() };
+  useEffect(() => { setDispatchIssues([]); }, [listId, items]);
+  useEffect(() => {
+    dispatchContext.current = { listId, owner: getUserId() };
+    setApproving(false);
+    return () => { dispatchContext.current = { listId: "", owner: null }; };
+  }, [listId]);
   const [quantityError, setQuantityError] = useState<{
     itemId: string;
     message: string;
@@ -2541,6 +2552,12 @@ export default function EquipmentListDetailsClient({
     );
     if (!confirmed) return;
 
+    const actionListId = list.id;
+    const actionOwner = getUserId();
+    const stillCurrent = () => dispatchContext.current.listId === actionListId
+      && dispatchContext.current.owner === actionOwner && getUserId() === actionOwner;
+    setDispatchIssues([]);
+
     setApproving(true);
     setError("");
     setMessage("");
@@ -2552,6 +2569,8 @@ export default function EquipmentListDetailsClient({
       );
 
       if (approvalError) throw approvalError;
+
+      if (!stillCurrent()) return;
 
       const result = (data ?? {}) as {
         status?: EquipmentListStatus;
@@ -2602,12 +2621,26 @@ export default function EquipmentListDetailsClient({
       );
     } catch (approvalError: any) {
       console.error("approve equipment list error", approvalError);
+      if (!stillCurrent()) return;
       setError(
         approvalError?.message ||
           "Approval failed. Refresh the list and check equipment availability.",
       );
+      if (isSerialAvailabilityError(approvalError) && list.list_type !== "maintenance" && list.list_type !== "transfer_in") {
+        try {
+          const issues = await readDispatchUnitIssues(supabase, items, isOffline);
+          if (!stillCurrent()) return;
+          setDispatchIssues(issues);
+          setError(issues.length
+            ? "Dispatch was not completed. Review the highlighted units below (current status). No equipment was dispatched."
+            : "Dispatch was rejected. No unavailable unit could be confirmed from the current data. Refresh the list and try again.");
+        } catch {
+          // Keep the original RPC error if diagnostics are offline or denied.
+          if (stillCurrent()) setError(`${approvalError.message} Unit details could not be checked. Refresh and try again.`);
+        }
+      }
     } finally {
-      setApproving(false);
+      if (stillCurrent()) setApproving(false);
     }
   }
 
@@ -3082,8 +3115,16 @@ export default function EquipmentListDetailsClient({
       ) : null}
 
       {error ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[11px] font-medium text-red-700">
+        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-[11px] font-medium text-red-700">
           {error}
+          {dispatchIssues.length > 0 ? <ul className="mt-2 space-y-2">
+            {dispatchIssues.map((issue) => <li key={issue.itemId}>
+              <button type="button" className="text-left underline underline-offset-2"
+                onClick={() => { const row = document.getElementById(`dispatch-unit-${issue.itemId}`); row?.scrollIntoView({ behavior: "smooth", block: "center" }); row?.focus({ preventScroll: true }); }}>
+                <strong>{issue.name}</strong> · {issue.label} — {issue.status}
+              </button>
+            </li>)}
+          </ul> : null}
         </div>
       ) : null}
 
@@ -3257,8 +3298,14 @@ export default function EquipmentListDetailsClient({
                     const rect = event.currentTarget.getBoundingClientRect();
                     void saveDraftGroupOrder(group.key, event.clientY < rect.top + rect.height / 2 ? "before" : "after", currentCategoryLabel.toLowerCase());
                   }}
-                  className={`relative px-3 py-2.5 transition hover:bg-gray-50 sm:px-5 ${dragGroupKey === group.key ? "opacity-50" : ""}`}
+                  className={`relative px-3 py-2.5 transition hover:bg-gray-50 sm:px-5 ${dispatchIssues.some((issue) => group.items.some((item) => item.id === issue.itemId)) ? "bg-red-50 ring-1 ring-inset ring-red-300" : ""} ${dragGroupKey === group.key ? "opacity-50" : ""}`}
                 >
+                  {dispatchIssues.filter((issue) => group.items.some((item) => item.id === issue.itemId)).map((issue) => (
+                    <p key={issue.itemId} id={`dispatch-unit-${issue.itemId}`} tabIndex={-1}
+                      className="mb-2 break-words rounded-lg border border-red-200 bg-red-50 p-2 text-[11px] font-semibold text-red-700 outline-none focus:ring-2 focus:ring-red-400">
+                      {issue.name} · {issue.label} — {issue.status}
+                    </p>
+                  ))}
                   {draftDrop?.key === group.key ? <div aria-hidden="true" data-draft-drop-line={draftDrop.position}
                     className={`pointer-events-none absolute inset-x-3 z-40 h-0.5 rounded-full bg-red-500 ${draftDrop.position === "before" ? "top-0" : "bottom-0"}`} /> : null}
                   <div className="flex items-start gap-3">
