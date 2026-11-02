@@ -1,8 +1,10 @@
 "use client";
+import ReservedStockBadge, { ReservationReadStatus, ReservedForStock } from "@/components/ReservedStockBadge";
 
 import { uploadEquipmentPhoto as uploadPhoto } from "@/lib/imageUploads";
 import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor";
 
+import { usePendingReservations } from "@/lib/usePendingReservations";
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 
 import KsaStockLink from "@/components/KsaStockLink";
@@ -178,8 +180,9 @@ function rowAvailableFromTotal(
   total: number,
   allocated: number,
   maintenance: number,
+  reserved = 0,
 ) {
-  return Math.max(0, total - allocated - maintenance);
+  return Math.max(0, total - allocated - maintenance - reserved);
 }
 
 function existingMovementQuantity(row: MatrixRow, activeAllocated: number) {
@@ -443,6 +446,7 @@ export default function SubcategoryClientLedScreen({
   subcategoryId: string | null;
 }) {
   const supabase = createClient();
+  const reservations = usePendingReservations();
   const editable = canEditInventory();
   const reorderable = canReorderInventory();
   const pathname = usePathname();
@@ -1749,6 +1753,7 @@ export default function SubcategoryClientLedScreen({
         clampQty(selectedCabinetInfo.row.qty),
         selectedCabinetTrackedQty,
         clampQty(selectedCabinetInfo.row.maintenance_qty),
+        reservations.index.quantity("matrix_row",selectedCabinetInfo.row.id),
       )
     : 0;
 
@@ -2109,6 +2114,7 @@ export default function SubcategoryClientLedScreen({
 
   return (
     <div className="mx-auto w-full space-y-3 text-black">
+      <ReservationReadStatus />
       <input
         ref={newPhotoFileRef}
         type="file"
@@ -2737,6 +2743,7 @@ function LedModelCard({
   onAddToList: (row: MatrixRow) => void;
 }) {
   const rows = sortRows(model.matrix_rows);
+  const reservations = usePendingReservations();
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: { distance: 8 },
@@ -2761,6 +2768,7 @@ function LedModelCard({
             clampQty(row.qty),
             allocated,
             clampQty(row.maintenance_qty),
+            reservations.index.quantity("matrix_row",row.id),
           ),
           row.size,
         )
@@ -2768,6 +2776,7 @@ function LedModelCard({
     },
     0
   );
+  const reservedDisplay = rows.reduce((sum,row)=>sum + toSqm(reservations.index.quantity("matrix_row",row.id),row.size),0);
   const maintenanceDisplay = rows.reduce(
     (sum, row) => sum + toSqm(clampQty(row.maintenance_qty), row.size),
     0
@@ -2846,6 +2855,7 @@ function LedModelCard({
           </button>
         ) : null}
       </div>
+      <ReservedStockBadge quantity={reservedDisplay} unit="SQM" />
       <div className="flex flex-col gap-3 hems-wide:flex-row hems-wide:items-start hems-wide:justify-between">
   <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
     <div className="min-w-0 flex-1">
@@ -3030,7 +3040,7 @@ function LedModelCard({
                                   className="min-w-0 break-words text-left text-[8px] font-medium leading-tight text-gray-500 sm:text-[9px]"
                                   title={r.size}
                                 >
-                                  {r.size}
+                                  {r.size}<ReservedForStock type="matrix_row" id={r.id} area={toSqm(1,r.size)} unit="SQM" />
                                 </div>
                               </div>
                             </div>
@@ -3066,6 +3076,7 @@ function LedModelCard({
                                       ),
                                     ),
                                   clampQty(r.maintenance_qty),
+                                  reservations.index.quantity("matrix_row",r.id),
                                 ),
                                 r.size,
                               )}
@@ -3197,12 +3208,14 @@ function DesktopEditableCabinetRow({
   onAddToList: () => void;
 }) {
   const activeAllocated = movementAllocationQuantity(allocations);
+  const reservations = usePendingReservations();
   const legacyMovement = existingMovementQuantity(row, activeAllocated);
   const allocated = activeAllocated + legacyMovement;
   const available = rowAvailableFromTotal(
     clampQty(row.qty),
     allocated,
     clampQty(row.maintenance_qty),
+    reservations.index.quantity("matrix_row",row.id),
   );
 
   return (
@@ -3229,7 +3242,7 @@ function DesktopEditableCabinetRow({
         className="truncate text-left font-medium text-gray-600"
         title={row.size}
       >
-        {row.size}
+        {row.size}<ReservedForStock type="matrix_row" id={row.id} area={toSqm(1,row.size)} unit="SQM" />
       </div>
 
       <div className="text-center">

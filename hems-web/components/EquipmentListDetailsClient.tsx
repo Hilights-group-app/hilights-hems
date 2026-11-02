@@ -3,6 +3,9 @@
 import { useDraftDescriptions, draftDescriptionKey } from "@/lib/useDraftDescriptions";
 import { canAppendDispatchedList } from "@/lib/equipmentLists";
 import { isOffline } from "@/lib/offline";
+import { usePendingReservations } from "@/lib/usePendingReservations";
+import { ReservationReadStatus } from "@/components/ReservedStockBadge";
+import { availableAfterReservations } from "@/lib/pendingReservations";
 import { isSerialAvailabilityError, readDispatchUnitIssues, type DispatchUnitIssue } from "@/lib/dispatchAvailability";
 
 import { createBrowserId } from "@/lib/browserId";
@@ -706,6 +709,7 @@ export default function EquipmentListDetailsClient({
   listId: string;
 }) {
   const supabase = useMemo(() => createClient(), []);
+  const reservations = usePendingReservations();
   const router = useRouter();
   const [isManager, setIsManager] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -1550,9 +1554,16 @@ export default function EquipmentListDetailsClient({
       Math.max(0, Number(stock.in_use_qty) || 0) +
       Math.max(0, Number(stock.maintenance_qty) || 0) +
       inKsa;
+    if (list.list_type !== "transfer_in" && !reservations.ready) {
+      throw new Error("Please wait for reservations to load, then retry.");
+    }
+    const ownPending = list.status === "pending" ? items.reduce((sum,current) =>
+      current.inventory_record_type === item.inventory_record_type && current.inventory_record_id === item.inventory_record_id
+        ? sum + Math.max(0,Number(current.requested_quantity) || 0) : sum,0) : 0;
     const available = list.list_type === "transfer_in"
       ? inKsa
-      : Math.max(0, total - occupied);
+      : availableAfterReservations(Math.max(0, total - occupied),
+          reservations.index.quantity(item.inventory_record_type,item.inventory_record_id),ownPending);
     const siblingQuantity = items.reduce((sum, current) => {
       if (
         current.id === item.id ||
@@ -2441,8 +2452,13 @@ export default function EquipmentListDetailsClient({
       return;
     }
 
+    if (["local_event","dry_hire","transfer_out","internal_use"].includes(list.list_type) && !reservations.ready) {
+      setError("Reservations could not be verified. Check the reservation setup/connection, then retry before submitting.");
+      return;
+    }
+
     const confirmed = window.confirm(
-      `Submit ${list.reference} for warehouse approval? You will not be able to add or remove equipment while it is pending.`,
+      `Submit ${list.reference} for warehouse approval?${["local_event","dry_hire","transfer_out","internal_use"].includes(list.list_type) ? " Inventory equipment will be reserved until dispatch or cancellation." : ""}`,
     );
     if (!confirmed) return;
 
@@ -2492,7 +2508,9 @@ export default function EquipmentListDetailsClient({
       }
 
       setList(data as DetailedEquipmentList);
-      setMessage("List submitted. It is now waiting for warehouse approval.");
+      setMessage(["local_event","dry_hire","transfer_out","internal_use"].includes(list.list_type)
+        ? "List submitted. Equipment is Reserved while waiting for warehouse approval."
+        : "List submitted. It is now waiting for warehouse approval.");
 
       window.dispatchEvent(
         new CustomEvent(EQUIPMENT_LISTS_EVENT, {
@@ -2524,7 +2542,7 @@ export default function EquipmentListDetailsClient({
 
   async function cancelPendingList() {
     if (!list || !canReview || cancellingList || approving || cancelBusy.current || savingDraftOrder || pendingCustomEdits) return;
-    if (!window.confirm(`Cancel ${list.reference}? This Pending list and its items will be permanently deleted. This cannot be undone. Any selected KSA equipment will be released for another Transfer In.`)) return;
+    if (!window.confirm(`Cancel ${list.reference}? This Pending list and its items will be permanently deleted. This cannot be undone. ${list.list_type === "transfer_in" ? "Any selected KSA equipment will be released for another Transfer In." : "Its inventory reservation will be released."}`)) return;
     cancelBusy.current=true;setCancellingList(true);setError("");setMessage("");
     try {
       const {error:cancelError}=await supabase.rpc("hems_cancel_pending_list",{p_list_id:list.id});
@@ -2633,7 +2651,7 @@ export default function EquipmentListDetailsClient({
           setDispatchIssues(issues);
           setError(issues.length
             ? "Dispatch was not completed. Review the highlighted units below (current status). No equipment was dispatched."
-            : "Dispatch was rejected. No unavailable unit could be confirmed from the current data. Refresh the list and try again.");
+            : `${approvalError.message} Refresh the list to review the latest reservation and unit status.`);
         } catch {
           // Keep the original RPC error if diagnostics are offline or denied.
           if (stillCurrent()) setError(`${approvalError.message} Unit details could not be checked. Refresh and try again.`);
@@ -2949,9 +2967,13 @@ export default function EquipmentListDetailsClient({
                 : "Waiting for warehouse approval"}
             </div>
             <div className="mt-0.5 text-[10px] leading-4 text-amber-700">
-              {canReview
-                ? "Check the equipment quantities and serial numbers, make any needed changes, then approve and dispatch."
-                : "Equipment is locked for editing, but inventory availability has not changed yet."}
+              {["local_event","dry_hire","transfer_out","internal_use"].includes(list.list_type)
+                ? canReview
+                  ? "Equipment is Reserved. Review quantities and serial numbers, then approve and dispatch."
+                  : "Equipment is Reserved until warehouse dispatch or cancellation."
+                : canReview
+                  ? "Check the equipment quantities and serial numbers, make any needed changes, then approve and dispatch."
+                  : "Waiting for warehouse approval. The existing repair/KSA workflow is unchanged."}
             </div>
           </div>
         </div>
@@ -3108,6 +3130,7 @@ export default function EquipmentListDetailsClient({
         </div>
       ) : null}
 
+      <ReservationReadStatus />
       {message ? (
         <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-[11px] font-medium text-green-800">
           {message}

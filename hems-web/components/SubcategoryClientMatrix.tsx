@@ -1,8 +1,11 @@
 "use client";
+import { ReservationReadStatus, ReservedForStock } from "@/components/ReservedStockBadge";
 
 import { uploadEquipmentPhoto as uploadPhoto } from "@/lib/imageUploads";
 import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor";
 
+import { usePendingReservations } from "@/lib/usePendingReservations";
+import { withReservedStats } from "@/lib/pendingReservations";
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 
 import { useAppLayout } from "@/lib/useAppLayout";
@@ -525,6 +528,7 @@ export default function SubcategoryClientMatrix({
   subcategoryId?: string | null;
 }) {
   const supabase = createClient();
+  const reservations = usePendingReservations();
   const editable = canEditInventory();
   const reorderable = canReorderInventory();
 
@@ -2313,7 +2317,7 @@ export default function SubcategoryClientMatrix({
   }
 
   function renderItemRow(it: MatrixItemRow, isLast: boolean) {
-    const stats = statsByItem[it.id] || statsFromItem(it);
+    const stats = withReservedStats(statsByItem[it.id] || statsFromItem(it),reservations.index.quantity("matrix_model",it.id));
     const modelAllocations =
       allocationsByRecordKey[`matrix_model:${it.id}`] || [];
     const modelMaintenanceAllocation = modelAllocations.reduce(
@@ -2417,7 +2421,7 @@ export default function SubcategoryClientMatrix({
                       allocationsByRecordKey[`matrix_model:${it.id}`] || []
                     }
                   />
-                  <KsaStockLink quantity={stats.inKsa} search={it.name} />
+                  <KsaStockLink quantity={stats.inKsa} search={it.name} /><ReservedForStock type="matrix_model" id={it.id} />
 
                   <div className="mt-2 hems-wide:hidden">
                   <div className={`grid gap-x-2 gap-y-1 text-center ${
@@ -2600,7 +2604,7 @@ export default function SubcategoryClientMatrix({
                 </div>
               ) : (
                 cableRows.map((row) => {
-                  const s = cableStats(row);
+                  const s = withReservedStats(cableStats(row),reservations.index.quantity("matrix_row",row.id));
                   const rowAllocations =
                     allocationsByRecordKey[`matrix_row:${row.id}`] || [];
 
@@ -2687,6 +2691,7 @@ export default function SubcategoryClientMatrix({
                             </Link>
                           ) : null}
                         </div>
+                        <ReservedForStock type="matrix_row" id={row.id} />
                         <AllocationBadges allocations={rowAllocations} />
                       </div>
 
@@ -2820,7 +2825,7 @@ export default function SubcategoryClientMatrix({
                     allocationsByRecordKey[`matrix_model:${it.id}`] || []
                   }
                 />
-                  <KsaStockLink quantity={stats.inKsa} search={it.name} />
+                  <KsaStockLink quantity={stats.inKsa} search={it.name} /><ReservedForStock type="matrix_model" id={it.id} />
 
                 <div className="mt-2 hems-wide:hidden">
                   <div className={`grid gap-x-2 gap-y-1 text-center ${
@@ -2905,6 +2910,7 @@ export default function SubcategoryClientMatrix({
 
   return (
     <div className="w-full mx-auto space-y-3">
+      <ReservationReadStatus />
       {manualOrderSaving ? (
         <div role="status" className="text-xs text-gray-500">Saving order…</div>
       ) : null}

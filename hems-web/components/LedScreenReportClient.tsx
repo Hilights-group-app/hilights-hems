@@ -1,4 +1,6 @@
 "use client";
+import { usePendingReservations } from "@/lib/usePendingReservations";
+import { ReservedForStock, ReservationReadStatus } from "@/components/ReservedStockBadge";
 
 import ReportTestingDate from "@/components/ReportTestingDate";
 
@@ -208,8 +210,9 @@ function rowAvailableFromTotal(
   total: number,
   allocated: number,
   maintenance: number,
+  reserved = 0,
 ) {
-  return Math.max(0, total - allocated - maintenance);
+  return Math.max(0, total - allocated - maintenance - reserved);
 }
 
 function allocationLabel(list: EquipmentList) {
@@ -364,6 +367,7 @@ export default function LedScreenReportClient({
   rowId: string;
 }) {
   const supabase = useMemo(() => createClient(), []);
+  const reservations = usePendingReservations();
   const repairSnapshot=useRepairStatus();
   const allocationReadVersion = useRef(0);
   const stockReadVersion = useRef(0);
@@ -1104,6 +1108,7 @@ export default function LedScreenReportClient({
           clampQty(row.qty),
           trackedMovementQty,
           clampQty(row.maintenance_qty),
+          reservations.index.quantity("matrix_row",row.id),
         ),
         row.size,
         viewMode,
@@ -2282,6 +2287,8 @@ export default function LedScreenReportClient({
               Available : {formatQty(availableDisplay, viewMode)}{" "}
               {unitSuffix(viewMode)}
             </span>
+
+            <ReservedForStock type="matrix_row" id={rowId} area={row ? toDisplayQty(1,row.size,viewMode) : 1} unit={unitSuffix(viewMode)} />
 
             {maintenanceDisplay > 0 ? (
               <span className="px-2.5 py-1 rounded-lg bg-yellow-100 text-yellow-700 text-[10px] font-semibold">

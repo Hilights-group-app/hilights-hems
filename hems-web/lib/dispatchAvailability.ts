@@ -3,8 +3,12 @@ import type { EquipmentListItem } from "./equipmentLists";
 
 export type DispatchUnitIssue = { itemId: string; name: string; label: string; status: string };
 
-export function isSerialAvailabilityError(error: { message?: string } | null) {
-  return /selected serial numbers are no longer available/i.test(error?.message || "");
+export function isSerialAvailabilityError(error: { message?: string; details?: string | null } | null) {
+  if (/selected serial numbers are no longer available/i.test(error?.message || "")) return true;
+  try {
+    const details = JSON.parse(error?.details || "null");
+    return details?.record_type === "unit" && typeof details.record_id === "string";
+  } catch { return false; }
 }
 
 // Diagnostic only: the atomic dispatch RPC remains the authority for stock.

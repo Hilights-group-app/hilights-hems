@@ -1,8 +1,11 @@
 // components/SubcategoryClientChainHoist.tsx
 "use client";
+import { ReservationReadStatus, ReservedForStock } from "@/components/ReservedStockBadge";
 
 import { uploadEquipmentPhoto as uploadPhoto } from "@/lib/imageUploads";
 
+import { usePendingReservations } from "@/lib/usePendingReservations";
+import { withReservedStats } from "@/lib/pendingReservations";
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor";
 
@@ -217,6 +220,7 @@ export default function SubcategoryClientChainHoist({
 }) {
   const router = useRouter();
   const supabase = createClient();
+  const reservations = usePendingReservations();
   const editable = canEditInventory();
 
   const [subcategoryId, setSubcategoryId] = useState<string | null>(null);
@@ -1460,6 +1464,7 @@ export default function SubcategoryClientChainHoist({
 
   return (
     <div className="w-full mx-auto space-y-3">
+      <ReservationReadStatus />
       <input
         ref={listPhotoRef}
         type="file"
@@ -1665,14 +1670,14 @@ export default function SubcategoryClientChainHoist({
             <h2>{group.block}</h2>
           </div>
           {group.items.map((it, index) => {
-            const st = stats[it.id] ?? {
+            const st = withReservedStats(stats[it.id] ?? {
               total: 0,
               available: 0,
               inUse: 0,
               maintenance: 0,
               inKsa: 0,
               expired: 0,
-            };
+            }, reservations.index.parent("unit",it.id));
 
             const isLast = index === group.items.length - 1;
             const detailsHref = `/inventory/${category}/${subcategory}/${it.id}`;
@@ -1825,7 +1830,7 @@ export default function SubcategoryClientChainHoist({
                     </div>
                   </button>
 <ChainHoistMovementLinks allocations={allocationsByItem[it.id] ?? []} />
-<div className="pl-[76px]"><MaintenanceRepairBadge itemId={it.id} /></div>
+<div className="pl-[76px]"><MaintenanceRepairBadge itemId={it.id} /><ReservedForStock type="unit" id={it.id} parent /></div>
 </div>
 
                   <div

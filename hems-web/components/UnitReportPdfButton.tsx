@@ -1,6 +1,7 @@
 "use client";
 
 import { testingDateSummary } from "@/lib/reportTestingDate";
+import { readVerifiedPendingReservations } from "@/lib/usePendingReservations";
 
 import { Download } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -49,6 +50,10 @@ function statusLabel(value: string | null) {
   if (value === "in_ksa") return "In KSA";
   if (value === "maintenance") return "Maintenance";
   return "Available";
+}
+
+function coalesceAvailable(value: string | null) {
+  return (value || "available") === "available";
 }
 
 function normalizePhotos(value: UnitRow["damage_photos"]) {
@@ -218,7 +223,7 @@ export default function UnitReportPdfButton({
     setExporting(true);
 
     try {
-      const [{ data, error }, { jsPDF }, { autoTable }, logo, itemPhoto, repairResult] =
+      const [{ data, error }, { jsPDF }, { autoTable }, logo, itemPhoto, repairResult, pending] =
         await Promise.all([
           supabase
             .from("units")
@@ -232,6 +237,7 @@ export default function UnitReportPdfButton({
           loadPdfImage("/logo.png", 1600),
           loadPdfImage(itemPhotoUrl, 1000),
           supabase.rpc("hems_repair_status"),
+          readVerifiedPendingReservations(),
         ]);
 
       if (error) throw error;
@@ -239,7 +245,8 @@ export default function UnitReportPdfButton({
       if(repairResult.error)throw repairResult.error;
       const repairs=mergeRepairMovements({},(repairResult.data ?? []) as RepairStatus[]);
       const rows = ((data ?? []) as UnitRow[]).map(row=>({...row,
-        repair_label:repairs[row.id]?.label.replaceAll("·","-"),
+        repair_label:repairs[row.id]?.label.replaceAll("·","-") ||
+          (coalesceAvailable(row.status) && pending.index.quantity("unit",row.id)>0 ? "Reserved" : undefined),
       }));
       const pdf = new jsPDF({
         orientation: "portrait",

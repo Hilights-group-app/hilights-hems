@@ -1,4 +1,5 @@
 "use client";
+import { ReservationReadStatus, ReservedForStock } from "@/components/ReservedStockBadge";
 
 import { uploadEquipmentPhoto as uploadItemPhoto } from "@/lib/imageUploads";
 
@@ -197,6 +198,8 @@ export default function ItemEditClientProjectorUnits({
 
   return (
     <div className="min-h-screen min-w-0 overflow-x-hidden bg-gray-50 px-[2px] py-2 sm:p-3">
+      <ReservationReadStatus />
+      <ReservedForStock type="unit" id={itemId} parent />
       <div className="mx-auto w-full min-w-0 max-w-none space-y-3 px-0 sm:w-full">
         <input
           ref={itemPhotoRef}

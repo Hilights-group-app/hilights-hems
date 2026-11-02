@@ -1,7 +1,10 @@
 "use client";
+import { ReservationReadStatus, ReservedForStock } from "@/components/ReservedStockBadge";
 
 import { uploadEquipmentPhoto as uploadPhoto } from "@/lib/imageUploads";
 
+import { usePendingReservations } from "@/lib/usePendingReservations";
+import { withReservedStats } from "@/lib/pendingReservations";
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor";
 
@@ -153,6 +156,7 @@ export default function SubcategoryClientProjectors({
   subcategoryId: string | null;
 }) {
   const supabase = createClient();
+  const reservations = usePendingReservations();
   const editable = canEditInventory();
 
   const [resolvedSubcategoryId, setResolvedSubcategoryId] = useState<
@@ -1318,6 +1322,7 @@ export default function SubcategoryClientProjectors({
 
   return (
     <div className="w-full mx-auto space-y-3">
+      <ReservationReadStatus />
       <input
         ref={listPhotoRef}
         type="file"
@@ -1705,13 +1710,13 @@ export default function SubcategoryClientProjectors({
             <h2>{group.block}</h2>
           </div>
           {group.items.map((it, index) => {
-            const st = stats[it.id] ?? {
+            const st = withReservedStats(stats[it.id] ?? {
               total: 0,
               available: 0,
               inUse: 0,
               maintenance: 0,
               inKsa: 0,
-            };
+            }, reservations.index.parent("unit",it.id));
 
             return (
               <React.Fragment key={it.id}>
@@ -1887,7 +1892,7 @@ function ProjectorItemRow({
               
             </div>
           </button>
-<div className="pl-[76px]"><MaintenanceRepairBadge itemId={item.id} /></div>
+<div className="pl-[76px]"><MaintenanceRepairBadge itemId={item.id} /><ReservedForStock type="unit" id={item.id} parent /></div>
 </div>
         </div>
 

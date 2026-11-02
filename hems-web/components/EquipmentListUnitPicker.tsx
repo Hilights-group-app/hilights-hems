@@ -1,6 +1,8 @@
 "use client";
 import EquipmentListPickerOverlay from "@/components/EquipmentListPickerOverlay";
 import { canAppendDispatchedList } from "@/lib/equipmentLists";
+import { refreshPendingReservations, usePendingReservations } from "@/lib/usePendingReservations";
+import { ReservationReadStatus } from "@/components/ReservedStockBadge";
 import { canManageEquipmentLists } from "@/lib/authStore";
 
 import { Check, Loader2, PackagePlus, X } from "lucide-react";
@@ -51,6 +53,7 @@ export default function EquipmentListUnitPicker({
   onAdded: (count: number) => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
+  const reservations = usePendingReservations();
   const [units, setUnits] = useState<UnitRow[]>([]);
   const [existingIds, setExistingIds] = useState<Set<string>>(new Set());
   const [activeRepairIds, setActiveRepairIds] = useState<Set<string>>(
@@ -77,6 +80,8 @@ export default function EquipmentListUnitPicker({
     async function loadUnits() {
       setLoading(true);
       setError("");
+      // Share one live reservation refresh for the opened picker, not per unit.
+      void refreshPendingReservations();
 
       let unitsQuery = supabase
         .from("units")
@@ -162,10 +167,11 @@ export default function EquipmentListUnitPicker({
       units
         .filter(
           (unit) =>
-            !existingIds.has(unit.id) && !activeRepairIds.has(unit.id),
+            !existingIds.has(unit.id) && !activeRepairIds.has(unit.id)
+              && (list.list_type === "maintenance" || reservations.index.quantity("unit",unit.id) === 0),
         )
         .map((unit) => unit.id),
-    [activeRepairIds, existingIds, units],
+    [activeRepairIds, existingIds, units, reservations.index, list.list_type],
   );
 
   const allSelected =
@@ -177,7 +183,7 @@ export default function EquipmentListUnitPicker({
     (allowPendingReview && list.status === "pending");
 
   function toggleUnit(unitId: string) {
-    if (existingIds.has(unitId) || activeRepairIds.has(unitId) || saving) return;
+    if (!selectableIds.includes(unitId) || saving || (list.list_type !== "maintenance" && !reservations.ready)) return;
 
     setSelectedIds((current) => {
       const next = new Set(current);
@@ -205,10 +211,10 @@ export default function EquipmentListUnitPicker({
   }
 
   async function addSelectedUnits() {
-    if (saving || !canAddToList) return;
+    if (saving || !canAddToList || (list.list_type !== "maintenance" && !reservations.ready)) return;
 
     const selectedUnits = units.filter(
-      (unit) => selectedIds.has(unit.id) && !existingIds.has(unit.id),
+      (unit) => selectedIds.has(unit.id) && selectableIds.includes(unit.id),
     );
 
     if (selectedUnits.length === 0) return;
@@ -312,6 +318,7 @@ export default function EquipmentListUnitPicker({
         </div>
 
         <div data-hems-picker-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+        {list.list_type !== "maintenance" ? <div className="px-4 py-2"><ReservationReadStatus /></div> : null}
         <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 sm:px-5">
           <div>
             <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
@@ -383,6 +390,7 @@ export default function EquipmentListUnitPicker({
               {units.map((unit) => {
                 const alreadyAdded = existingIds.has(unit.id);
                 const alreadyAtRepair = activeRepairIds.has(unit.id);
+                const reserved = list.list_type !== "maintenance" && reservations.index.quantity("unit",unit.id) > 0;
                 const selected = selectedIds.has(unit.id);
 
                 return (
@@ -390,7 +398,7 @@ export default function EquipmentListUnitPicker({
                     key={unit.id}
                     type="button"
                     onClick={() => toggleUnit(unit.id)}
-                    disabled={alreadyAdded || alreadyAtRepair || saving}
+                    disabled={alreadyAdded || alreadyAtRepair || reserved || saving || (list.list_type !== "maintenance" && !reservations.ready)}
                     className={`flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition ${
                       alreadyAdded || alreadyAtRepair
                         ? "cursor-default border-gray-100 bg-gray-50 opacity-60"
@@ -414,6 +422,7 @@ export default function EquipmentListUnitPicker({
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[11px] font-semibold text-gray-900">
                         {unitLabel(unit)}
+                        {reserved ? <span className="ml-2 text-orange-700">Reserved</span> : null}
                       </span>
                       <span className="mt-0.5 block text-[9px] text-gray-400">
                         Unit {unit.unit_no ?? "—"}
@@ -456,7 +465,7 @@ export default function EquipmentListUnitPicker({
           <button
             type="button"
             onClick={() => void addSelectedUnits()}
-            disabled={saving || selectedIds.size === 0 || !canAddToList}
+            disabled={saving || selectedIds.size === 0 || !canAddToList || (list.list_type !== "maintenance" && !reservations.ready)}
             className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-black px-4 text-[11px] font-semibold text-white transition hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {saving ? <Loader2 size={14} className="animate-spin" /> : <PackagePlus size={14} />}

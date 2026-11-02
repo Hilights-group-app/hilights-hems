@@ -1,7 +1,10 @@
 "use client";
+import { ReservationReadStatus, ReservedForStock } from "@/components/ReservedStockBadge";
 
 import { uploadEquipmentPhoto as uploadPhoto } from "@/lib/imageUploads";
 
+import { usePendingReservations } from "@/lib/usePendingReservations";
+import { withReservedStats } from "@/lib/pendingReservations";
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor";
 
@@ -236,6 +239,7 @@ export default function SubcategoryClientSerialized({
   subcategory: string;
 }) {
   const supabase = createClient();
+  const reservations = usePendingReservations();
   const fileRef = useRef<HTMLInputElement | null>(null);
   const listPhotoFileRef = useRef<HTMLInputElement | null>(null);
   const editable = canEditInventory();
@@ -997,13 +1001,13 @@ export default function SubcategoryClientSerialized({
   }
 
   function renderItemRow(it: ItemRow, isLast: boolean) {
-    const stats = statsByItem[it.id] || {
+    const stats = withReservedStats(statsByItem[it.id] || {
       total: 0,
       available: 0,
       inUse: 0,
       maintenance: 0,
       inKsa: 0,
-    };
+    }, reservations.index.parent("unit",it.id));
 
     const detailsHref = `/inventory/${category}/${subcategory}/${it.id}`;
 
@@ -1111,7 +1115,7 @@ export default function SubcategoryClientSerialized({
                 
               </div>
             </Link>
-<div className="pl-[76px]"><MaintenanceRepairBadge itemId={it.id} /></div>
+<div className="pl-[76px]"><MaintenanceRepairBadge itemId={it.id} /><ReservedForStock type="unit" id={it.id} parent /></div>
 </div>
           </div>
 
@@ -1584,6 +1588,7 @@ export default function SubcategoryClientSerialized({
 
   return (
     <div className="w-full space-y-3">
+      <ReservationReadStatus />
       <input
         ref={fileRef}
         type="file"

@@ -1,5 +1,8 @@
 "use client";
 import { canAppendDispatchedList } from "@/lib/equipmentLists";
+import { refreshPendingReservations, usePendingReservations } from "@/lib/usePendingReservations";
+import { availableAfterReservations } from "@/lib/pendingReservations";
+import { ReservationReadStatus } from "@/components/ReservedStockBadge";
 import { canManageEquipmentLists } from "@/lib/authStore";
 import EquipmentListPickerOverlay from "@/components/EquipmentListPickerOverlay";
 
@@ -97,6 +100,8 @@ export default function EquipmentListQuantityPicker({
   onAdded: (quantity: number) => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
+  const reservations = usePendingReservations();
+  useEffect(()=>{void refreshPendingReservations();},[list.id,row.id]);
   const [existingLine, setExistingLine] = useState<ExistingLine | null>(null);
   const [squareMetres, setSquareMetres] = useState("");
   const [loading, setLoading] = useState(true);
@@ -109,12 +114,13 @@ export default function EquipmentListQuantityPicker({
         0,
         clampQty(row.maintenance_qty) - clampQty(activeMaintenanceQuantity),
       )
-    : Math.max(
+    : availableAfterReservations(Math.max(
         0,
         clampQty(row.qty) -
           clampQty(row.maintenance_qty) -
           clampQty(activeAllocatedQuantity),
-      ));
+      ), reservations.index.quantity("matrix_row",row.id),
+        list.status === "pending" ? clampQty(existingLine?.requested_quantity) : 0));
   const cabinetArea = cabinetAreaFromSize(row.size);
   const requestedSquareMetres = Math.max(0, Number(squareMetres) || 0);
   const quantity =
@@ -194,6 +200,7 @@ export default function EquipmentListQuantityPicker({
   async function saveQuantity() {
     if (
       saving ||
+      (!maintenanceList && !reservations.ready) ||
       !(
         canAppendDispatchedList(list, canManageEquipmentLists()) || list.status === "draft" ||
         (allowPendingReview && list.status === "pending")
@@ -332,6 +339,7 @@ export default function EquipmentListQuantityPicker({
         </div>
 
         <div className="space-y-4 px-4 py-5 sm:px-5">
+          {!maintenanceList ? <ReservationReadStatus /> : null}
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="rounded-xl bg-gray-100 px-2 py-2.5">
               <div className="text-[8px] font-bold uppercase text-gray-400">Total</div>
@@ -445,6 +453,7 @@ export default function EquipmentListQuantityPicker({
             disabled={
               loading ||
               saving ||
+              (!maintenanceList && !reservations.ready) ||
               quantity < 1 ||
               quantity > availableQuantity ||
               cabinetArea <= 0 ||

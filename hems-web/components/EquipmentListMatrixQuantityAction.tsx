@@ -1,6 +1,9 @@
 "use client";
 import { canAppendDispatchedList } from "@/lib/equipmentLists";
 import { createListSelectionCache } from "@/lib/listSelectionCache";
+import { refreshPendingReservations, usePendingReservations } from "@/lib/usePendingReservations";
+import { availableAfterReservations } from "@/lib/pendingReservations";
+import { ReservationReadStatus } from "@/components/ReservedStockBadge";
 
 import { Loader2, PackagePlus, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -189,6 +192,7 @@ export default function EquipmentListMatrixQuantityAction({
   onOpen?: () => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
+  const reservations = usePendingReservations();
   const canBuildLists = canCreateEquipmentLists();
   const [activeList, setActiveList] = useState<EquipmentList | null>(null);
   const [open, setOpen] = useState(false);
@@ -198,17 +202,19 @@ export default function EquipmentListMatrixQuantityAction({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  useEffect(()=>{if(open)void refreshPendingReservations();},[open]);
 
   const maintenanceList = activeList?.list_type === "maintenance";
   const available = (canAppendDispatchedList(activeList, canManageEquipmentLists()) ? qty(existingLine?.requested_quantity) : 0) + (maintenanceList
     ? Math.max(0, qty(target.maintenance) - qty(target.activeMaintenance))
-    : Math.max(
+    : availableAfterReservations(Math.max(
         0,
         qty(target.total) -
           qty(target.inUse) -
           qty(target.maintenance) -
           qty(target.inKsa),
-      ));
+      ), reservations.index.quantity(target.recordType,target.id),
+        activeList?.status === "pending" ? qty(existingLine?.requested_quantity) : 0));
   const canUseMaintenanceList =
     !maintenanceList ||
     canManageEquipmentLists() ||
@@ -341,6 +347,7 @@ export default function EquipmentListMatrixQuantityAction({
     if (
       !list ||
       saving ||
+      (!maintenanceList && !reservations.ready) ||
       !(
         canAppendDispatchedList(list, canManageEquipmentLists()) || list.status === "draft" ||
         (list.status === "pending" && canManageEquipmentLists())
@@ -555,6 +562,7 @@ export default function EquipmentListMatrixQuantityAction({
         </div>
 
         <div className="space-y-4 px-4 py-5 sm:px-5">
+          {!maintenanceList ? <ReservationReadStatus /> : null}
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="rounded-xl bg-gray-100 px-2 py-2.5">
               <div className="text-[8px] font-bold uppercase text-gray-400">
@@ -615,7 +623,7 @@ export default function EquipmentListMatrixQuantityAction({
           <button
             type="button"
             onClick={() => void saveQuantity()}
-            disabled={loading || saving || requested < 1 || requested > available}
+            disabled={loading || saving || (!maintenanceList && !reservations.ready) || requested < 1 || requested > available}
             className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-black px-4 text-[11px] font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {saving ? (
@@ -685,7 +693,7 @@ export default function EquipmentListMatrixQuantityAction({
             </button>
             <button
               type="button"
-              disabled={saving || currentQuantity >= available}
+              disabled={saving || (!maintenanceList && !reservations.ready) || currentQuantity >= available}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -706,7 +714,7 @@ export default function EquipmentListMatrixQuantityAction({
       <>
         <button
           type="button"
-          disabled={saving || loading || available < 1}
+          disabled={saving || loading || (!maintenanceList && !reservations.ready) || available < 1}
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();

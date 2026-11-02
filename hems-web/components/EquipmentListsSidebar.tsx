@@ -420,6 +420,7 @@ export default function EquipmentListsSidebar() {
     }
 
     function scheduleReload() {
+      window.dispatchEvent(new Event("hems:pending-reservations-change"));
       listQueue.schedule();
     }
     function focus() {

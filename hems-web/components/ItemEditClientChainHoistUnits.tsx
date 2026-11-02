@@ -1,4 +1,5 @@
 "use client";
+import { ReservationReadStatus, ReservedForStock } from "@/components/ReservedStockBadge";
 
 import { uploadEquipmentPhoto as uploadItemPhoto } from "@/lib/imageUploads";
 
@@ -395,6 +396,8 @@ export default function ItemEditClientChainHoistUnits({
   return (
 
     <div className="min-h-screen overflow-x-hidden bg-gray-50 px-[2px] py-2 sm:p-3">
+      <ReservationReadStatus />
+      <ReservedForStock type="unit" id={itemId} parent />
 
       <div className="w-full min-w-0 max-w-none sm:w-full mx-auto space-y-3 px-0">
 

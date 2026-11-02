@@ -1,4 +1,6 @@
 "use client";
+import { usePendingReservations } from "@/lib/usePendingReservations";
+import { ReservationReadStatus } from "@/components/ReservedStockBadge";
 
 import ReportTestingDate from "@/components/ReportTestingDate";
 import ReportAddRows from "@/components/ReportAddRows";
@@ -156,6 +158,7 @@ export function SerializedRowsBlock({
 }) {
   const supabase = createClient();
   const [units, setUnits] = useState<Unit[]>([]);
+  const reservations = usePendingReservations();
   const unitsRef = useRef<Unit[]>([]);
   const addingRowsRef = useRef(false);
   const loadedItemRef = useRef<string | null>(null);
@@ -305,22 +308,22 @@ async function loadUnits() {
   useEffect(() => {
     onStatsChange?.({
       total: units.length,
-      available: units.filter((u) => toStatus(u.status) === "available").length,
+      available: units.filter((u) => toStatus(u.status) === "available" && reservations.index.quantity("unit",u.id) === 0).length,
       inUse: units.filter((u) => toStatus(u.status) === "in_use").length,
       maintenance: units.filter((u) => toStatus(u.status) === "maintenance").length,
       inKsa: units.filter((u) => toStatus(u.status) === "in_ksa").length,
     });
-  }, [units, onStatsChange]);
+  }, [units, onStatsChange, reservations.index]);
 
   const filteredUnits = useMemo(() => {
     const query = filterQuery.trim().toLocaleLowerCase();
 
     return units.filter((unit) => {
       const assigned =
-        Boolean(movementByUnit[unit.id]) || isMovementStatus(unit.status);
+        Boolean(movementByUnit[unit.id]) || isMovementStatus(unit.status) || reservations.index.quantity("unit",unit.id)>0;
       const statusMatches =
         statusFilter === "all" ||
-        (statusFilter === "available" && toStatus(unit.status) === "available") ||
+        (statusFilter === "available" && toStatus(unit.status) === "available" && reservations.index.quantity("unit",unit.id) === 0) ||
         (statusFilter === "maintenance" &&
           toStatus(unit.status) === "maintenance") ||
         (statusFilter === "assigned" && assigned);
@@ -333,7 +336,7 @@ async function loadUnits() {
           String(value ?? "").toLocaleLowerCase().includes(query),
         );
     });
-  }, [filterQuery, movementByUnit, statusFilter, units]);
+  }, [filterQuery, movementByUnit, statusFilter, units, reservations.index]);
 
   async function updateUnit(id: string, patch: UnitPatch) {
     if (!editable) return;
@@ -761,6 +764,7 @@ function DamagePhotoThumb({
 }
 
 function UnitStatusField({
+  unitId,
   status,
   editable,
   workflowControlledStatus,
@@ -768,6 +772,7 @@ function UnitStatusField({
   wide = false,
   onChange,
 }: {
+  unitId: string;
   status: string;
   editable: boolean;
   workflowControlledStatus: boolean;
@@ -775,6 +780,10 @@ function UnitStatusField({
   wide?: boolean;
   onChange: (status: UnitStatus) => void;
 }) {
+  const pending = usePendingReservations();
+  if (status === "available" && pending.index.quantity("unit",unitId)>0) return (
+    <span className="block w-full rounded-lg bg-orange-50 px-2 py-1 text-[11px] font-semibold text-orange-800">Reserved · Pending</span>
+  );
   const lockedByMovement =
     workflowControlledStatus && isMovementStatus(status);
   const widthClass = wide ? "w-full min-w-0" : "w-full";
@@ -984,6 +993,7 @@ function SerializedUnitRow({
           <label className="rounded-xl bg-gray-50 p-2">
             <div className="text-[10px] font-semibold text-gray-400">Status</div>
             <UnitStatusField
+                unitId={unit.id}
               status={status}
               editable={editable}
               workflowControlledStatus={workflowControlledStatus}
@@ -1113,6 +1123,7 @@ function SerializedUnitRow({
         />
 
         <UnitStatusField
+                unitId={unit.id}
           status={status}
           editable={editable}
           workflowControlledStatus={workflowControlledStatus}

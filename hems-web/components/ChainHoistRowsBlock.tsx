@@ -1,4 +1,6 @@
 "use client";
+import { usePendingReservations } from "@/lib/usePendingReservations";
+import { ReservationReadStatus } from "@/components/ReservedStockBadge";
 
 import ReportTestingDate from "@/components/ReportTestingDate";
 import ReportAddRows from "@/components/ReportAddRows";
@@ -315,6 +317,7 @@ export function ChainHoistRowsBlock({
   const supabase = createClient();
 
   const [units, setUnits] = useState<Unit[]>([]);
+  const reservations = usePendingReservations();
 
   const unitsRef = useRef<Unit[]>([]);
   const addingRowsRef = useRef(false);
@@ -637,7 +640,7 @@ async function loadUnits() {
 
 
 
-      if (u.status === "available" && !expiredNow) available++;
+      if (u.status === "available" && !expiredNow && reservations.index.quantity("unit",u.id) === 0) available++;
 
       if (u.status === "in_use") inuse++;
 
@@ -667,7 +670,7 @@ async function loadUnits() {
 
     });
 
-  }, [units, onStatsChange]);
+  }, [units, onStatsChange, reservations.index]);
 
   function changeStatusFilter(nextStatus: UnitReportStatusFilter) {
     setStatusFilter(nextStatus);
@@ -681,10 +684,10 @@ async function loadUnits() {
 
     return units.filter((unit) => {
       const assigned =
-        Boolean(movementByUnit[unit.id]) || isMovementStatus(unit.status);
+        Boolean(movementByUnit[unit.id]) || isMovementStatus(unit.status) || reservations.index.quantity("unit",unit.id)>0;
       const statusMatches =
         statusFilter === "all" ||
-        (statusFilter === "available" && unit.status === "available") ||
+        (statusFilter === "available" && unit.status === "available" && reservations.index.quantity("unit",unit.id) === 0) ||
         (statusFilter === "maintenance" && unit.status === "maintenance") ||
         (statusFilter === "assigned" && assigned);
       const validity = validStatus(unit);
@@ -698,7 +701,7 @@ async function loadUnits() {
         String(value ?? "").toLocaleLowerCase().includes(query),
       );
     });
-  }, [filterQuery, movementByUnit, statusFilter, units, validityFilter]);
+  }, [filterQuery, movementByUnit, statusFilter, units, validityFilter, reservations.index]);
 
 
 
@@ -1453,6 +1456,7 @@ function DamagePhotoThumb({
 
 function ChainHoistStatusField({
 
+  unitId,
   status,
 
   editable,
@@ -1467,6 +1471,7 @@ function ChainHoistStatusField({
 
 }: {
 
+  unitId: string;
   status: string;
 
   editable: boolean;
@@ -1480,6 +1485,10 @@ function ChainHoistStatusField({
   onChange: (status: string) => void;
 
 }) {
+  const pending = usePendingReservations();
+  if (status === "available" && pending.index.quantity("unit",unitId)>0) return (
+    <span className="block w-full rounded-lg bg-orange-50 px-2 py-1 text-[11px] font-semibold text-orange-800">Reserved · Pending</span>
+  );
 
   const lockedByMovement =
 
@@ -1929,6 +1938,7 @@ function ChainHoistEditableRow({
 
               <ChainHoistStatusField
 
+                unitId={unit.id}
                 status={status}
 
                 editable={editable}
@@ -2333,6 +2343,7 @@ function ChainHoistEditableRow({
 
         <ChainHoistStatusField
 
+                unitId={unit.id}
           status={status}
 
           editable={editable}

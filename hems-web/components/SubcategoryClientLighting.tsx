@@ -2,6 +2,9 @@
 
 import { uploadEquipmentPhoto as uploadPhoto } from "@/lib/imageUploads";
 
+import { usePendingReservations } from "@/lib/usePendingReservations";
+import { withReservedStats } from "@/lib/pendingReservations";
+import { ReservedForStock, ReservationReadStatus } from "@/components/ReservedStockBadge";
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor";
 
@@ -333,6 +336,7 @@ export default function SubcategoryClientLighting({
 }) {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
+  const reservations = usePendingReservations();
   const fileRef = useRef<HTMLInputElement | null>(null);
   const listPhotoFileRef = useRef<HTMLInputElement | null>(null);
   const editable = canEditInventory();
@@ -1329,13 +1333,13 @@ export default function SubcategoryClientLighting({
   }
 
   function renderFixtureRow(it: ItemRow, isLast: boolean) {
-    const stats = statsByItem[it.id] || {
+    const stats = withReservedStats(statsByItem[it.id] || {
       total: 0,
       available: 0,
       inUse: 0,
       maintenance: 0,
       inKsa: 0,
-    };
+    }, reservations.index.parent("unit",it.id));
     const allocations = allocationsByItem[it.id] || [];
     const allocatedQuantity = allocations.reduce(
       (total, allocation) =>
@@ -1465,6 +1469,7 @@ export default function SubcategoryClientLighting({
             </div>
           </button>
 
+          <ReservedForStock type="unit" id={it.id} parent />
           {allocations.length > 0 || existingMovementQuantity > 0 || stats.inKsa > 0 ? (
             <div
               data-lighting-active-allocations="true"
@@ -1985,6 +1990,7 @@ export default function SubcategoryClientLighting({
 
   return (
     <div className="w-full space-y-3">
+      <ReservationReadStatus />
       <input
         ref={listPhotoFileRef}
         type="file"
