@@ -1,5 +1,6 @@
 "use client";
 import { canAppendDispatchedList } from "@/lib/equipmentLists";
+import { createListSelectionCache } from "@/lib/listSelectionCache";
 
 import { Loader2, PackagePlus, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -53,11 +54,7 @@ const activeListRequests = new Map<
   string,
   Promise<EquipmentList | null>
 >();
-const matrixLinesCache = new Map<string, Map<string, ExistingLine>>();
-const matrixLinesRequests = new Map<
-  string,
-  Promise<Map<string, ExistingLine>>
->();
+const matrixLinesCache = createListSelectionCache<Map<string, ExistingLine>>();
 
 const ACTIVE_LIST_SELECT = `
   id, reference, list_type, status, client_company, event_name, venue,
@@ -119,49 +116,42 @@ async function loadActiveListShared(
 async function loadMatrixLinesShared(
   supabase: SupabaseBrowserClient,
   listId: string,
-  force = false,
 ) {
-  if (!force && matrixLinesCache.has(listId)) {
-    return matrixLinesCache.get(listId)!;
-  }
-
-  const pending = matrixLinesRequests.get(listId);
-  if (pending) return pending;
-
-  const request = (async () => {
-    const { data, error } = await supabase
-      .from("equipment_list_items")
-      .select(
-        "id,inventory_record_type,inventory_record_id,requested_quantity",
-      )
-      .eq("list_id", listId)
-      .in("inventory_record_type", ["matrix_model", "matrix_row"])
-      .order("created_at", { ascending: true });
-
-    if (error) throw error;
-
+  const owner = getUserId();
+  if (!owner) throw new Error("Sign in to check the selected list quantity.");
+  if (typeof window !== "undefined") matrixLinesCache.watch(window, EQUIPMENT_LIST_ITEMS_EVENT);
+  return matrixLinesCache.read(owner, listId, async () => {
     const lines = new Map<string, ExistingLine>();
-    for (const row of (data ?? []) as MatrixLineRow[]) {
-      const key = matrixLineKey(
-        row.inventory_record_type,
-        row.inventory_record_id,
-      );
-      if (!lines.has(key)) {
-        lines.set(key, {
-          id: row.id,
-          requested_quantity: row.requested_quantity,
-        });
+    for (let offset = 0; ; offset += 1000) {
+      const { data, error } = await supabase
+        .from("equipment_list_items")
+        .select(
+          "id,inventory_record_type,inventory_record_id,requested_quantity",
+        )
+        .eq("list_id", listId)
+        .in("inventory_record_type", ["matrix_model", "matrix_row"])
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(offset, offset + 999);
+
+      if (error) throw error;
+      if (getUserId() !== owner) throw new Error("The signed-in user changed.");
+      for (const row of (data ?? []) as MatrixLineRow[]) {
+        const key = matrixLineKey(
+          row.inventory_record_type,
+          row.inventory_record_id,
+        );
+        if (!lines.has(key)) {
+          lines.set(key, {
+            id: row.id,
+            requested_quantity: row.requested_quantity,
+          });
+        }
       }
+      if ((data ?? []).length < 1000) break;
     }
-
-    matrixLinesCache.set(listId, lines);
     return lines;
-  })().finally(() => {
-    matrixLinesRequests.delete(listId);
   });
-
-  matrixLinesRequests.set(listId, request);
-  return request;
 }
 
 function writeMatrixLineCache(
@@ -170,11 +160,17 @@ function writeMatrixLineCache(
   recordId: string,
   line: ExistingLine | null,
 ) {
-  const lines = matrixLinesCache.get(listId) ?? new Map<string, ExistingLine>();
-  const key = matrixLineKey(recordType, recordId);
-  if (line) lines.set(key, line);
-  else lines.delete(key);
-  matrixLinesCache.set(listId, lines);
+  const owner = getUserId();
+  if (!owner) return;
+  matrixLinesCache.update(owner, listId, (previous) => {
+    // A single saved row is not a complete list snapshot. Re-read when dirty.
+    if (!previous) return undefined;
+    const lines = new Map(previous);
+    const key = matrixLineKey(recordType, recordId);
+    if (line) lines.set(key, line);
+    else lines.delete(key);
+    return lines;
+  });
 }
 
 export default function EquipmentListMatrixQuantityAction({
@@ -286,15 +282,14 @@ export default function EquipmentListMatrixQuantityAction({
     if ((!open && !compact) || !activeList) return;
     let cancelled = false;
 
-    async function loadExistingLine(force = false) {
-      if (!matrixLinesCache.has(activeList!.id)) setLoading(true);
+    async function loadExistingLine() {
+      if (!matrixLinesCache.has(getUserId() || "", activeList!.id)) setLoading(true);
       setError("");
 
       try {
         const lines = await loadMatrixLinesShared(
           supabase,
           activeList!.id,
-          force,
         );
         if (cancelled) return;
 
@@ -327,7 +322,8 @@ export default function EquipmentListMatrixQuantityAction({
         }>
       ).detail;
       if (!detail?.listId || detail.listId === activeList!.id) {
-        void loadExistingLine(!detail?.matrixLinesCached);
+        // The module-lifetime listener already invalidated this list once.
+        void loadExistingLine();
       }
     }
 
@@ -441,7 +437,7 @@ export default function EquipmentListMatrixQuantityAction({
   async function decreaseQuantity() {
     const list = activeList;
     if (!list || !existingLine || saving) return;
-    const currentQuantity = qty(requested);
+    const currentQuantity = qty(existingLine.requested_quantity);
     if (currentQuantity > 1) {
       await saveQuantity(currentQuantity - 1);
       return;
@@ -643,7 +639,7 @@ export default function EquipmentListMatrixQuantityAction({
       : null;
 
   if (compact) {
-    const currentQuantity = existingLine ? qty(requested) : 0;
+    const currentQuantity = existingLine ? qty(existingLine.requested_quantity) : 0;
 
     if (currentQuantity > 0) {
       return (
