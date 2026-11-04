@@ -7,7 +7,7 @@ type ReturnLine = Pick<EquipmentListItem,
 
 /** Display-only: draft, delivery-note, KSA and maintenance quantities are unchanged. */
 export function showActiveReturnQuantities(list: {list_type: string; status: string} | null) {
-  return Boolean(list?.list_type === "local_event" &&
+  return Boolean(list && ["local_event", "dry_hire"].includes(list.list_type) &&
     (list.status === "active" || list.status === "partially_returned"));
 }
 

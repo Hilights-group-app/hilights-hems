@@ -4,9 +4,12 @@ import { createListSelectionCache } from "@/lib/listSelectionCache";
 import { refreshPendingReservations, usePendingReservations } from "@/lib/usePendingReservations";
 import { availableAfterReservations } from "@/lib/pendingReservations";
 import { ReservationReadStatus } from "@/components/ReservedStockBadge";
+import { receiptProgress } from "@/lib/receivedCorrection";
+import { isOffline } from "@/lib/offline";
+import Link from "next/link";
 
 import { Loader2, PackagePlus, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   canCreateEquipmentLists,
@@ -43,6 +46,9 @@ export type MatrixListTarget = {
 type ExistingLine = {
   id: string;
   requested_quantity: number;
+  approved_quantity: number;
+  returned_ok_quantity: number;
+  returned_maintenance_quantity: number;
 };
 
 type MatrixLineRow = ExistingLine & {
@@ -129,7 +135,7 @@ async function loadMatrixLinesShared(
       const { data, error } = await supabase
         .from("equipment_list_items")
         .select(
-          "id,inventory_record_type,inventory_record_id,requested_quantity",
+          "id,inventory_record_type,inventory_record_id,requested_quantity,approved_quantity,returned_ok_quantity,returned_maintenance_quantity",
         )
         .eq("list_id", listId)
         .in("inventory_record_type", ["matrix_model", "matrix_row"])
@@ -144,12 +150,15 @@ async function loadMatrixLinesShared(
           row.inventory_record_type,
           row.inventory_record_id,
         );
-        if (!lines.has(key)) {
-          lines.set(key, {
-            id: row.id,
-            requested_quantity: row.requested_quantity,
-          });
-        }
+        // Older active lists may contain several deliveries of the same record.
+        const previous = lines.get(key);
+        lines.set(key, {
+          id: previous?.id || row.id,
+          requested_quantity: (previous?.requested_quantity || 0) + (Number(row.requested_quantity) || 0),
+          approved_quantity: (previous?.approved_quantity || 0) + (Number(row.approved_quantity) || 0),
+          returned_ok_quantity: (previous?.returned_ok_quantity || 0) + (Number(row.returned_ok_quantity) || 0),
+          returned_maintenance_quantity: (previous?.returned_maintenance_quantity || 0) + (Number(row.returned_maintenance_quantity) || 0),
+        });
       }
       if ((data ?? []).length < 1000) break;
     }
@@ -202,10 +211,20 @@ export default function EquipmentListMatrixQuantityAction({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [lineReady, setLineReady] = useState(false);
+  const [reloadTick, setReloadTick] = useState(0);
+  const saveBusy = useRef(false);
+  const mounted = useRef(true);
+  const selectionScope = useRef({ listId: activeList?.id, owner: getUserId() });
+  selectionScope.current = { listId: activeList?.id, owner: getUserId() };
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(()=>{if(open)void refreshPendingReservations();},[open]);
 
   const maintenanceList = activeList?.list_type === "maintenance";
-  const available = (canAppendDispatchedList(activeList, canManageEquipmentLists()) ? qty(existingLine?.requested_quantity) : 0) + (maintenanceList
+  const additionalMode = canAppendDispatchedList(activeList, canManageEquipmentLists());
+  const progress = receiptProgress(existingLine);
+  // Active additions use ONLY free extra stock, never the historical Sent total.
+  const available = (maintenanceList
     ? Math.max(0, qty(target.maintenance) - qty(target.activeMaintenance))
     : availableAfterReservations(Math.max(
         0,
@@ -287,8 +306,11 @@ export default function EquipmentListMatrixQuantityAction({
   useEffect(() => {
     if ((!open && !compact) || !activeList) return;
     let cancelled = false;
+    let loadVersion = 0;
 
     async function loadExistingLine() {
+      const version = ++loadVersion;
+      setLineReady(false);
       if (!matrixLinesCache.has(getUserId() || "", activeList!.id)) setLoading(true);
       setError("");
 
@@ -297,20 +319,21 @@ export default function EquipmentListMatrixQuantityAction({
           supabase,
           activeList!.id,
         );
-        if (cancelled) return;
+        if (cancelled || version !== loadVersion) return;
 
         const first =
           lines.get(matrixLineKey(target.recordType, target.id)) ?? null;
         setExistingLine(first);
+        setLineReady(true);
         setRequested(
-          first
+          additionalMode ? (available > 0 ? 1 : 0) : first
             ? Math.min(qty(first.requested_quantity), available)
             : available > 0
               ? 1
               : 0,
         );
       } catch (loadError) {
-        if (cancelled) return;
+        if (cancelled || version !== loadVersion) return;
         console.error("load matrix list quantity error", loadError);
         setExistingLine(null);
         setRequested(available > 0 ? 1 : 0);
@@ -339,14 +362,14 @@ export default function EquipmentListMatrixQuantityAction({
       cancelled = true;
       window.removeEventListener(EQUIPMENT_LIST_ITEMS_EVENT, handleItemsChange);
     };
-  }, [activeList, available, compact, open, supabase, target.id, target.recordType]);
+  }, [activeList, additionalMode, available, compact, open, reloadTick, supabase, target.id, target.recordType]);
 
   async function saveQuantity(requestedOverride?: number) {
     const list = activeList;
 
     if (
       !list ||
-      saving ||
+      saveBusy.current || !lineReady || loading ||
       (!maintenanceList && !reservations.ready) ||
       !(
         canAppendDispatchedList(list, canManageEquipmentLists()) || list.status === "draft" ||
@@ -355,6 +378,7 @@ export default function EquipmentListMatrixQuantityAction({
     ) {
       return;
     }
+    if (isOffline()) { setError("The app is offline. Connect before adding equipment."); return; }
 
     const nextQuantity = qty(requestedOverride ?? requested);
     if (nextQuantity < 1) {
@@ -370,8 +394,12 @@ export default function EquipmentListMatrixQuantityAction({
       return;
     }
 
+    saveBusy.current = true;
     setSaving(true);
     setError("");
+    const owner = getUserId();
+    const append = canAppendDispatchedList(list, canManageEquipmentLists());
+    const sameSelection = () => mounted.current && getUserId() === owner && selectionScope.current.listId === list.id;
 
     const metadata = {
       category,
@@ -384,7 +412,15 @@ export default function EquipmentListMatrixQuantityAction({
       photo_url: target.photoUrl || null,
     };
 
-    const result = existingLine
+    try {
+    const result = append
+      ? await supabase.rpc("hems_add_active_matrix_quantity", {
+          p_list_id: list.id, p_record_type: target.recordType, p_record_id: target.id,
+          p_quantity: nextQuantity, p_parent_id: target.parentId,
+          p_display_name: target.displayName, p_block_name: target.blockName || null,
+          p_metadata: metadata, p_expected_requested: qty(existingLine?.requested_quantity),
+        })
+      : existingLine
       ? await supabase
           .from("equipment_list_items")
           .update({
@@ -395,7 +431,7 @@ export default function EquipmentListMatrixQuantityAction({
           })
           .eq("id", existingLine.id)
           .eq("list_id", list.id)
-          .select("id,requested_quantity")
+          .select("id,requested_quantity,approved_quantity,returned_ok_quantity,returned_maintenance_quantity")
           .single()
       : await supabase.from("equipment_list_items").insert({
           list_id: list.id,
@@ -408,18 +444,18 @@ export default function EquipmentListMatrixQuantityAction({
           requested_quantity: nextQuantity,
           approved_quantity: 0,
           metadata,
-        }).select("id,requested_quantity").single();
+        }).select("id,requested_quantity,approved_quantity,returned_ok_quantity,returned_maintenance_quantity").single();
 
-    if (result.error) {
-      console.error("save matrix list quantity error", result.error);
-      setError(result.error.message || "Failed to add this item.");
-      setSaving(false);
+    if (result.error) throw result.error;
+    if (!sameSelection()) {
+      matrixLinesCache.invalidate(list.id);
+      if (getUserId() === owner) window.dispatchEvent(new CustomEvent(EQUIPMENT_LIST_ITEMS_EVENT, { detail: { listId: list.id, status: list.status } }));
       return;
     }
 
     const savedLine = result.data as ExistingLine;
     setExistingLine(savedLine);
-    setRequested(nextQuantity);
+    setRequested(append ? 1 : nextQuantity);
     writeMatrixLineCache(
       list.id,
       target.recordType,
@@ -432,18 +468,28 @@ export default function EquipmentListMatrixQuantityAction({
       }),
     );
 
-    const nextMessage = `${nextQuantity} unit${nextQuantity === 1 ? "" : "s"} added to ${list.reference}`;
+    const nextMessage = `${nextQuantity}${append ? " additional" : ""} unit${nextQuantity === 1 ? "" : "s"} ${append ? "dispatched" : "added"} to ${list.reference}`;
     setMessage(nextMessage);
     setTimeout(() => {
       setMessage((current) => (current === nextMessage ? "" : current));
     }, 1800);
-    setSaving(false);
     setOpen(false);
+    } catch (failure: unknown) {
+      if (!sameSelection()) return;
+      const problem = failure as { message?: string };
+      setError(problem?.message || "Could not confirm the change. Refresh quantities before trying again.");
+      // In particular, never blindly repeat a delta after a lost response.
+      matrixLinesCache.invalidate(list.id);
+      setLineReady(false);
+    } finally {
+      saveBusy.current = false;
+      if (mounted.current) setSaving(false);
+    }
   }
 
   async function decreaseQuantity() {
     const list = activeList;
-    if (!list || !existingLine || saving) return;
+    if (!list || !existingLine || saving || saveBusy.current || !lineReady || additionalMode) return;
     const currentQuantity = qty(existingLine.requested_quantity);
     if (currentQuantity > 1) {
       await saveQuantity(currentQuantity - 1);
@@ -563,6 +609,11 @@ export default function EquipmentListMatrixQuantityAction({
 
         <div className="space-y-4 px-4 py-5 sm:px-5">
           {!maintenanceList ? <ReservationReadStatus /> : null}
+          {additionalMode ? <div className="space-y-2 rounded-xl bg-blue-50 p-3 text-xs text-blue-900">
+            {existingLine ? <p className="font-semibold">Sent {progress.sent} · Received {progress.received} · {progress.outside} Out</p> : null}
+            <p>Add only NEW equipment being dispatched. This does not correct a previous receipt.</p>
+            {["local_event", "dry_hire"].includes(activeList.list_type) ? <Link href={`/inventory/lists/${activeList.id}`} className="inline-block font-semibold underline">Wrong Received? Open list → Correct Received</Link> : null}
+          </div> : null}
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="rounded-xl bg-gray-100 px-2 py-2.5">
               <div className="text-[8px] font-bold uppercase text-gray-400">
@@ -596,7 +647,7 @@ export default function EquipmentListMatrixQuantityAction({
             </div>
           ) : (
             <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-500">
-              Quantity
+              {additionalMode ? "Additional quantity" : "Quantity"}
               <input
                 type="number"
                 min={1}
@@ -619,11 +670,15 @@ export default function EquipmentListMatrixQuantityAction({
               {error}
             </div>
           ) : null}
+          {!lineReady && !loading ? <button type="button" disabled={saving} onClick={() => {
+            matrixLinesCache.invalidate(activeList.id);
+            setReloadTick(value => value + 1);
+          }} className="w-full rounded-xl border border-gray-300 p-2 text-xs font-semibold disabled:opacity-40">Refresh quantities</button> : null}
 
           <button
             type="button"
             onClick={() => void saveQuantity()}
-            disabled={loading || saving || (!maintenanceList && !reservations.ready) || requested < 1 || requested > available}
+            disabled={loading || saving || !lineReady || (!maintenanceList && !reservations.ready) || requested < 1 || requested > available}
             className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-black px-4 text-[11px] font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {saving ? (
@@ -633,7 +688,7 @@ export default function EquipmentListMatrixQuantityAction({
             )}
             {saving
               ? "Saving..."
-              : existingLine
+              : additionalMode ? "Add & Dispatch" : existingLine
                 ? "Update List Quantity"
                 : "Add to List"}
           </button>
@@ -645,6 +700,24 @@ export default function EquipmentListMatrixQuantityAction({
     quantityDialog && typeof document !== "undefined"
       ? createPortal(quantityDialog, document.body)
       : null;
+
+  if (compact && additionalMode) {
+    return <>
+      <div data-hems-mobile-add="quantity" className="inline-flex items-center gap-1.5" onClick={event => event.stopPropagation()}>
+        <button type="button" disabled={saving || loading || (!maintenanceList && !reservations.ready)}
+          onClick={event => {
+            event.preventDefault(); event.stopPropagation();
+            setRequested(available > 0 ? 1 : 0); setError(""); onOpen?.(); setOpen(true);
+          }} aria-label={`Add additional equipment to ${activeList.reference}`} title="Add NEW equipment, not correct Received"
+          className={variant === "topbar"
+            ? "inline-flex h-9 w-9 items-center justify-center rounded-xl bg-red-600 text-lg font-bold text-white disabled:opacity-40"
+            : "inline-flex h-6 w-6 items-center justify-center rounded-full border border-gray-300 bg-white text-[14px] font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-40"}>
+          {saving || loading ? <Loader2 size={12} className="animate-spin" /> : "+"}
+        </button>
+      </div>
+      {quantityDialogPortal}
+    </>;
+  }
 
   if (compact) {
     const currentQuantity = existingLine ? qty(existingLine.requested_quantity) : 0;
@@ -660,7 +733,7 @@ export default function EquipmentListMatrixQuantityAction({
           >
             <button
               type="button"
-              disabled={saving || canAppendDispatchedList(activeList, canManageEquipmentLists())}
+              disabled={saving || !lineReady || canAppendDispatchedList(activeList, canManageEquipmentLists())}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -693,7 +766,7 @@ export default function EquipmentListMatrixQuantityAction({
             </button>
             <button
               type="button"
-              disabled={saving || (!maintenanceList && !reservations.ready) || currentQuantity >= available}
+              disabled={saving || !lineReady || (!maintenanceList && !reservations.ready) || currentQuantity >= available}
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -753,7 +826,7 @@ export default function EquipmentListMatrixQuantityAction({
         }}
         className="w-full rounded-xl bg-red-600 px-3 py-2.5 text-center text-[11px] font-semibold text-white transition hover:bg-red-700"
       >
-        + Add Units to {activeList.reference}
+        + Add {additionalMode ? "More Equipment" : "Units"} to {activeList.reference}
       </button>
 
       {message ? (

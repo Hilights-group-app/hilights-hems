@@ -68,6 +68,9 @@ import EquipmentListUnitPicker from "@/components/EquipmentListUnitPicker";
 import EquipmentDraftShareButton from "@/components/EquipmentDraftShareButton";
 import CustomDraftItemInline from "@/components/CustomDraftItemInline";
 import ActiveListQuantity from "@/components/ActiveListQuantity";
+import ActiveListEquipmentTable from "@/components/ActiveListEquipmentTable";
+import ReceivedCorrectionAction from "@/components/ReceivedCorrectionAction";
+import ReceivedCorrectionDialog from "@/components/ReceivedCorrectionDialog";
 import CompactListHeading from "@/components/CompactListHeading";
 import headerStyles from "./EquipmentListHeader.module.css";
 import { showActiveReturnQuantities } from "@/lib/listReturnQuantities";
@@ -744,6 +747,7 @@ export default function EquipmentListDetailsClient({
   const [returnDialog, setReturnDialog] = useState<ReturnDialogState | null>(
     null,
   );
+  const [correctionItem, setCorrectionItem] = useState<EquipmentListItem | null>(null);
   const [returnOkQuantity, setReturnOkQuantity] = useState(0);
   const [returnToMaintenance, setReturnToMaintenance] = useState(false);
   const [syncingTransfer, setSyncingTransfer] = useState(false);
@@ -1461,6 +1465,21 @@ export default function EquipmentListDetailsClient({
     setReturnDialog({ item, remaining });
     setReturnOkQuantity(remaining);
     setError("");
+  }
+
+  async function refreshAfterReceiptCorrection(saved: boolean) {
+    const owner = getUserId();
+    const samePage = () => dispatchContext.current.listId === listId && getUserId() === owner;
+    setCorrectionItem(null);
+    setError("");
+    if (saved) setMessage("Received corrected. Sent quantity is unchanged; Out and Available stock have been updated.");
+    try {
+      await refreshListAndItems(() => !samePage());
+    } catch {
+      if (samePage()) setError(saved
+        ? "The correction was saved, but the list could not refresh. Reopen the list before making another change."
+        : "Could not refresh the list. Reopen it before trying the correction again.");
+    }
   }
 
   async function removeItem(itemId: string) {
@@ -2742,6 +2761,13 @@ export default function EquipmentListDetailsClient({
         />
       ) : null}
 
+      {correctionItem && correctionItem.list_id === list.id ? (
+        <ReceivedCorrectionDialog key={`${list.id}:${correctionItem.id}`} list={list} item={correctionItem}
+          onClose={() => setCorrectionItem(null)}
+          onSaved={() => void refreshAfterReceiptCorrection(true)}
+          onRefresh={() => void refreshAfterReceiptCorrection(false)} />
+      ) : null}
+
       {customItemOpen && !isMaintenanceList ? (
         <CustomItemDialog
           saving={addingCustomItem}
@@ -3215,6 +3241,30 @@ export default function EquipmentListDetailsClient({
               Select this Draft in the left sidebar, then add equipment from inventory.
             </div>
           </div>
+        ) : showReturnQuantities ? (
+          <ActiveListEquipmentTable key={list.id} list={list} groups={sortedGroups} manager={isManager}
+            canReceive={canReceiveReturns} busy={Boolean(returningItemId || correctionItem || returnDialog)} receivingItemId={returningItemId}
+            hiddenSerialPdfKeys={hiddenUnitGroupKeys} onToggleSerialPdf={toggleUnitGroupVisibility}
+            onReceive={(item) => {
+              if (isOffline()) { setError("The app is offline. Connect before receiving equipment."); return; }
+              if (item.inventory_record_type === "unit") void receiveReturn(item, 1);
+              else openQuantityReturn(item);
+            }} onCorrect={setCorrectionItem}
+            presentGroup={(group) => {
+              const item = group.items[0];
+              const generic = item.inventory_record_type === "matrix_model" || item.metadata?.matrix_source === "generic";
+              const label = categoryLabel(metadataText(item, "category"));
+              const contents = item.inventory_record_type === "matrix_model" && metadataText(item, "item_type") === "rack"
+                ? rackRowsByModel[item.inventory_record_id] || [] : [];
+              return {
+                ...equipmentDisplayParts(item, group.displayName),
+                category: label === "Rigging" ? "Truss & Rigging" : label,
+                photoUrl: metadataText(item, "photo_url"),
+                description: draftDescriptions[draftDescriptionKey(item)] || "",
+                secondary: [group.blockName && !generic ? `Block: ${group.blockName}` : "", metadataText(item, "notes")].filter(Boolean).join(" · "),
+                rackContents: contents.map(row => `${Math.max(0, Number(row.total_qty) || 0)} × ${row.cable_length}`).join(" · "),
+              };
+            }} />
         ) : (
           <div className="divide-y divide-gray-100 border-t border-gray-100">
             {sortedGroups.map((group, groupIndex) => {
@@ -3558,6 +3608,8 @@ export default function EquipmentListDetailsClient({
                               <RotateCcw size={12} /><span className="hidden sm:inline">Received</span>
                             </button>
                           ) : null}
+                          <ReceivedCorrectionAction list={list} items={group.items} manager={isManager}
+                            disabled={Boolean(returningItemId || correctionItem)} onOpen={setCorrectionItem} />
                           {isSerializedGroup ? (
                             <button
                               type="button"
