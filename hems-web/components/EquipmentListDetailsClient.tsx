@@ -72,6 +72,7 @@ import ActiveListEquipmentTable from "@/components/ActiveListEquipmentTable";
 import ReceivedCorrectionAction from "@/components/ReceivedCorrectionAction";
 import ReceivedCorrectionDialog from "@/components/ReceivedCorrectionDialog";
 import MissingEquipmentDialog from "@/components/MissingEquipmentDialog";
+import LocalEventHeaderEdit from "@/components/LocalEventHeaderEdit";
 import { canMarkMissing, missingCount, missingOutside } from "@/lib/missingEquipment";
 import CompactListHeading from "@/components/CompactListHeading";
 import headerStyles from "./EquipmentListHeader.module.css";
@@ -1529,6 +1530,14 @@ export default function EquipmentListDetailsClient({
     try{await refreshListAndItems(()=>!samePage());}catch{if(samePage())setError("Reopen this list to check the latest Missing / Received totals before another change.");}
   }
 
+  async function refreshAfterEventHeader(saved: boolean,fields?:Pick<EquipmentList,"event_name"|"venue">) {
+    const owner=getUserId(),samePage=()=>dispatchContext.current.listId===listId&&getUserId()===owner;
+    setError("");
+    if(fields)setList(current=>current&&current.id===listId?{...current,...fields}:current);
+    if(saved)setMessage("Event details updated.");
+    try{await refreshListAndItems(()=>!samePage());}catch{if(samePage())setError(saved?"Event saved, but the page could not refresh. Reopen the list.":"Could not refresh event details. Reopen the list.");}
+  }
+
   async function removeItem(itemId: string) {
     if (!list || !canChangeItems || removingItemId) return;
 
@@ -2882,6 +2891,8 @@ export default function EquipmentListDetailsClient({
           </div>
 
           <div className={`flex max-w-full flex-wrap items-center justify-end gap-2 ${headerStyles.actions}`}>
+            <LocalEventHeaderEdit key={`${list.id}:${currentUserId}`} list={list} owner={currentUserId} role={currentRole}
+              onSaved={fields=>void refreshAfterEventHeader(true,fields)} onRefresh={()=>void refreshAfterEventHeader(false)}/>
             {canShareDraft ? (
               <EquipmentDraftShareButton list={list} onSaved={(userIds) => {
                 listReadVersion.current += 1;

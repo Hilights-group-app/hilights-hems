@@ -273,25 +273,6 @@ function isEquipmentListsSetupError(error: {
   );
 }
 
-function listItemUnitLabel(item: EquipmentListItem) {
-  if (item.inventory_record_type === "matrix_row") {
-    const actualSquareMetres = Number(item.metadata?.actual_sqm);
-    if (Number.isFinite(actualSquareMetres) && actualSquareMetres > 0) {
-      return `${Number(actualSquareMetres.toFixed(3))} m² · ${item.requested_quantity} cabinet${item.requested_quantity === 1 ? "" : "s"}`;
-    }
-    return `${item.requested_quantity} cabinet${item.requested_quantity === 1 ? "" : "s"}`;
-  }
-
-  if (item.serial_number?.trim()) return item.serial_number.trim();
-
-  const unitNo = item.metadata?.unit_no;
-  if (typeof unitNo === "number" || typeof unitNo === "string") {
-    return `Unit ${unitNo}`;
-  }
-
-  return "Unit without serial";
-}
-
 export default function EquipmentListsSidebar() {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
@@ -310,9 +291,6 @@ export default function EquipmentListsSidebar() {
     [],
   );
   const [loadingListItems, setLoadingListItems] = useState(false);
-  const [removingListItemId, setRemovingListItemId] = useState<string | null>(
-    null,
-  );
   const [createOpen, setCreateOpen] = useState(false);
   const [internalUseOpen, setInternalUseOpen] = useState(false);
   const [maintenanceActiveOpen, setMaintenanceActiveOpen] = useState(false);
@@ -762,40 +740,6 @@ export default function EquipmentListsSidebar() {
     );
   }
 
-  async function removeListItem(itemId: string) {
-    const list = activeList;
-
-    if (!list || !canEditWorkingList(list) || removingListItemId) {
-      return;
-    }
-
-    setRemovingListItemId(itemId);
-
-    const { error: deleteError } = await supabase
-      .from("equipment_list_items")
-      .delete()
-      .eq("id", itemId)
-      .eq("list_id", list.id);
-
-    if (deleteError) {
-      console.error("remove equipment list item error", deleteError);
-      setError(deleteError.message || "Failed to remove equipment from list.");
-      setRemovingListItemId(null);
-      return;
-    }
-
-    setActiveListItems((current) =>
-      current.filter((item) => item.id !== itemId),
-    );
-    setRemovingListItemId(null);
-
-    window.dispatchEvent(
-      new CustomEvent(EQUIPMENT_LIST_ITEMS_EVENT, {
-        detail: { listId: list.id },
-      }),
-    );
-  }
-
   function validateForm(type: EquipmentListType) {
     if (type === "dry_hire") {
       if (!form.clientCompany.trim()) return "Client Company is required.";
@@ -1188,46 +1132,6 @@ export default function EquipmentListsSidebar() {
                               : `${groupQuantity} × ${group.displayName}`}
                           </div>
 
-                          <div className="mt-1.5 text-[8px] font-bold uppercase tracking-wider text-gray-400">
-                            {isMatrixRow
-                              ? "LED Area / Cabinets"
-                              : "Serial / Fixture ID"}
-                          </div>
-
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {group.items.map((item) =>
-                              canEditWorkingList(activeList) ? (
-                                <button
-                                  key={item.id}
-                                  type="button"
-                                  onClick={() => void removeListItem(item.id)}
-                                  disabled={Boolean(removingListItemId)}
-                                  aria-label={`Remove ${listItemUnitLabel(item)}`}
-                                  title="Remove this unit"
-                                  className="flex max-w-full items-center gap-1 rounded-md bg-gray-100 px-1.5 py-1 text-[8px] font-medium text-gray-600 transition hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
-                                >
-                                  <span className="truncate">
-                                    {listItemUnitLabel(item)}
-                                  </span>
-                                  {removingListItemId === item.id ? (
-                                    <Loader2
-                                      size={9}
-                                      className="shrink-0 animate-spin"
-                                    />
-                                  ) : (
-                                    <X size={9} className="shrink-0" />
-                                  )}
-                                </button>
-                              ) : (
-                                <span
-                                  key={item.id}
-                                  className="max-w-full truncate rounded-md bg-gray-100 px-1.5 py-1 text-[8px] font-medium text-gray-600"
-                                >
-                                  {listItemUnitLabel(item)}
-                                </span>
-                              ),
-                            )}
-                          </div>
                         </div>
                       );
                     })}
