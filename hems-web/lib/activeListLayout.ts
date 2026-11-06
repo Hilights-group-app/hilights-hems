@@ -22,14 +22,43 @@ export function activeGroupKind(group: ActiveEquipmentGroup) {
   return "quantity";
 }
 
+function cabinetAreaFromSavedSize(value: unknown) {
+  if (typeof value !== "string") return 0;
+  const size = value.toLowerCase().replace(/,/g, ".").replace(/[×*]/g, "x").trim();
+  const match = size.match(/^(\d+(?:\.\d+)?)\s*(mm|cm|m)?\s*x\s*(\d+(?:\.\d+)?)\s*(mm|cm|m)?$/);
+  if (!match) return 0;
+  const toMetres = (number: number, unit: string) => unit === "mm" ? number / 1000
+    : unit === "cm" ? number / 100 : unit === "m" ? number
+    : number > 100 ? number / 1000 : number > 2 ? number / 100 : number;
+  // Unitless sizes follow the existing LED picker convention, not a 1sqm default.
+  const area = toMetres(Number(match[1]), match[2] || match[4] || "") *
+    toMetres(Number(match[3]), match[4] || match[2] || "");
+  return count(area);
+}
+
+/** Resolve the saved cabinet geometry; never read or mutate live stock. */
+export function localEventLedCabinetArea(item: EquipmentListItem) {
+  if (item.inventory_record_type !== "matrix_row" || item.metadata?.matrix_source === "generic" || isCustomActiveItem(item)) return 0;
+  const explicit = count(item.metadata?.cabinet_area_sqm);
+  if (explicit > 0) return explicit;
+  const sizeArea = cabinetAreaFromSavedSize(item.metadata?.cabinet_size);
+  if (sizeArea > 0) return sizeArea;
+  // Older list snapshots may have geometry only in the last display-name segment.
+  const segments = item.display_name.split("·").map(segment => segment.trim());
+  const nameArea = segments.length > 1 ? cabinetAreaFromSavedSize(segments[segments.length - 1]) : 0;
+  if (nameArea > 0) return nameArea;
+  const requested = count(item.requested_quantity), actual = count(item.metadata?.actual_sqm);
+  return requested > 0 ? count(actual / requested) : 0;
+}
+
 /** Display only; never turns a historical Sent total into a new dispatch. */
-export function activeRowCounts(items: readonly EquipmentListItem[]) {
+export function activeRowCounts(items: readonly EquipmentListItem[], localEvent = false) {
   const amounts = listReturnQuantities(items);
   const squareMetres = items.length > 0 && items.every(item =>
     item.inventory_record_type === "matrix_row" && item.metadata?.matrix_source !== "generic") &&
     amounts.sentSquareMetres > 0;
   const custom = items.length > 0 && items.every(isCustomActiveItem);
-  return {
+  const result = {
     sent: custom ? items.reduce((sum, item) => sum + (count(item.approved_quantity) || count(item.requested_quantity)), 0)
       : squareMetres ? amounts.sentSquareMetres : amounts.sent,
     received: squareMetres ? amounts.receivedSquareMetres : amounts.received,
@@ -37,6 +66,18 @@ export function activeRowCounts(items: readonly EquipmentListItem[]) {
     maintenance: items.reduce((sum, item) => sum + count(item.returned_maintenance_quantity), 0),
     squareMetres, custom,
   };
+  const led = localEvent && items.length > 0 && items.every(item =>
+    item.inventory_record_type === "matrix_row" && item.metadata?.matrix_source !== "generic" && !isCustomActiveItem(item));
+  if (!led) return result;
+  const areas = items.map(localEventLedCabinetArea);
+  if (areas.some(area => !(area > 0))) return { ...result, squareMetres: true, areaUnknown: true };
+  let sent = 0, received = 0, outside = 0, maintenance = 0;
+  items.forEach((item, index) => {
+    const quantity = count(item.approved_quantity), repair = count(item.returned_maintenance_quantity);
+    const back = Math.min(quantity, count(item.returned_ok_quantity) + repair), area = areas[index];
+    sent += quantity * area; received += back * area; outside += Math.max(0,quantity - back - count(item.missing_quantity)) * area; maintenance += repair * area;
+  });
+  return { ...result, sent, received, outside, maintenance, squareMetres: true };
 }
 
 export function activeQuantityText(value: number, squareMetres = false) {
@@ -44,7 +85,7 @@ export function activeQuantityText(value: number, squareMetres = false) {
 }
 
 export function activeLineOutside(item: EquipmentListItem) {
-  return Math.max(0, count(item.approved_quantity) - count(item.returned_ok_quantity) - count(item.returned_maintenance_quantity));
+  return Math.max(0, count(item.approved_quantity) - count(item.returned_ok_quantity) - count(item.returned_maintenance_quantity) - count(item.missing_quantity));
 }
 
 export function canReceiveActiveItem(item: EquipmentListItem) {
@@ -60,6 +101,7 @@ export function activeSerialReference(item: EquipmentListItem) {
 }
 
 export function activeSerialStatus(item: EquipmentListItem) {
+  if (count(item.missing_quantity) > 0) return { label: "Missing", tone: "missing" } as const;
   if (activeLineOutside(item) > 0) return { label: "Out", tone: "out" } as const;
   if (count(item.returned_maintenance_quantity) > 0) return { label: "Maintenance", tone: "repair" } as const;
   if (count(item.returned_ok_quantity) > 0) return { label: "Received", tone: "received" } as const;

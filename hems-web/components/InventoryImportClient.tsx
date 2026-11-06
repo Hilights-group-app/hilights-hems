@@ -5,6 +5,8 @@ import { Download, FileSpreadsheet, Upload, X } from "lucide-react";
 import * as XLSX from "xlsx-js-style";
 import { createClient } from "@/lib/supabase/client";
 import { canImportInventory } from "@/lib/authStore";
+import { createImportPhotoResolver } from "@/lib/inventoryImportPhotos";
+import { isOffline } from "@/lib/offline";
 
 type Category = {
   id: string;
@@ -31,6 +33,8 @@ type ImportRow = {
 };
 
 type Result = { imported: number; skipped: number; failed: number };
+type ImportPhotoWarning = { sheet: string; rowNumber: number; name: string; error: string };
+type ResolveImportPhoto = (row: ImportRow) => Promise<string | null>;
 
 type SheetDefinition = {
   name: string;
@@ -158,6 +162,7 @@ export default function InventoryImportClient({
   const supabase = useMemo(() => createClient(), []);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const importingRef = useRef(false);
+  const completedFileRef = useRef(false);
   const [open, setOpen] = useState(false);
   const [fileName, setFileName] = useState("");
   const [rows, setRows] = useState<ImportRow[]>([]);
@@ -165,6 +170,7 @@ export default function InventoryImportClient({
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState("");
   const [result, setResult] = useState<Result | null>(null);
+  const [photoWarnings, setPhotoWarnings] = useState<ImportPhotoWarning[]>([]);
   const editable = canImportInventory();
 
   useEffect(() => {
@@ -183,11 +189,13 @@ export default function InventoryImportClient({
   }, [open, importing]);
 
   function reset() {
+    completedFileRef.current = false;
     setRows([]);
     setFileName("");
     setParseError("");
     setProgress("");
     setResult(null);
+    setPhotoWarnings([]);
     if (inputRef.current) inputRef.current.value = "";
   }
 
@@ -243,7 +251,7 @@ export default function InventoryImportClient({
       ["2", "Add one equipment model per row using the same fields found in Add Items."],
       ["3", "Do not rename, delete or add tabs and columns."],
       ["4", "Add serial numbers later from the item's report page."],
-      ["5", "Photo URL is optional. You can upload/search the photo later in the app."],
+      ["5", "Photo URLs are copied as small files to Supabase Storage during import. Failed photos are listed so you can upload them later."],
       ["6", "Save as .xlsx, upload it in Inventory, review and confirm."],
     ]);
     instructions["!cols"] = [{ wch: 8 }, { wch: 82 }];
@@ -377,6 +385,7 @@ export default function InventoryImportClient({
   }
 
   async function readFile(file: File) {
+    if (importingRef.current) return;
     reset();
     setFileName(file.name);
 
@@ -499,7 +508,7 @@ export default function InventoryImportClient({
     return { category, subcategory };
   }
 
-  async function importUnitRow(row: ImportRow) {
+  async function importUnitRow(row: ImportRow, resolvePhoto: ResolveImportPhoto) {
     const { subcategory } = resolveLocation(row);
     const name = itemName(row);
     const blockOrType =
@@ -522,7 +531,7 @@ export default function InventoryImportClient({
           subcategory_id: subcategory.id,
           name,
           fixture_type: blockOrType,
-          photo_url: row.values.photo_url || null,
+          photo_url: await resolvePhoto(row),
         })
         .select("id,name")
         .single();
@@ -568,7 +577,7 @@ export default function InventoryImportClient({
     return true;
   }
 
-  async function importLedRow(row: ImportRow) {
+  async function importLedRow(row: ImportRow, resolvePhoto: ResolveImportPhoto) {
     const { category, subcategory } = resolveLocation(row);
     const name = [row.values.brand, row.values.model].map(clean).filter(Boolean).join(" - ");
     const modelsResult = await supabase
@@ -615,7 +624,7 @@ export default function InventoryImportClient({
           available_qty:
             (Number(existingRow.available_qty) || 0) + quantity,
           ...(!existingRow.photo_data && row.values.photo_url
-            ? { photo_data: row.values.photo_url }
+            ? { photo_data: await resolvePhoto(row) }
             : {}),
         })
         .eq("id", existingRow.id);
@@ -632,14 +641,14 @@ export default function InventoryImportClient({
       in_use_qty: 0,
       maintenance_qty: 0,
       in_ksa_qty: 0,
-      photo_data: row.values.photo_url || null,
+      photo_data: await resolvePhoto(row),
       sort_order: (rowsResult.data ?? []).length,
     });
     if (insertedRow.error) throw insertedRow.error;
     return true;
   }
 
-  async function importMatrixRow(row: ImportRow) {
+  async function importMatrixRow(row: ImportRow, resolvePhoto: ResolveImportPhoto) {
     const { category, subcategory } = resolveLocation(row);
     const itemType = row.values.item_type.toLowerCase();
     const name =
@@ -668,7 +677,7 @@ export default function InventoryImportClient({
             row.values.new_block_name ||
             row.values.block_name ||
             (itemType === "unit" ? row.values.brand : itemType === "rack" ? "Racks" : "Cables"),
-          photo_data: row.values.photo_url || null,
+          photo_data: await resolvePhoto(row),
           total_qty: quantity,
           in_use_qty: 0,
           maintenance_qty: 0,
@@ -690,43 +699,69 @@ export default function InventoryImportClient({
   }
 
   async function confirmImport() {
-    if (!editable || importingRef.current || importing || rows.length === 0) return;
+    if (!editable || importingRef.current || completedFileRef.current || importing || result !== null || rows.length === 0) return;
     const validRows = rows.filter((row) => row.errors.length === 0);
     if (validRows.length === 0) return;
+    if (isOffline()) { setParseError("App offline. Connect before importing equipment or photos."); return; }
 
     importingRef.current = true;
     setImporting(true);
     setResult(null);
+    setPhotoWarnings([]);
+    const photoResolver = createImportPhotoResolver(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "");
+    const warnings: ImportPhotoWarning[] = [];
+    let permissionBlocked = false;
+    const resolvePhoto: ResolveImportPhoto = async row => {
+      if (!row.values.photo_url?.trim()) return null;
+      setProgress(`Saving photo — ${itemName(row)} (${row.sheet} row ${row.rowNumber})`);
+      const photo = await photoResolver.resolve(row.values.photo_url);
+      if (photo.error) {
+        warnings.push({ sheet: row.sheet, rowNumber: row.rowNumber, name: itemName(row), error: photo.error });
+        setPhotoWarnings([...warnings]);
+      }
+      if (photo.permissionDenied) { permissionBlocked = true; throw new Error("Photo permission denied."); }
+      setProgress(`Importing equipment — ${row.sheet} row ${row.rowNumber}`);
+      return photo.url;
+    };
     const next: Result = { imported: 0, skipped: rows.length - validRows.length, failed: 0 };
 
     for (let index = 0; index < validRows.length; index += 1) {
+      if (isOffline()) {
+        next.skipped += validRows.length - index;
+        setParseError("Import stopped offline. Some rows may already be imported; check inventory before starting another import.");
+        break;
+      }
       const row = validRows[index];
       setProgress(`Importing ${index + 1} of ${validRows.length} — ${row.sheet} row ${row.rowNumber}`);
       try {
         const changed =
           row.kind === "led-screens"
-            ? await importLedRow(row)
+            ? await importLedRow(row, resolvePhoto)
             : row.kind === "matrix-items"
-              ? await importMatrixRow(row)
-              : await importUnitRow(row);
+              ? await importMatrixRow(row, resolvePhoto)
+              : await importUnitRow(row, resolvePhoto);
         if (changed) next.imported += 1;
         else next.skipped += 1;
       } catch (error) {
         console.error(`Import failed at ${row.sheet} row ${row.rowNumber}`, error);
         next.failed += 1;
+        if (permissionBlocked) {
+          next.skipped += validRows.length - index - 1;
+          setParseError("Import stopped because Admin access is unavailable. Some rows may already be imported; check inventory before starting another import.");
+          break;
+        }
       }
     }
 
-    sessionStorage.removeItem("hems:catalog:v4");
+    try { sessionStorage.removeItem("hems:catalog:v4"); } catch { /* Import completion does not depend on browser storage. */ }
+    completedFileRef.current = true;
     setResult(next);
     setProgress("");
     setImporting(false);
     importingRef.current = false;
 
-    const message = `Import complete: ${next.imported} imported, ${next.skipped} skipped, ${next.failed} failed.`;
-    setOpen(false);
-    reset();
-    window.setTimeout(() => window.alert(message), 0);
+    // Keep named photo failures visible. Do not let Confirm Import replay the
+    // same workbook and increase quantities while the user reviews failures.
   }
 
   const invalidCount = rows.filter((row) => row.errors.length > 0).length;
@@ -766,6 +801,7 @@ export default function InventoryImportClient({
               <div className="grid gap-3 sm:grid-cols-2">
                 <button
                   type="button"
+                  disabled={importing}
                   onClick={() => void downloadTemplate()}
                   className="flex items-center justify-center gap-2 rounded-xl border border-gray-300 px-4 py-3 text-sm font-semibold text-gray-800 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
                 >
@@ -773,6 +809,7 @@ export default function InventoryImportClient({
                 </button>
                 <button
                   type="button"
+                  disabled={importing}
                   onClick={() => inputRef.current?.click()}
                   className="flex items-center justify-center gap-2 rounded-xl bg-black px-4 py-3 text-sm font-semibold text-white hover:bg-gray-800"
                 >
@@ -781,6 +818,7 @@ export default function InventoryImportClient({
                 <input
                   ref={inputRef}
                   type="file"
+                  disabled={importing}
                   accept=".xlsx,.xls"
                   className="hidden"
                   onChange={(event) => {
@@ -791,14 +829,14 @@ export default function InventoryImportClient({
               </div>
 
               <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-xs leading-5 text-blue-900">
-                Open the tab named after the required subcategory and add one equipment model per row. Do not rename tabs or columns. Photo URL is optional. Add serial numbers later from the item report page.
+                Open the tab named after the required subcategory and add one equipment model per row. Do not rename tabs or columns. Photo URLs are copied to Supabase Storage as small images. If a photo fails, equipment still imports and its name is listed below. Add serial numbers later from the item report page.
               </div>
 
               {parseError ? (
                 <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{parseError}</div>
               ) : null}
 
-              {rows.length > 0 ? (
+              {rows.length > 0 && result === null ? (
                 <>
                   <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
                     <span className="rounded-full bg-gray-100 px-3 py-1.5 text-gray-700">{rows.length} rows</span>
@@ -840,20 +878,34 @@ export default function InventoryImportClient({
               {result ? (
                 <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
                   Import complete: {result.imported} imported, {result.skipped} skipped, {result.failed} failed.
+                  <p className="mt-1 text-xs">Do not import the same workbook again to fix photos: another import can increase stock quantities. Upload missing photos from the item page instead.</p>
+                </div>
+              ) : null}
+              {photoWarnings.length > 0 ? (
+                <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                  <p className="font-semibold">{photoWarnings.length} item photo{photoWarnings.length === 1 ? " needs" : "s need"} a manual upload</p>
+                  <p className="mt-1 text-xs">No external link is saved for these new photos. Existing inventory photos are kept.</p>
+                  <ul className="mt-2 space-y-2 text-xs">
+                    {photoWarnings.map((warning, index) => (
+                      <li key={`${warning.sheet}:${warning.rowNumber}:${index}`}>
+                        <strong>{warning.name}</strong> · {warning.sheet} row {warning.rowNumber}: {warning.error}
+                      </li>
+                    ))}
+                  </ul>
                 </div>
               ) : null}
             </div>
 
             <div className="flex items-center justify-between gap-3 border-t border-gray-200 px-4 py-4 sm:px-6">
               <button type="button" disabled={importing} onClick={reset} className="text-xs font-semibold text-gray-500 hover:text-gray-900 disabled:opacity-40">Clear</button>
-              <button
+              {result ? <button type="button" onClick={() => setOpen(false)} className="rounded-full bg-black px-5 py-2.5 text-sm font-semibold text-white">Done</button> : <button
                 type="button"
                 disabled={!editable || importing || rows.length === 0 || rows.length === invalidCount}
                 onClick={() => void confirmImport()}
                 className="rounded-full bg-red-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-red-700 disabled:cursor-not-allowed disabled:bg-gray-300"
               >
                 {importing ? "Importing…" : `Confirm Import (${rows.length - invalidCount})`}
-              </button>
+              </button>}
             </div>
           </div>
         </div>

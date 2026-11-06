@@ -112,6 +112,6 @@ test('layout has aligned columns, compact serial table and container-width phone
  const src=read('components/ActiveListEquipmentTable.tsx'),css=read('components/ActiveListEquipmentTable.module.css');
  assert.match(src,/<th scope="col">Sent<\/th><th scope="col">Received<\/th><th scope="col">Out<\/th>/);
  assert.match(src,/data-serial-item=\{item.id\}/);assert.match(src,/data-active-length=\{item.id\}/);
- assert.match(css,/@container active-equipment \(max-width: 660px\)/);assert.match(css,/grid-template-columns: 30px 104px/);
+ assert.match(css,/@container active-equipment \(max-width: 660px\)/);assert.match(css,/grid-template-columns: 28px 76px 88px/);
  assert.match(css,/white-space: pre-wrap/);assert.match(css,/\.receiveButton > span \{ display: none/);
 });

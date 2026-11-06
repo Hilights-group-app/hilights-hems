@@ -205,5 +205,5 @@ export default function SubcategoryRouterClient({
     );
   }
 
-  return <SubcategoryShellClient title={title}>{body}</SubcategoryShellClient>;
+  return <SubcategoryShellClient title={title} stockSubcategoryId={subcategoryId} stockPath={`/inventory/${category}/${subcategory}`}>{body}</SubcategoryShellClient>;
 }

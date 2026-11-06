@@ -2,10 +2,11 @@
 
 import { Fragment, useState } from "react";
 import { createPortal } from "react-dom";
-import { Check, ChevronDown, ChevronRight, Loader2, PackageCheck, RotateCcw, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ChevronRight, Loader2, PackageCheck, RotateCcw, X } from "lucide-react";
 import type { EquipmentList, EquipmentListItem } from "@/lib/equipmentLists";
 import { activeGroupKind, activeQuantityText, activeRowCounts, activeSerialReference, activeSerialStatus,
-  activeLineOutside, canReceiveActiveItem, type ActiveEquipmentGroup } from "@/lib/activeListLayout";
+  activeLineOutside, canReceiveActiveItem, localEventLedCabinetArea, type ActiveEquipmentGroup } from "@/lib/activeListLayout";
+import { canMarkMissing, missingCount } from "@/lib/missingEquipment";
 import ReceivedCorrectionAction from "./ReceivedCorrectionAction";
 import styles from "./ActiveListEquipmentTable.module.css";
 
@@ -33,6 +34,7 @@ type Props = {
   presentGroup: (group: ActiveEquipmentGroup) => ActiveGroupPresentation;
   onReceive: (item: EquipmentListItem) => void;
   onCorrect: (item: EquipmentListItem) => void;
+  onMissing: (items: EquipmentListItem[]) => void;
 };
 
 /** Presentation only: all mutations still use the existing parent dialogs/RPCs. */
@@ -63,32 +65,39 @@ export default function ActiveListEquipmentTable(props: Props) {
   function actionCells(items: EquipmentListItem[], iconOnly = false) {
     const eligible = items.filter(canReceiveActiveItem);
     const working = items.some(item => item.id === receivingItemId);
-    const complete = !eligible.length && items.some(item => Number(item.returned_ok_quantity) + Number(item.returned_maintenance_quantity) > 0);
+    const missing = items.some(item => missingCount(item.missing_quantity)>0);
+    const missingEligible = items.filter(item=>canMarkMissing(list,item,manager));
+    const complete = !eligible.length && !missing && items.some(item => Number(item.returned_ok_quantity) + Number(item.returned_maintenance_quantity) > 0);
     return <div className={iconOnly ? styles.serialActions : styles.actions}>
       <span className={styles.correctionSlot}>
         <ReceivedCorrectionAction list={list} items={items} manager={manager} disabled={busy}
           onOpen={onCorrect} iconOnly />
       </span>
+      {missingEligible.length ? <button type="button" disabled={busy} className={`${styles.receiveIcon} ${styles.missingButton} ${iconOnly ? "" : styles.missingTextButton}`}
+        title="Mark confirmed lost equipment Missing" aria-label={`Mark ${items[0]?.display_name || "equipment"} Missing`}
+        onClick={()=>props.onMissing(missingEligible)}><AlertTriangle size={14}/>{!iconOnly?<span>Missing</span>:null}</button> : <span/>}
       {canReceive && eligible.length > 0 ? <button type="button" disabled={busy}
         className={iconOnly ? styles.receiveIcon : styles.receiveButton}
         onClick={() => receiveGroup(items)} title={iconOnly ? "Receive this serial unit" : "Receive returned equipment"}
         aria-label={`Receive ${items[0]?.display_name || "equipment"}${iconOnly ? ` · ID ${activeSerialReference(items[0]).id}` : ""}`}>
         {working ? <Loader2 size={14} className="animate-spin" /> : <RotateCcw size={14} />}
         {!iconOnly ? <span>Received</span> : null}
-      </button> : complete ? <span className={styles.complete} title="All equipment on this line has returned"><Check size={14} /><span className={styles.srOnly}>Returned</span></span> : <span />}
+      </button> : complete ? <span className={styles.complete} title="All equipment on this line has returned"><Check size={14} /><span className={styles.srOnly}>Returned</span></span> : missing ? <span className={styles.missing} title="Missing equipment is still unavailable"><AlertTriangle size={14}/><span className={styles.srOnly}>Missing</span></span> : <span />}
     </div>;
   }
 
   function metricCells(items: EquipmentListItem[]) {
-    const numbers = activeRowCounts(items);
-    const format = (value: number) => activeQuantityText(value, numbers.squareMetres);
+    const numbers = activeRowCounts(items, list.list_type === "local_event");
+    const areaUnknown = "areaUnknown" in numbers && numbers.areaUnknown;
+    const format = (value: number) => areaUnknown ? "— SQM" : activeQuantityText(value, numbers.squareMetres);
+    const missing=items.reduce((sum,item)=>sum+missingCount(item.missing_quantity)*(numbers.squareMetres?localEventLedCabinetArea(item):1),0);
     return <>
-      <td className={styles.metric} data-label="Sent"><span className={styles.mobileLabel}>Sent</span><span>{format(numbers.sent)}</span></td>
+      <td className={styles.metric} data-label="Sent" title={areaUnknown ? "Cabinet size is missing from this list. SQM cannot be calculated safely." : undefined}><span className={styles.mobileLabel}>Sent</span><span>{format(numbers.sent)}</span></td>
       <td className={`${styles.metric} ${styles.received}`} data-label="Received">
         <span className={styles.mobileLabel}>Received</span><span>{numbers.custom ? "—" : format(numbers.received)}</span>
-        {numbers.maintenance > 0 ? <small className={styles.repairNote}>{numbers.maintenance} to repair</small> : null}
+        {numbers.maintenance > 0 ? <small className={styles.repairNote}>{list.list_type === "local_event" ? format(numbers.maintenance) : numbers.maintenance} to repair</small> : null}
       </td>
-      <td className={`${styles.metric} ${styles.out}`} data-label="Out"><span className={styles.mobileLabel}>Out</span><span>{numbers.custom ? "—" : format(numbers.outside)}</span></td>
+      <td className={`${styles.metric} ${styles.out}`} data-label="Out"><span className={styles.mobileLabel}>Out</span><span>{numbers.custom ? "—" : format(numbers.outside)}</span>{items.some(item=>missingCount(item.missing_quantity)>0)?<small className={styles.missingNote}>{format(missing)} Missing</small>:null}</td>
     </>;
   }
 

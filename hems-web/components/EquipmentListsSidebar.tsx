@@ -32,6 +32,7 @@ import {
 import { createClient } from "@/lib/supabase/client";
 import { createRefreshQueue } from "@/lib/workspaceRefresh";
 import ClosedListFolders from "@/components/ClosedListFolders";
+import WorkingListFolder from "@/components/WorkingListFolder";
 import {
   ACTIVE_EQUIPMENT_LIST_EVENT,
   ACTIVE_EQUIPMENT_LIST_KEY,
@@ -676,7 +677,7 @@ export default function EquipmentListsSidebar() {
       },
       {
         key: "pending",
-        title: "Pending Approval",
+        title: "Pending Lists",
         rows: workflowLists.filter((list) => list.status === "pending"),
       },
       {
@@ -1264,16 +1265,7 @@ export default function EquipmentListsSidebar() {
             <>
               {sections.map((section) =>
                 section.rows.length > 0 ? (
-                <section key={section.key}>
-                  <div className="mb-2 flex items-center justify-between">
-                    <h3 className="text-[9px] font-bold uppercase tracking-wider text-gray-400">
-                      {section.title}
-                    </h3>
-                    <span className="rounded-full bg-gray-100 px-1.5 py-0.5 text-[9px] font-bold text-gray-500">
-                      {section.rows.length}
-                    </span>
-                  </div>
-
+                <WorkingListFolder key={section.key} kind={section.key} title={section.title} count={section.rows.length}>
                   <div className="space-y-2">
                     {section.rows.map((list) => {
                       const selected = list.id === activeListId;
@@ -1326,7 +1318,7 @@ export default function EquipmentListsSidebar() {
                       );
                     })}
                   </div>
-                </section>
+                </WorkingListFolder>
                 ) : null,
               )}
 
@@ -1541,6 +1533,9 @@ export default function EquipmentListsSidebar() {
               ) : null}
             </>
           )}
+          {currentUserId ? <Link href="/inventory/missing" onClick={handleListLinkClick} className="flex w-full items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-[10px] font-bold text-red-800 hover:bg-red-100">
+            <ClipboardList size={15}/>Missing Equipment
+          </Link> : null}
           {currentUserId ? <ClosedListFolders key={currentUserId} owner={currentUserId}
             select={LIST_SELECT} refreshToken={lists} /> : null}
         </div>

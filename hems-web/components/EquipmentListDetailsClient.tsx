@@ -71,9 +71,12 @@ import ActiveListQuantity from "@/components/ActiveListQuantity";
 import ActiveListEquipmentTable from "@/components/ActiveListEquipmentTable";
 import ReceivedCorrectionAction from "@/components/ReceivedCorrectionAction";
 import ReceivedCorrectionDialog from "@/components/ReceivedCorrectionDialog";
+import MissingEquipmentDialog from "@/components/MissingEquipmentDialog";
+import { canMarkMissing, missingCount, missingOutside } from "@/lib/missingEquipment";
 import CompactListHeading from "@/components/CompactListHeading";
 import headerStyles from "./EquipmentListHeader.module.css";
 import { showActiveReturnQuantities } from "@/lib/listReturnQuantities";
+import { prepareListPdfPhotos, type PhotoCatalogRow, type PhotoCatalogTable } from "@/lib/pdfItemPhotos";
 
 type DetailedEquipmentList = EquipmentList & {
   submitted_by?: string | null;
@@ -271,6 +274,7 @@ const LIST_ITEM_SELECT = `
   approved_quantity,
   returned_ok_quantity,
   returned_maintenance_quantity,
+  missing_quantity,
   metadata,
   draft_sort_order,
   draft_category,
@@ -576,6 +580,13 @@ type PdfLogo = {
 
 type PdfItemPhoto = PdfLogo;
 
+const PDF_PHOTO_COLUMNS: Record<PhotoCatalogTable, string> = {
+  items: "id,photo_url",
+  matrix_models: "id,photo_data",
+  matrix_rows: "id,item_id,model_id,photo_data",
+  units: "id,item_id",
+};
+
 async function loadPdfLogo(): Promise<PdfLogo | null> {
   try {
     const response = await fetch("/logo.png", { cache: "force-cache" });
@@ -609,29 +620,57 @@ async function loadPdfLogo(): Promise<PdfLogo | null> {
   }
 }
 
-async function loadPdfItemPhoto(source: string): Promise<PdfItemPhoto | null> {
+async function loadPdfItemPhoto(source: string, fresh = false, serverPhoto?: {
+  listId: string; lineId: string; imageUrl: string;
+}): Promise<PdfItemPhoto | null> {
   if (!source.trim()) return null;
+  const controller = new AbortController();
+  const requestTimer = window.setTimeout(() => controller.abort(), serverPhoto ? 22000 : 12000);
 
   try {
     let sourceDataUrl = source;
 
-    if (!source.startsWith("data:image/")) {
-      const response = await fetch(source, { cache: "force-cache" });
-      if (!response.ok) return null;
+    if (serverPhoto || !source.startsWith("data:image/")) {
+      const response = serverPhoto
+        ? await fetch("/api/equipment-list-pdf-photo", {
+          method: "POST", credentials: "same-origin", cache: "no-store",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(serverPhoto), signal: controller.signal,
+        })
+        : await fetch(source, { cache: fresh ? "no-store" : "force-cache", signal: controller.signal });
+      if (!response.ok) {
+        if (serverPhoto) {
+          const detail = await response.json().catch(() => null);
+          console.warn("PDF photo download failed", {
+            lineId: serverPhoto.lineId, status: response.status,
+            error: typeof detail?.error === "string" ? detail.error : "Photo unavailable",
+          });
+        }
+        return null;
+      }
 
       const blob = await response.blob();
       sourceDataUrl = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
-        reader.onerror = () => reject(new Error("Failed to read item photo."));
-        reader.onload = () => resolve(String(reader.result || ""));
+        const cancel = () => reader.abort();
+        const cleanup = () => controller.signal.removeEventListener("abort", cancel);
+        if (controller.signal.aborted) { reject(new Error("Photo request timed out.")); return; }
+        controller.signal.addEventListener("abort", cancel, { once: true });
+        reader.onerror = () => { cleanup(); reject(new Error("Failed to read item photo.")); };
+        reader.onabort = () => { cleanup(); reject(new Error("Photo request cancelled.")); };
+        reader.onload = () => { cleanup(); resolve(String(reader.result || "")); };
         reader.readAsDataURL(blob);
       });
     }
 
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
       const nextImage = new Image();
-      nextImage.onerror = () => reject(new Error("Failed to load item photo."));
-      nextImage.onload = () => resolve(nextImage);
+      const imageTimer = window.setTimeout(() => {
+        nextImage.onload = null; nextImage.onerror = null; nextImage.removeAttribute("src");
+        reject(new Error("Photo decoding timed out."));
+      }, 8000);
+      nextImage.onerror = () => { window.clearTimeout(imageTimer); reject(new Error("Failed to load item photo.")); };
+      nextImage.onload = () => { window.clearTimeout(imageTimer); resolve(nextImage); };
       nextImage.src = sourceDataUrl;
     });
 
@@ -661,6 +700,8 @@ async function loadPdfItemPhoto(source: string): Promise<PdfItemPhoto | null> {
     };
   } catch {
     return null;
+  } finally {
+    window.clearTimeout(requestTimer);
   }
 }
 
@@ -748,6 +789,8 @@ export default function EquipmentListDetailsClient({
     null,
   );
   const [correctionItem, setCorrectionItem] = useState<EquipmentListItem | null>(null);
+  const [missingItems, setMissingItems] = useState<EquipmentListItem[] | null>(null);
+  useEffect(()=>setMissingItems(null),[listId]);
   const [returnOkQuantity, setReturnOkQuantity] = useState(0);
   const [returnToMaintenance, setReturnToMaintenance] = useState(false);
   const [syncingTransfer, setSyncingTransfer] = useState(false);
@@ -774,6 +817,8 @@ export default function EquipmentListDetailsClient({
   const [pdfAction, setPdfAction] = useState<"download" | "share" | null>(
     null,
   );
+  const [pdfPhotoWarnings, setPdfPhotoWarnings] = useState<string[]>([]);
+  useEffect(() => { setPdfPhotoWarnings([]); }, [listId]);
   const [customItemOpen, setCustomItemOpen] = useState(false);
   const customEditVersion = useRef(0);
   const pendingCustomEditCount = useRef(0);
@@ -1293,12 +1338,7 @@ export default function EquipmentListDetailsClient({
   }, [listId, supabase]);
 
   function remainingQuantity(item: EquipmentListItem) {
-    return Math.max(
-      0,
-      (Number(item.approved_quantity) || 0) -
-        (Number(item.returned_ok_quantity) || 0) -
-        (Number(item.returned_maintenance_quantity) || 0),
-    );
+    return missingOutside(item);
   }
 
   async function receiveReturn(
@@ -1480,6 +1520,13 @@ export default function EquipmentListDetailsClient({
         ? "The correction was saved, but the list could not refresh. Reopen the list before making another change."
         : "Could not refresh the list. Reopen it before trying the correction again.");
     }
+  }
+
+  async function refreshAfterMissing(saved: boolean) {
+    const owner=getUserId(),samePage=()=>dispatchContext.current.listId===listId&&getUserId()===owner;
+    setMissingItems(null);setError("");
+    if(saved)setMessage("Missing recorded. Equipment stays unavailable. View all events in Missing Equipment.");
+    try{await refreshListAndItems(()=>!samePage());}catch{if(samePage())setError("Reopen this list to check the latest Missing / Received totals before another change.");}
   }
 
   async function removeItem(itemId: string) {
@@ -1845,6 +1892,8 @@ export default function EquipmentListDetailsClient({
 
   async function createListPdf() {
     if (!list) throw new Error("Equipment list is unavailable.");
+    const exportOwner = getUserId();
+    setPdfPhotoWarnings([]);
 
     const [{ jsPDF }, { autoTable }, logo] = await Promise.all([
       import("jspdf"),
@@ -1852,24 +1901,29 @@ export default function EquipmentListDetailsClient({
       loadPdfLogo(),
     ]);
     const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-    const itemPhotoUrls = Array.from(
-      new Set(
-        sortedGroups
-          .map((group) => metadataText(group.items[0], "photo_url").trim())
-          .filter(Boolean),
-      ),
-    );
-    const itemPhotoEntries = await Promise.all(
-      itemPhotoUrls.map(async (photoUrl) => {
-        const photo = await loadPdfItemPhoto(photoUrl);
-        return [photoUrl, photo] as const;
-      }),
-    );
-    const itemPhotos = new Map(
-      itemPhotoEntries.filter(
-        (entry): entry is readonly [string, PdfItemPhoto] => entry[1] !== null,
-      ),
-    );
+    const preparedPhotos = await prepareListPdfPhotos({
+      groups: sortedGroups,
+      loadPhoto: loadPdfItemPhoto,
+      loadServerPhoto: (source, lineId) => {
+        if (isOffline() || getUserId() !== exportOwner || dispatchContext.current.listId !== list.id) return Promise.resolve(null);
+        return loadPdfItemPhoto(source, true, { listId: list.id, lineId, imageUrl: source });
+      },
+      readCatalog: async (table, ids) => {
+        const controller = new AbortController();
+        const timer = window.setTimeout(() => controller.abort(), 8000);
+        try {
+          const result = await supabase.from(table).select(PDF_PHOTO_COLUMNS[table]).in("id", ids).abortSignal(controller.signal);
+          if (result.error) throw result.error;
+          const rows: unknown[] = result.data || [];
+          return rows.filter((row): row is PhotoCatalogRow => typeof row === "object" && row !== null && "id" in row && typeof row.id === "string");
+        } finally { window.clearTimeout(timer); }
+      },
+    });
+    const itemPhotos = preparedPhotos.photos;
+    if (getUserId() !== exportOwner || dispatchContext.current.listId !== list.id) {
+      throw new Error("The page or signed-in user changed. Open the list and export again.");
+    }
+    setPdfPhotoWarnings(preparedPhotos.unavailable);
 
     if (logo?.dataUrl && logo.width > 0 && logo.height > 0) {
       const maxWidth = 44;
@@ -2029,7 +2083,8 @@ export default function EquipmentListDetailsClient({
             })
           : [];
       const hasAreaDetail = squareMetres > 0 && !isGenericMatrix;
-      const descriptionDetail = draftDescriptions[draftDescriptionKey(firstItem)] || "";
+      const groupMissing=group.items.reduce((sum,item)=>sum+Math.max(0,Number(item.missing_quantity)||0),0);
+      const descriptionDetail = [draftDescriptions[draftDescriptionKey(firstItem)] || "",groupMissing?`${groupMissing} ${firstItem.inventory_record_type==="matrix_row"&&!isGenericMatrix?"cabinet(s)":"pc(s)"} Missing (unavailable; recorded in Missing Equipment)`:""].filter(Boolean).join("\n");
       const hasDetailRows = Boolean(
         descriptionDetail || blockDetail ||
           customDetail ||
@@ -2037,8 +2092,8 @@ export default function EquipmentListDetailsClient({
           rackDetails.length > 0 ||
           serialDetails.length > 0,
       );
-      const itemPhotoUrl = metadataText(firstItem, "photo_url").trim();
-      const hasItemPhoto = itemPhotos.has(itemPhotoUrl);
+      const photoKey = group.key;
+      const hasItemPhoto = itemPhotos.has(photoKey);
       const itemRowHeight = hasItemPhoto
         ? 12.5
         : displayParts.cabinetDetail
@@ -2050,7 +2105,7 @@ export default function EquipmentListDetailsClient({
           content: "",
           colSpan: 5,
           rowKind: "item",
-          photoUrl: hasItemPhoto ? itemPhotoUrl : "",
+          photoKey: hasItemPhoto ? photoKey : "",
           brandText: displayParts.brand,
           modelText: displayParts.model,
           primaryText: displayParts.primaryName,
@@ -2255,7 +2310,7 @@ export default function EquipmentListDetailsClient({
       didDrawCell: (hookData: any) => {
         const raw = hookData.cell.raw as {
           rowKind?: string;
-          photoUrl?: string;
+          photoKey?: string;
           brandText?: string;
           modelText?: string;
           primaryText?: string;
@@ -2275,10 +2330,10 @@ export default function EquipmentListDetailsClient({
         }
 
         if (raw?.rowKind === "item") {
-          const textX = hookData.cell.x + (raw.photoUrl ? 15 : 3);
+          const textX = hookData.cell.x + (raw.photoKey ? 15 : 3);
           const textWidth = Math.max(
             10,
-            hookData.cell.width - (raw.photoUrl ? 18 : 6),
+            hookData.cell.width - (raw.photoKey ? 18 : 6),
           );
           const hasCabinetText = Boolean(raw.cabinetText);
           const mainY = hasCabinetText
@@ -2341,8 +2396,8 @@ export default function EquipmentListDetailsClient({
             );
           }
 
-          if (!raw.photoUrl) return;
-          const photo = itemPhotos.get(raw.photoUrl);
+          if (!raw.photoKey) return;
+          const photo = itemPhotos.get(raw.photoKey);
           if (!photo) return;
 
           const boxSize = 9;
@@ -2712,7 +2767,7 @@ export default function EquipmentListDetailsClient({
 
   const dates = scheduleRows(list);
   const isLocalEventList = list.list_type === "local_event";
-  const showReturnQuantities = showActiveReturnQuantities(list);
+  const showReturnQuantities = showActiveReturnQuantities(list) || Boolean(list?.status==="closed"&&["local_event","dry_hire"].includes(list.list_type)&&items.some(item=>missingCount(item.missing_quantity)>0));
   const localEventTitle = list.event_name?.trim() || "Event";
   const localEventMeta = [list.reference, list.venue?.trim()]
     .filter(Boolean)
@@ -2767,6 +2822,10 @@ export default function EquipmentListDetailsClient({
           onSaved={() => void refreshAfterReceiptCorrection(true)}
           onRefresh={() => void refreshAfterReceiptCorrection(false)} />
       ) : null}
+
+      {missingItems?.length && missingItems[0].list_id===list.id ? <MissingEquipmentDialog
+        key={`${list.id}:${missingItems[0].id}`} mode="mark" list={list} items={missingItems}
+        onClose={()=>setMissingItems(null)} onSaved={()=>void refreshAfterMissing(true)} onRefresh={()=>void refreshAfterMissing(false)}/> : null}
 
       {customItemOpen && !isMaintenanceList ? (
         <CustomItemDialog
@@ -3177,6 +3236,14 @@ export default function EquipmentListDetailsClient({
         </div>
       ) : null}
 
+      {pdfPhotoWarnings.length > 0 ? (
+        <div role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] text-amber-900">
+          <strong>{pdfPhotoWarnings.length} PDF photo{pdfPhotoWarnings.length === 1 ? " is" : "s are"} missing or could not be loaded.</strong>
+          <details className="mt-1"><summary className="cursor-pointer font-semibold">Show equipment</summary><p className="mt-1 break-words">{pdfPhotoWarnings.join(" · ")}</p></details>
+          <p className="mt-1 text-[10px]">These photos could not be downloaded or converted. Retry the export; the photo host may be unavailable. The PDF still includes the photos that could be loaded.</p>
+        </div>
+      ) : null}
+
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white">
         <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5">
           <div>
@@ -3243,13 +3310,16 @@ export default function EquipmentListDetailsClient({
           </div>
         ) : showReturnQuantities ? (
           <ActiveListEquipmentTable key={list.id} list={list} groups={sortedGroups} manager={isManager}
-            canReceive={canReceiveReturns} busy={Boolean(returningItemId || correctionItem || returnDialog)} receivingItemId={returningItemId}
+            canReceive={canReceiveReturns} busy={Boolean(returningItemId || correctionItem || returnDialog || missingItems)} receivingItemId={returningItemId}
             hiddenSerialPdfKeys={hiddenUnitGroupKeys} onToggleSerialPdf={toggleUnitGroupVisibility}
             onReceive={(item) => {
               if (isOffline()) { setError("The app is offline. Connect before receiving equipment."); return; }
               if (item.inventory_record_type === "unit") void receiveReturn(item, 1);
               else openQuantityReturn(item);
-            }} onCorrect={setCorrectionItem}
+            }} onCorrect={setCorrectionItem} onMissing={(candidates)=>{
+              if(isOffline()){setError("The app is offline. Connect before marking Missing.");return;}
+              const eligible=candidates.filter(item=>canMarkMissing(list,item,isManager));if(eligible.length)setMissingItems(eligible);
+            }}
             presentGroup={(group) => {
               const item = group.items[0];
               const generic = item.inventory_record_type === "matrix_model" || item.metadata?.matrix_source === "generic";

@@ -2,7 +2,7 @@ import type { EquipmentListItem } from "@/lib/equipmentLists";
 
 type ReturnLine = Pick<EquipmentListItem,
   "inventory_record_type" | "requested_quantity" | "approved_quantity" |
-  "returned_ok_quantity" | "returned_maintenance_quantity" | "metadata"
+  "returned_ok_quantity" | "returned_maintenance_quantity" | "missing_quantity" | "metadata"
 >;
 
 /** Display-only: draft, delivery-note, KSA and maintenance quantities are unchanged. */
@@ -25,7 +25,7 @@ export function listReturnQuantities(items: readonly ReturnLine[]) {
     const lineSent = nonnegative(item.approved_quantity);
     const lineReceived = Math.min(lineSent,
       nonnegative(item.returned_ok_quantity) + nonnegative(item.returned_maintenance_quantity));
-    const lineOutside = lineSent - lineReceived;
+    const lineOutside = Math.max(0,lineSent - lineReceived - nonnegative(item.missing_quantity));
     sent += lineSent; received += lineReceived; outside += lineOutside;
 
     if (item.inventory_record_type === "matrix_row" && item.metadata?.matrix_source !== "generic") {

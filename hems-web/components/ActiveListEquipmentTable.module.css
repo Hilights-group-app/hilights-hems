@@ -10,7 +10,7 @@
 }
 .equipmentTable { width: 100%; table-layout: fixed; border-collapse: collapse; }
 .quantityCol { width: 76px; }
-.actionCol { width: 166px; }
+.actionCol { width: 236px; }
 .equipmentHead { background: #f2f4f7; color: #566171; font-size: 11px; }
 .equipmentHead th { padding: 10px 12px; text-align: right; font-weight: 600; }
 .equipmentHead th:first-child { padding-left: 18px; text-align: left; }
@@ -32,12 +32,17 @@
 .metric { padding: 10px 12px; vertical-align: middle; text-align: right; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .received { color: #16844a; }
 .out { color: #2254d7; }
+.missing { display: inline-flex; justify-content: center; color: #c72536; }
+.missingButton { color: #b42336; border-color: #f3bdc4; background: #fff7f8; }
+.missingButton:hover { color: #9e1830; background: #ffecef; border-color: #e27b8c; }
+.missingTextButton { width: 76px; gap: 4px; padding: 0 5px; font: inherit; font-size: 10px; font-weight: 600; }
+.missingNote { display: block; margin-top: 3px; color: #c72536; font-size: 9px; font-weight: 600; }
 .repair { color: #a76408; }
 .muted { color: #98a2b3; }
 .repairNote { display: block; margin-top: 3px; font-size: 9px; font-weight: 400; color: #a76408; }
 .mobileLabel { display: none; }
 .actionCell { padding: 10px 14px 10px 8px; vertical-align: middle; }
-.actions { display: grid; grid-template-columns: 30px 104px; align-items: center; justify-content: end; gap: 7px; }
+.actions { display: grid; grid-template-columns: 28px 76px 88px; align-items: center; justify-content: end; gap: 5px; }
 .correctionSlot { display: flex; min-width: 0; align-items: center; justify-content: center; }
 .receiveButton, .receiveIcon, .closeButton { display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex-shrink: 0; cursor: pointer; }
 .receiveButton { height: 31px; min-width: 0; border: 1px solid #111318; border-radius: 7px; background: #111318; padding: 0 10px; color: #fff; font-family: inherit; font-size: 10px; font-weight: 600; line-height: 1; }
@@ -60,13 +65,13 @@
 .serialTable { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 11px; }
 .serialIdCol { width: 68px; }
 .serialStatusCol { width: 100px; }
-.serialActionCol { width: 94px; }
+.serialActionCol { width: 114px; }
 .serialTable th { padding: 7px 10px; background: #f0f2f5; text-align: left; color: #667085; font-size: 10px; font-weight: 600; }
 .serialTable th.actionHeading { text-align: center; }
 .serialTable td { padding: 3px 10px; border-top: 1px solid #edf0f3; vertical-align: middle; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
 .serialTable tbody tr:hover { background: #fafbfc; }
 .serialNumber { font-weight: 400; }
-.serialActions { display: grid; grid-template-columns: 28px 30px; align-items: center; justify-content: end; gap: 5px; }
+.serialActions { display: grid; grid-template-columns: 28px 28px 30px; align-items: center; justify-content: end; gap: 4px; }
 .srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
 .pickerOverlay { position: fixed; inset: 0; z-index: 10035; display: flex; align-items: center; justify-content: center; padding: 20px; color: #17202e; }
 .pickerBackdrop { position: absolute; inset: 0; border: 0; background: rgb(0 0 0 / .48); }
@@ -89,7 +94,7 @@
   .equipmentTable > colgroup, .equipmentHead { display: none; }
   .categoryRow, .categoryRow th { display: block; width: 100%; }
   .categoryRow th { box-sizing: border-box; padding: 8px 12px; }
-  .equipmentRow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) 88px; border-bottom: 1px solid #edf0f3; }
+  .equipmentRow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) 114px; border-bottom: 1px solid #edf0f3; }
   .equipmentRow > td { min-width: 0; border-bottom: 0; }
   .identityCell { grid-column: 1 / 4; grid-row: 1; padding: 10px 8px 3px 12px; }
   .identity { gap: 8px; }
@@ -103,7 +108,9 @@
   .mobileLabel { display: block; color: #98a2b3; font-size: 8px; font-weight: 500; }
   .repairNote { margin-top: 0; font-size: 8px; }
   .actionCell { grid-column: 4; grid-row: 1 / 3; align-self: center; padding: 8px 10px 8px 2px; }
-  .actions { grid-template-columns: 28px 36px; gap: 5px; }
+  .actions { grid-template-columns: 28px 28px 34px; gap: 4px; }
+  .missingTextButton { width: 28px; padding: 0; }
+  .missingTextButton > span { display: none; }
   .receiveButton { width: 36px; height: 34px; padding: 0; }
   .receiveButton > span { display: none; }
   .complete { height: 34px; }
@@ -117,7 +124,7 @@
   .serialToolbar { padding: 6px 8px; }
   .serialIdCol { width: 44px; }
   .serialStatusCol { width: 78px; }
-  .serialActionCol { width: 78px; }
+  .serialActionCol { width: 114px; }
   .serialTable th, .serialTable td { padding-inline: 7px; font-size: 10px; }
 }
 @media (pointer: coarse) {

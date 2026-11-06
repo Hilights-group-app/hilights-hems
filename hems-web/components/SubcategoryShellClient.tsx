@@ -4,19 +4,26 @@ import { ReactNode } from "react";
 import SubcategoryHeader from "@/components/SubcategoryHeader";
 import NavigationFeedbackLink from "@/components/NavigationFeedbackLink";
 import { ArrowLeft } from "lucide-react";
+import InventoryStockPdfButton from "@/components/InventoryStockPdfButton";
 
 export default function SubcategoryShellClient({
   title,
   children,
+  stockSubcategoryId,
+  stockPath,
 }: {
   title: string;
   children: ReactNode;
+  stockSubcategoryId?: string | null;
+  stockPath?: string;
 }) {
   return (
     <div className="space-y-3">
       <SubcategoryHeader
         title={title}
         right={
+        <>
+        {stockSubcategoryId ? <InventoryStockPdfButton key={`${stockSubcategoryId}:${stockPath}`} subcategoryId={stockSubcategoryId} stockPath={stockPath} /> : null}
         <NavigationFeedbackLink
           href="/inventory"
           loadingLabel={<span className="hidden hems-wide:inline">Opening...</span>}
@@ -25,6 +32,7 @@ export default function SubcategoryShellClient({
           <ArrowLeft size={15} aria-hidden="true" />
           <span className="hidden hems-wide:inline">Back to Inventory</span>
         </NavigationFeedbackLink>
+        </>
         }
       />
 
