@@ -8,6 +8,8 @@ import { activeGroupKind, activeQuantityText, activeRowCounts, activeSerialRefer
   activeLineOutside, canReceiveActiveItem, localEventLedCabinetArea, type ActiveEquipmentGroup } from "@/lib/activeListLayout";
 import { canMarkMissing, missingCount } from "@/lib/missingEquipment";
 import ReceivedCorrectionAction from "./ReceivedCorrectionAction";
+import SerialBatchReceiveDialog from "./SerialBatchReceiveDialog";
+import { canBatchReceiveSerials, isOutstandingSerial } from "@/lib/serialBatchReceive";
 import styles from "./ActiveListEquipmentTable.module.css";
 
 export type ActiveGroupPresentation = {
@@ -35,6 +37,8 @@ type Props = {
   onReceive: (item: EquipmentListItem) => void;
   onCorrect: (item: EquipmentListItem) => void;
   onMissing: (items: EquipmentListItem[]) => void;
+  onReceiveSerials: (items: EquipmentListItem[]) => Promise<boolean>;
+  onRefresh: () => void;
 };
 
 /** Presentation only: all mutations still use the existing parent dialogs/RPCs. */
@@ -107,6 +111,7 @@ export default function ActiveListEquipmentTable(props: Props) {
         <div className={styles.serialPanel}>
           <div className={styles.serialToolbar}>
             <span>Serial / Unit ID</span>
+            {canBatchReceiveSerials(list,manager&&canReceive)&&group.items.some(isOutstandingSerial)?<button type="button" disabled={busy} onClick={()=>setReceivingGroupKey(group.key)} className={styles.batchOpen}>Receive multiple</button>:null}
             <label className={styles.pdfPreference}>
               <input type="checkbox" checked={!props.hiddenSerialPdfKeys.has(group.key)} onChange={() => props.onToggleSerialPdf(group.key)} />
               IDs / serials in PDF
@@ -172,7 +177,11 @@ export default function ActiveListEquipmentTable(props: Props) {
       })}</tbody>
     </table>
 
-    {receivingGroup && typeof document !== "undefined" ? createPortal(
+    {receivingGroup&&activeGroupKind(receivingGroup)==="serial"&&canBatchReceiveSerials(list,manager&&canReceive)?<SerialBatchReceiveDialog
+      key={receivingGroup.key} list={list} title={receivingGroup.displayName} items={receivingGroup.items} canReceive={manager&&canReceive} busy={busy}
+      onClose={()=>setReceivingGroupKey(null)} onConfirm={props.onReceiveSerials}
+      onRefresh={()=>{setReceivingGroupKey(null);props.onRefresh();}}/>
+    : receivingGroup && typeof document !== "undefined" ? createPortal(
       <div className={styles.pickerOverlay} role="dialog" aria-modal="true" aria-label="Choose equipment to receive"
         onKeyDown={event => {
           if (event.key === "Escape" && !busy) setReceivingGroupKey(null);

@@ -74,6 +74,7 @@ import ReceivedCorrectionDialog from "@/components/ReceivedCorrectionDialog";
 import MissingEquipmentDialog from "@/components/MissingEquipmentDialog";
 import LocalEventHeaderEdit from "@/components/LocalEventHeaderEdit";
 import { canMarkMissing, missingCount, missingOutside } from "@/lib/missingEquipment";
+import { buildSerialReceiptPayload, canBatchReceiveSerials } from "@/lib/serialBatchReceive";
 import CompactListHeading from "@/components/CompactListHeading";
 import headerStyles from "./EquipmentListHeader.module.css";
 import { showActiveReturnQuantities } from "@/lib/listReturnQuantities";
@@ -786,6 +787,14 @@ export default function EquipmentListDetailsClient({
   const cancelListScope = useRef(listId);
   cancelListScope.current=listId;
   const [returningItemId, setReturningItemId] = useState<string | null>(null);
+  const [bulkReceiving,setBulkReceiving] = useState(false);
+  const bulkReceiveBusy = useRef(false);
+  const bulkReceiveRequest = useRef<AbortController|null>(null);
+  const bulkReceiptScope = useRef(0);
+  useEffect(()=>{
+    bulkReceiptScope.current++;setBulkReceiving(false);bulkReceiveBusy.current=false;
+    return()=>{bulkReceiptScope.current++;bulkReceiveRequest.current?.abort();bulkReceiveRequest.current=null;bulkReceiveBusy.current=false;};
+  },[listId,currentUserId]);
   const [returnDialog, setReturnDialog] = useState<ReturnDialogState | null>(
     null,
   );
@@ -1536,6 +1545,56 @@ export default function EquipmentListDetailsClient({
     if(fields)setList(current=>current&&current.id===listId?{...current,...fields}:current);
     if(saved)setMessage("Event details updated.");
     try{await refreshListAndItems(()=>!samePage());}catch{if(samePage())setError(saved?"Event saved, but the page could not refresh. Reopen the list.":"Could not refresh event details. Reopen the list.");}
+  }
+
+  async function receiveSerialBatch(selected: EquipmentListItem[]): Promise<boolean> {
+    if(bulkReceiveBusy.current||returningItemId)return false;
+    const owner=getUserId();
+    if(!list||!owner||currentUserId!==owner||!canReceiveReturns||!canBatchReceiveSerials(list,canManageEquipmentLists()))
+      throw new Error("Your access or list status changed. Refresh before receiving.");
+    if(isOffline())throw new Error("The app is offline. Connect before receiving serial units.");
+    const payload=buildSerialReceiptPayload(list.id,selected);
+    if(!window.confirm(`Receive ${payload.length} selected serial unit${payload.length===1?"":"s"} of ${selected[0].display_name}? Confirm they are physically back in the warehouse. Inventory will update immediately.`))return false;
+    // Recheck after the confirmation; no background/automatic retries are made.
+    if(getUserId()!==owner||isOffline())throw new Error("Connection or user changed. Reopen the list before receiving.");
+    bulkReceiveBusy.current=true;setBulkReceiving(true);setError("");setMessage("");
+    const controller=new AbortController();bulkReceiveRequest.current=controller;
+    const scope=++bulkReceiptScope.current;
+    const timer=window.setTimeout(()=>controller.abort(),60000);
+    const sameView=()=>bulkReceiptScope.current===scope&&dispatchContext.current.listId===listId&&getUserId()===owner;
+    const samePage=()=>bulkReceiveRequest.current===controller&&sameView();
+    try{
+      const result=await supabase.rpc("hems_receive_serial_batch",{p_list_id:list.id,p_lines:payload}).abortSignal(controller.signal);
+      if(result.error)throw result.error;
+      if(!samePage())return false;
+      if(Number(result.data?.received)!==payload.length)throw new Error("The receipt result could not be confirmed. Refresh the list before retrying.");
+      // The database confirmed the entire batch. Update the visible counters now;
+      // reconciling current stock is background work, not another mutation.
+      const receivedIds=new Set(payload.map(line=>line.id));
+      setItems(current=>current.map(item=>receivedIds.has(item.id)?{...item,returned_ok_quantity:1}:item));
+      const nextStatus=String(result.data?.list_status||"");
+      if(["active","partially_returned","closed"].includes(nextStatus))setList(current=>current&&current.id===listId?{...current,status:nextStatus as EquipmentListStatus}:current);
+      setMessage(`${payload.length} serial unit${payload.length===1?"":"s"} received. Inventory is updated.`);
+      const detail={listId:list.id,action:"returned",received:payload.length};
+      window.dispatchEvent(new CustomEvent(EQUIPMENT_LISTS_EVENT,{detail}));
+      window.dispatchEvent(new CustomEvent(EQUIPMENT_LIST_ITEMS_EVENT,{detail}));
+      if(!isOffline())void refreshListAndItems(()=>!sameView()||isOffline()).catch(()=>{if(sameView())setError("The batch was received, but the page could not refresh. Reopen this list to check the latest totals; do not receive the same serials again.");});
+      return true;
+    }catch(failure:unknown){
+      if(!samePage())return false;
+      const problem=failure as {code?:string;message?:string};
+      const uncertain=!problem.code||!/^[A-Z0-9]{5}$/.test(String(problem.code));
+      const message=["PGRST202","42883"].includes(problem.code||"")?"Bulk Receive setup is unavailable. Check receive-serial-batch.sql in Supabase, then refresh the list.":uncertain?"The result could not be confirmed. Refresh the list before retrying; the batch may already be saved.":problem.message||"The batch could not be received. Refresh before retrying.";
+      setError(message);throw new Error(message);
+    }finally{
+      clearTimeout(timer);
+      if(bulkReceiveRequest.current===controller){bulkReceiveRequest.current=null;bulkReceiveBusy.current=false;setBulkReceiving(false);}
+    }
+  }
+
+  async function refreshSerialReceiptSelection() {
+    const owner=getUserId(),samePage=()=>dispatchContext.current.listId===listId&&getUserId()===owner;
+    try{await refreshListAndItems(()=>!samePage());}catch{if(samePage())setError("Could not refresh the serials. Reopen this list before trying again.");}
   }
 
   async function removeItem(itemId: string) {
@@ -3320,8 +3379,9 @@ export default function EquipmentListDetailsClient({
             </div>
           </div>
         ) : showReturnQuantities ? (
-          <ActiveListEquipmentTable key={list.id} list={list} groups={sortedGroups} manager={isManager}
-            canReceive={canReceiveReturns} busy={Boolean(returningItemId || correctionItem || returnDialog || missingItems)} receivingItemId={returningItemId}
+          <ActiveListEquipmentTable key={`${list.id}:${currentUserId}`} list={list} groups={sortedGroups} manager={isManager}
+            canReceive={canReceiveReturns} busy={Boolean(returningItemId || correctionItem || returnDialog || missingItems || bulkReceiving)} receivingItemId={returningItemId}
+            onReceiveSerials={receiveSerialBatch} onRefresh={()=>void refreshSerialReceiptSelection()}
             hiddenSerialPdfKeys={hiddenUnitGroupKeys} onToggleSerialPdf={toggleUnitGroupVisibility}
             onReceive={(item) => {
               if (isOffline()) { setError("The app is offline. Connect before receiving equipment."); return; }
