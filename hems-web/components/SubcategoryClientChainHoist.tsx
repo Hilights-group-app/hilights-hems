@@ -11,7 +11,7 @@ import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor"
 
 import { getAppLayout } from "@/lib/appLayout";
 
-import KsaStockLink from "@/components/KsaStockLink";
+import InventoryQuantitySummary from "@/components/InventoryQuantitySummary";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -1756,75 +1756,7 @@ export default function SubcategoryClientChainHoist({
                       ) : null}
 
                       {/* Mobile stats */}
-                      <div className="mt-2 hems-wide:hidden">
-                        <div className={`grid gap-x-2 gap-y-1 text-center ${
-                          st.maintenance > 0 && st.expired > 0
-                            ? "grid-cols-4"
-                            : st.maintenance > 0 || st.expired > 0
-                              ? "grid-cols-3"
-                              : "grid-cols-2"
-                        }`}>
-                          <div className="text-[8px] font-semibold text-gray-500">
-                            Total
-                          </div>
-                          <div className="text-[8px] font-semibold text-gray-500">
-                            Available
-                          </div>
-                          {st.maintenance > 0 ? (
-                            <div className="text-[8px] font-semibold text-gray-500">
-                              Failed
-                            </div>
-                          ) : null}
-                          {st.expired > 0 ? (
-                            <div className="text-[8px] font-semibold text-gray-500">
-                              Expired
-                            </div>
-                          ) : null}
-
-                          <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
-                            {st.total}
-                          </div>
-                          <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
-                            {st.available}
-                          </div>
-                          {st.maintenance > 0 ? (
-                            <div className="rounded-md bg-red-100 px-1 py-0.5 text-[9px] font-semibold text-red-700 whitespace-nowrap">
-                              {st.maintenance}
-                            </div>
-                          ) : null}
-                          {st.expired > 0 ? (
-                            <div className="rounded-md bg-red-100 px-1 py-0.5 text-[9px] font-semibold text-black whitespace-nowrap">
-                              {st.expired}
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-
-                      {/* Desktop stats */}
-                      <div className="mt-1 hidden hems-wide:block">
-                        <div className="flex flex-wrap gap-2">
-                          <StatPill label="Total Qty" value={st.total} />
-                          <StatPill
-                            label="Available Qty"
-                            value={st.available}
-                            tone="green"
-                          />
-                          {st.maintenance > 0 ? (
-                            <StatPill
-                              label="Failed"
-                              value={st.maintenance}
-                              tone="red"
-                            />
-                          ) : null}
-                          {st.expired > 0 ? (
-                            <StatPill
-                              label="Expired"
-                              value={st.expired}
-                              tone="red"
-                            />
-                          ) : null}
-                        </div>
-                      </div>
+                      <InventoryQuantitySummary total={st.total} available={st.available} maintenance={st.maintenance} inKsa={st.inKsa} search={it.name} expired={st.expired} failed/>
 
                       
                     </div>
@@ -1896,7 +1828,7 @@ export default function SubcategoryClientChainHoist({
                     </div>
                   ) : null}
                 </div>
-              {st.inKsa > 0 ? <div className="mt-2"><KsaStockLink quantity={st.inKsa} search={it.name} /></div> : null}
+              
 </div>
             );
           })}

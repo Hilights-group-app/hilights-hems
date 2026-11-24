@@ -8,6 +8,7 @@ import { usePendingReservations } from "@/lib/usePendingReservations";
 import InventoryRouteLoading from "@/components/InventoryRouteLoading";
 
 import KsaStockLink from "@/components/KsaStockLink";
+import InventoryQuantitySummary from "@/components/InventoryQuantitySummary";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -2712,426 +2713,58 @@ function SortableLedModel({
 }
 
 function LedModelCard({
-  model,
-  brand,
-  modelName,
-  editable,
-  reorderable,
-  selectedModel,
-  onSelectModel,
-  selectedRowId,
-  onSelectRow,
-  onRowsReorder,
-  getReportHref,
-  allocationsByRow,
-  activeDraftList,
-  onAddToList,
+  model, brand, modelName, editable, reorderable, selectedModel, onSelectModel,
+  selectedRowId, onSelectRow, onRowsReorder, getReportHref, allocationsByRow,
+  activeDraftList, onAddToList,
 }: {
-  model: MatrixModel;
-  brand: string;
-  modelName: string;
-  editable: boolean;
-  reorderable: boolean;
-  selectedModel: boolean;
-  onSelectModel: () => void;
-  selectedRowId: string | null;
-  onSelectRow: (rowId: string) => void;
+  model: MatrixModel; brand: string; modelName: string; editable: boolean;
+  reorderable: boolean; selectedModel: boolean; onSelectModel: () => void;
+  selectedRowId: string | null; onSelectRow: (rowId: string) => void;
   onRowsReorder: (modelId: string, activeId: string, overId: string) => Promise<void>;
   getReportHref: (rowId: string) => string;
   allocationsByRow: Record<string, ActiveAllocation[]>;
-  activeDraftList: EquipmentList | null;
-  onAddToList: (row: MatrixRow) => void;
+  activeDraftList: EquipmentList | null; onAddToList: (row: MatrixRow) => void;
 }) {
   const rows = sortRows(model.matrix_rows);
-  const reservations = usePendingReservations();
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 8 },
-    })
-  );
-
-  const totalDisplay = rows.reduce(
-    (sum, row) => sum + toSqm(clampQty(row.qty), row.size),
-    0
-  );
-  const availableDisplay = rows.reduce(
-    (sum, row) => {
-      const activeAllocated = movementAllocationQuantity(
-        allocationsByRow[row.id] ?? [],
-      );
-      const allocated =
-        activeAllocated + existingMovementQuantity(row, activeAllocated);
-      return (
-        sum +
-        toSqm(
-          rowAvailableFromTotal(
-            clampQty(row.qty),
-            allocated,
-            clampQty(row.maintenance_qty),
-            reservations.index.quantity("matrix_row",row.id),
-          ),
-          row.size,
-        )
-      );
-    },
-    0
-  );
-  const reservedDisplay = rows.reduce((sum,row)=>sum + toSqm(reservations.index.quantity("matrix_row",row.id),row.size),0);
-  const maintenanceDisplay = rows.reduce(
-    (sum, row) => sum + toSqm(clampQty(row.maintenance_qty), row.size),
-    0
-  );
-  const modelMovementMap = new Map<string, ActiveAllocation>();
-  for (const row of rows) {
-    for (const allocation of allocationsByRow[row.id] ?? []) {
-      const current = modelMovementMap.get(allocation.listId);
-      if (current) current.quantity += allocation.quantity;
-      else modelMovementMap.set(allocation.listId, { ...allocation });
-    }
-  }
-  const modelMovements = Array.from(modelMovementMap.values());
-  const modelExistingMovement = rows.reduce((total, row) => {
-    const activeAllocated = movementAllocationQuantity(
-      allocationsByRow[row.id] ?? [],
-    );
-    return total + existingMovementQuantity(row, activeAllocated);
-  }, 0);
-
-  const modelKsaSquareMetres = rows.reduce(
-    (total, row) => total + toSqm(clampQty(row.in_ksa_qty), row.size),
-    0,
-  );
-
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   function handleDragEnd(event: any) {
-    if (!reorderable) return;
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    void onRowsReorder(model.id, String(active.id), String(over.id));
+    if (!reorderable || !event.over || event.active.id === event.over.id) return;
+    void onRowsReorder(model.id, String(event.active.id), String(event.over.id));
   }
-
   return (
-    <div
-      data-led-model-card="true"
-      className={`rounded-2xl border bg-white p-3 transition hems-wide:p-4 ${
-        selectedModel
-          ? "border-black ring-2 ring-black"
-          : "border-gray-200"
-      }`}
-    >
-      <div data-hems-block-header data-hems-padded-block="ledscreen" className="flex items-center justify-between gap-2 min-w-0 mb-3">
-        <button
-          type="button"
-          data-led-model-select="true"
-          onClick={onSelectModel}
-          className="relative min-w-0 flex-1 cursor-pointer text-left"
-        >
-          <h2
-            className="truncate text-[13px] hems-wide:text-[15px] text-gray-900"
-            style={{ lineHeight: 1.1 }}
-          >
-            <span className="font-bold">{brand}</span>
-            {modelName ? <span>{` ${modelName}`}</span> : null}
+    <div data-led-model-card="true"
+      onClick={(event)=>{
+        if (!editable || activeDraftList || document.documentElement.dataset.hemsLayout!=="desktop") return;
+        if ((event.target as Element).closest("a,button,input,select,textarea,label")) return;
+        onSelectModel();
+      }}
+      className={`rounded-2xl border bg-white p-3 transition hems-wide:p-4 ${selectedModel ? "border-black ring-2 ring-black" : "border-gray-200"}`}>
+      <div data-hems-block-header data-hems-padded-block="ledscreen" className="mb-3 flex min-w-0 items-center justify-between gap-2">
+        <button type="button" data-led-model-select="true" onClick={onSelectModel}
+          className="relative min-w-0 flex-1 cursor-pointer text-left">
+          <h2 className="truncate text-[13px] text-gray-900 hems-wide:text-[15px]" style={{lineHeight:1.1}}>
+            <span className="font-bold">{brand}</span>{modelName ? <span>{` ${modelName}`}</span> : null}
           </h2>
-          {model.description ? (
-            <p className="mt-1 whitespace-pre-line break-words text-[8px] leading-3 text-gray-500 hems-wide:text-[9px]">
-              {model.description}
-            </p>
-          ) : null}
+          {model.description ? <p className="mt-1 whitespace-pre-line break-words text-[8px] leading-3 text-gray-500 hems-wide:text-[9px]">{model.description}</p> : null}
         </button>
-
-        {editable ? (
-          <button
-            type="button"
-            data-led-model-select="true"
-            aria-label={`Open ${model.name} tools`}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              onSelectModel();
-            }}
-            className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm hems-wide:hidden"
-          >
-            ⋮
-          </button>
-        ) : null}
+        {editable && !activeDraftList ? <button type="button" data-led-model-select="true"
+          aria-label={`Open ${model.name} tools`} onClick={onSelectModel}
+          className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm hems-wide:hidden">⋮</button> : null}
       </div>
-      <ReservedStockBadge quantity={reservedDisplay} unit="SQM" />
-      <div className="flex flex-col gap-3 hems-wide:flex-row hems-wide:items-start hems-wide:justify-between">
-  <div className="flex items-start gap-3 min-w-0 flex-[1.45]">
-    <div className="min-w-0 flex-1">
-
-
-      <div className="mt-2 hems-wide:hidden">
-        <div className={`grid gap-x-1.5 gap-y-1 text-center ${
-          maintenanceDisplay > 0 ? "grid-cols-3" : "grid-cols-2"
-        }`}>
-          <ModelMobileStat label="Total" value={totalDisplay} tone="gray" />
-          <ModelMobileStat label="Available" value={availableDisplay} tone="green" />
-          {maintenanceDisplay > 0 ? (
-            <ModelMobileStat label="Maintenance" value={maintenanceDisplay} tone="yellow" />
-          ) : null}
-        </div>
-      </div>
-
-      <div className="mt-1 hidden hems-wide:block">
-        <div className="flex flex-wrap gap-2">
-          <SmallStat label="Total" value={totalDisplay} tone="gray" />
-          <SmallStat label="Available" value={availableDisplay} tone="green" />
-          {maintenanceDisplay > 0 ? (
-            <SmallStat label="Maintenance" value={maintenanceDisplay} tone="yellow" />
-          ) : null}
-        </div>
-      </div>
-
-      {modelMovements.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {modelMovements.map((allocation) => (
-            <Link
-              key={allocation.listId}
-              href={`/inventory/lists/${allocation.listId}`}
-              onClick={(event) => event.stopPropagation()}
-              title={`${allocation.reference} · ${allocation.label}`}
-              className={`max-w-full truncate rounded-lg px-2 py-1 text-[9px] font-semibold transition hover:opacity-80 ${
-                allocation.listType === "maintenance"
-                  ? "bg-amber-100 text-amber-800"
-                  : allocation.status === "partially_returned"
-                  ? "bg-purple-100 text-purple-800"
-                  : "bg-blue-100 text-blue-800"
-              }`}
-            >
-              {allocation.quantity} pcs · {allocation.label}
-            </Link>
-          ))}
-        </div>
-      ) : null}
-      <KsaStockLink quantity={modelKsaSquareMetres} unit="sqm" search={model.name} />
-      {Math.max(0,modelExistingMovement-rows.reduce((total,row) => total+clampQty(row.in_ksa_qty),0)) > 0 ? (
-        <div className="mt-2">
-          <span className="rounded-lg bg-gray-100 px-2 py-1 text-[9px] font-semibold text-gray-600">
-            {Math.max(0,modelExistingMovement-rows.reduce((total,row) => total+clampQty(row.in_ksa_qty),0))} pcs · Existing movement
-          </span>
-        </div>
-      ) : null}
-    </div>
-  </div>
-</div>
-
-      <div className="mt-4 overflow-visible rounded-2xl border border-gray-200 bg-white">
-        <div className="hidden hems-wide:block">
-          <div className="grid grid-cols-[64px_1.1fr_1.1fr_90px_90px_90px_minmax(150px,1fr)_52px_28px] bg-gray-100 px-3 py-2 text-[10px] font-bold text-gray-600 items-center gap-1">
-            <div>Photo</div>
-            <div>Cabinet Model</div>
-            <div>Cabinet Size</div>
-            <div className="text-center">Total</div>
-            <div className="text-center">Available</div>
-            <div className="text-center">Maintenance</div>
-            <div>Active Movement</div>
-            <div className="text-center">Report</div>
-            <div />
-          </div>
-
-          {rows.length === 0 ? (
-            <div className="px-3 py-3 text-[10px] text-gray-400">
-              No cabinet sizes yet.
+      {rows.length === 0 ? <p className="py-3 text-[10px] text-gray-400">No cabinet sizes yet.</p> :
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={rows.map(row=>row.id)} strategy={verticalListSortingStrategy}>
+            <div className="space-y-2">
+              {rows.map(row=><SortableCabinetRow key={row.id} id={row.id} disabled={!reorderable}>
+                <LedCabinetInventoryItem row={row} brand={brand} modelName={modelName}
+                  searchName={model.name} editable={editable} selected={selectedRowId===row.id}
+                  onSelect={()=>onSelectRow(row.id)} reportHref={getReportHref(row.id)}
+                  allocations={allocationsByRow[row.id]??[]} activeDraftList={activeDraftList}
+                  onAddToList={()=>onAddToList(row)}/>
+              </SortableCabinetRow>)}
             </div>
-          ) : (
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={handleDragEnd}
-            >
-              <SortableContext
-                items={rows.map((r) => r.id)}
-                strategy={verticalListSortingStrategy}
-              >
-                {rows.map((r) => (
-                  <SortableCabinetRow key={r.id} id={r.id} disabled={!reorderable}>
-                    <DesktopEditableCabinetRow
-                      row={r}
-                      selected={selectedRowId === r.id}
-                      onSelect={() => onSelectRow(r.id)}
-                      reportHref={getReportHref(r.id)}
-                      allocations={allocationsByRow[r.id] ?? []}
-                      activeDraftList={activeDraftList}
-                      onAddToList={() => onAddToList(r)}
-                    />
-                  </SortableCabinetRow>
-                ))}
-              </SortableContext>
-            </DndContext>
-          )}
-        </div>
-
-        <div className="space-y-2 p-2 hems-wide:hidden">
-          {rows.length === 0 ? (
-            <div className="px-2 py-3 text-[10px] text-gray-400">
-              No cabinet sizes yet.
-            </div>
-          ) : (
-            <DndContext
-              sensors={sensors}
-              collisionDetection={closestCenter}
-              onDragEnd={handleDragEnd}
-            >
-              <SortableContext
-                items={rows.map((r) => r.id)}
-                strategy={verticalListSortingStrategy}
-              >
-                {rows.map((r) => (
-                  <SortableCabinetRow key={r.id} id={r.id} disabled={!reorderable}>
-                    <div
-                      onClick={() => {
-                        window.location.href = getReportHref(r.id);
-                      }}
-                      className="relative cursor-pointer rounded-2xl border border-gray-100 bg-white px-2 py-2 pr-10"
-                    >
-                      {editable ? (
-                        <button
-                          type="button"
-                          data-led-cabinet-row="true"
-                          aria-label={`Open ${r.cabinet_model || r.size} tools`}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            onSelectRow(r.id);
-                          }}
-                          className="absolute right-2 top-2 z-30 flex h-[26px] w-[26px] items-center justify-center rounded-full border border-gray-300 bg-white text-base font-bold text-gray-700 shadow-sm"
-                        >
-                          ⋮
-                        </button>
-                      ) : null}
-
-                      {activeDraftList ? (
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            onAddToList(r);
-                          }}
-                          data-hems-mobile-add="cabinets"
-                          title={`Add cabinets to ${activeDraftList.reference}`}
-                          className={`absolute top-2 z-20 inline-flex h-[26px] min-w-[26px] items-center justify-center rounded-full bg-black px-2 text-[9px] font-semibold text-white shadow-sm ${
-                            editable ? "right-10" : "right-2"
-                          }`}
-                        >
-                          + List
-                        </button>
-                      ) : null}
-
-                      <div className="flex items-start gap-3">
-                        <PhotoBox
-                          photo={r.photo_data}
-                          name={r.size}
-                        />
-
-                        <div className="min-w-0 flex-1">
-                          <div className="mb-2 flex items-start justify-between gap-2">
-                            <div className="min-w-0 flex-1">
-                              <div className="flex min-w-0 flex-col gap-0.5">
-                                <div
-                                  className="min-w-0 break-words text-left text-[9px] font-bold leading-tight text-gray-900 sm:text-[10px]"
-                                  title={r.cabinet_model || "No model"}
-                                >
-                                  {r.cabinet_model || "No model"}
-                                </div>
-
-                                <div
-                                  className="min-w-0 break-words text-left text-[8px] font-medium leading-tight text-gray-500 sm:text-[9px]"
-                                  title={r.size}
-                                >
-                                  {r.size}<ReservedForStock type="matrix_row" id={r.id} area={toSqm(1,r.size)} unit="SQM" />
-                                </div>
-                              </div>
-                            </div>
-
-                            <div />
-                          </div>
-
-                          <div
-                            className={`grid gap-x-1 gap-y-1 text-center ${
-                              clampQty(r.maintenance_qty) > 0
-                                ? "grid-cols-3"
-                                : "grid-cols-2"
-                            }`}
-                          >
-                            <MobileStat
-                              label="Total"
-                              value={toSqm(r.qty, r.size)}
-                              tone="gray"
-                            />
-
-                            <MobileStat
-                              label="Available"
-                              value={toSqm(
-                                rowAvailableFromTotal(
-                                  clampQty(r.qty),
-                                  movementAllocationQuantity(
-                                    allocationsByRow[r.id] ?? [],
-                                  ) +
-                                    existingMovementQuantity(
-                                      r,
-                                      movementAllocationQuantity(
-                                        allocationsByRow[r.id] ?? [],
-                                      ),
-                                    ),
-                                  clampQty(r.maintenance_qty),
-                                  reservations.index.quantity("matrix_row",r.id),
-                                ),
-                                r.size,
-                              )}
-                              tone="green"
-                            />
-
-                            {clampQty(r.maintenance_qty) > 0 ? (
-                              <MobileStat
-                                label="Maintenance"
-                                value={toSqm(r.maintenance_qty, r.size)}
-                                tone="yellow"
-                              />
-                            ) : null}
-                          </div>
-
-                          {(allocationsByRow[r.id] ?? []).length > 0 ? (
-                            <div className="mt-2 flex flex-wrap gap-1">
-                              {(allocationsByRow[r.id] ?? []).map(
-                                (allocation) => (
-                                  <span
-                                    key={allocation.listId}
-                                    className={`max-w-full truncate rounded-md px-1.5 py-1 text-[8px] font-semibold ${
-                                      allocation.listType === "maintenance"
-                                        ? "bg-amber-100 text-amber-800"
-                                        : allocation.status ===
-                                      "partially_returned"
-                                        ? "bg-purple-100 text-purple-800"
-                                        : "bg-blue-100 text-blue-800"
-                                    }`}
-                                  >
-                                    {allocation.quantity} pcs · {allocation.label}
-                                  </span>
-                                ),
-                              )}
-                            </div>
-                          ) : null}
-                          <KsaStockLink quantity={toSqm(r.in_ksa_qty, r.size)} unit="sqm" search={model.name} />
-                          {Math.max(0,existingMovementQuantity(r,movementAllocationQuantity(allocationsByRow[r.id] ?? []))-clampQty(r.in_ksa_qty)) > 0 ? (
-                            <div className="mt-1">
-                              <span className="rounded-md bg-gray-100 px-1.5 py-1 text-[8px] font-semibold text-gray-600">
-                                {Math.max(0,existingMovementQuantity(r,movementAllocationQuantity(allocationsByRow[r.id] ?? []))-clampQty(r.in_ksa_qty))} pcs · Existing movement
-                              </span>
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    </div>
-                  </SortableCabinetRow>
-                ))}
-              </SortableContext>
-            </DndContext>
-          )}
-        </div>
-      </div>
-
+          </SortableContext>
+        </DndContext>}
     </div>
   );
 }
@@ -3190,137 +2823,69 @@ function SortableCabinetRow({
   );
 }
 
-function DesktopEditableCabinetRow({
-  row,
-  selected,
-  onSelect,
-  reportHref,
-  allocations,
-  activeDraftList,
-  onAddToList,
+function LedCabinetInventoryItem({
+  row, brand, modelName, searchName, editable, selected, onSelect, reportHref,
+  allocations, activeDraftList, onAddToList,
 }: {
-  row: MatrixRow;
-  selected: boolean;
-  onSelect: () => void;
-  reportHref: string;
-  allocations: ActiveAllocation[];
-  activeDraftList: EquipmentList | null;
-  onAddToList: () => void;
+  row: MatrixRow; brand: string; modelName: string; searchName: string;
+  editable: boolean; selected: boolean; onSelect: () => void; reportHref: string;
+  allocations: ActiveAllocation[]; activeDraftList: EquipmentList | null; onAddToList: () => void;
 }) {
-  const activeAllocated = movementAllocationQuantity(allocations);
-  const reservations = usePendingReservations();
-  const legacyMovement = existingMovementQuantity(row, activeAllocated);
-  const allocated = activeAllocated + legacyMovement;
-  const available = rowAvailableFromTotal(
-    clampQty(row.qty),
-    allocated,
-    clampQty(row.maintenance_qty),
-    reservations.index.quantity("matrix_row",row.id),
-  );
-
+  const reservations=usePendingReservations();
+  const activeAllocated=movementAllocationQuantity(allocations);
+  const legacyMovement=existingMovementQuantity(row,activeAllocated);
+  const available=rowAvailableFromTotal(clampQty(row.qty),activeAllocated+legacyMovement,
+    clampQty(row.maintenance_qty),reservations.index.quantity("matrix_row",row.id));
+  const untracked=Math.max(0,legacyMovement-clampQty(row.in_ksa_qty));
   return (
-    <div
-      data-led-cabinet-row="true"
-      onClick={onSelect}
-      className={`grid cursor-pointer grid-cols-[64px_1.1fr_1.1fr_90px_90px_90px_minmax(150px,1fr)_52px_28px] items-center gap-1 border-t border-gray-100 px-3 py-[2px] text-[9px] text-gray-900 transition ${
-        selected ? "bg-gray-50 ring-2 ring-inset ring-black" : "hover:bg-gray-50"
-      }`}
-    >
-      <PhotoBox
-        photo={row.photo_data}
-        name={row.size}
-      />
-
-      <div
-        className="truncate text-left font-bold"
-        title={row.cabinet_model || "No model"}
-      >
-        {row.cabinet_model || "No model"}
-      </div>
-
-      <div
-        className="truncate text-left font-medium text-gray-600"
-        title={row.size}
-      >
-        {row.size}<ReservedForStock type="matrix_row" id={row.id} area={toSqm(1,row.size)} unit="SQM" />
-      </div>
-
-      <div className="text-center">
-        {formatSqm(toSqm(row.qty, row.size))} SQM
-      </div>
-
-      <div className="text-center">
-        <span className="inline-flex min-w-7 justify-center rounded-lg bg-green-100 px-2 py-1 font-bold">
-  {formatSqm(toSqm(available, row.size))} SQM
-</span>
-      </div>
-
-      <div className="text-center">
-        {clampQty(row.maintenance_qty) > 0 ? (
-          <span className="inline-flex min-w-7 justify-center rounded-lg bg-yellow-100 px-2 py-1 font-bold">
-            {formatSqm(toSqm(row.maintenance_qty, row.size))} SQM
-          </span>
-        ) : (
-          <span className="text-gray-300">—</span>
-        )}
-      </div>
-
-      <div className="flex min-w-0 flex-wrap gap-1">
-        {allocations.length > 0 ? (
-          allocations.map((allocation) => (
-            <Link
-              key={allocation.listId}
-              href={`/inventory/lists/${allocation.listId}`}
-              onClick={(event) => event.stopPropagation()}
+    <div data-led-cabinet-row="true" data-led-inventory-item="true"
+      tabIndex={editable && !activeDraftList ? 0 : undefined}
+      onClick={(event)=>{
+        if (!editable || activeDraftList || document.documentElement.dataset.hemsLayout!=="desktop") return;
+        if ((event.target as Element).closest("a,button,input,select,textarea,label")) return;
+        event.stopPropagation();onSelect();
+      }}
+      onKeyDown={(event)=>{
+        if (event.target!==event.currentTarget || !editable || activeDraftList || document.documentElement.dataset.hemsLayout!=="desktop") return;
+        if (event.key==="Enter" || event.key===" ") {event.preventDefault();event.stopPropagation();onSelect();}
+      }}
+      className={`rounded-2xl border bg-white px-3 py-3 transition ${selected ? "border-black ring-1 ring-black" : "border-gray-200"}`}>
+      <div className="flex items-start gap-3 hems-wide:items-center">
+        <PhotoBox photo={row.photo_data} name={`${searchName} ${row.cabinet_model||""} ${row.size}`}/>
+        <div className="min-w-0 flex-1">
+          <div className="min-w-0">
+              <div className="block break-words text-[10px] text-gray-900 hems-wide:text-[11px]">
+                <span className="font-bold">{brand}</span>{modelName ? <span>{` ${modelName}`}</span> : null}
+              </div>
+              <p className="mt-1 break-words text-[8px] leading-4 text-gray-500 hems-wide:text-[9px]">
+                {[row.cabinet_model,row.size].filter(Boolean).join(" · ")}
+              </p>
+            <InventoryQuantitySummary total={toSqm(row.qty,row.size)} available={toSqm(available,row.size)}
+              maintenance={toSqm(clampQty(row.maintenance_qty),row.size)} inKsa={toSqm(row.in_ksa_qty,row.size)}
+              search={searchName} unit="sqm"/>
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 empty:hidden">
+            <ReservedForStock type="matrix_row" id={row.id} area={toSqm(1,row.size)} unit="SQM"/>
+            {allocations.map(allocation=><Link key={allocation.listId} href={`/inventory/lists/${allocation.listId}`}
               title={`${allocation.reference} · ${allocation.label}`}
-              className={`max-w-full truncate rounded-md px-1.5 py-1 text-[8px] font-semibold transition hover:opacity-80 ${
-                allocation.listType === "maintenance"
-                  ? "bg-amber-100 text-amber-800"
-                  : allocation.status === "partially_returned"
-                  ? "bg-purple-100 text-purple-800"
-                  : "bg-blue-100 text-blue-800"
-              }`}
-            >
-              {allocation.quantity} pcs · {allocation.label}
-            </Link>
-          ))
-        ) : (
-          legacyMovement === 0 ? <span className="text-gray-300">—</span> : null
-        )}
-        <KsaStockLink quantity={toSqm(row.in_ksa_qty, row.size)} unit="sqm" />
-        {Math.max(0,legacyMovement-clampQty(row.in_ksa_qty)) > 0 ? (
-          <span className="max-w-full truncate rounded-md bg-gray-100 px-1.5 py-1 text-[8px] font-semibold text-gray-600">
-            {Math.max(0,legacyMovement-clampQty(row.in_ksa_qty))} pcs · Existing movement
-          </span>
-        ) : null}
-      </div>
-
-      <div className="text-center">
-        <Link
-          href={reportHref}
-          onClick={(event) => event.stopPropagation()}
-          className="inline-flex rounded-full border border-gray-300 bg-white px-2 py-0.5 text-[8px] font-medium text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700"
-        >
-          Report
-        </Link>
-      </div>
-
-      <div className="text-center">
-        {activeDraftList ? (
-          <button
-            type="button"
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              onAddToList();
-            }}
-            data-hems-mobile-add="cabinets"
-                          title={`Add cabinets to ${activeDraftList.reference}`}
-            className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-black text-xs font-bold text-white hover:bg-gray-800"
-          >
-            +
-          </button>
-        ) : null}
+              className={`max-w-full break-words rounded-lg px-2 py-1 text-[8px] font-semibold transition hover:opacity-80 hems-wide:text-[9px] ${allocation.listType==="maintenance" ? "bg-amber-100 text-amber-800" : allocation.status==="partially_returned" ? "bg-purple-100 text-purple-800" : "bg-blue-100 text-blue-800"}`}>
+              {formatSqm(toSqm(allocation.quantity,row.size))} sqm · {allocation.label}
+            </Link>)}
+            {untracked>0 ? <span className="rounded-lg bg-gray-100 px-2 py-1 text-[8px] font-semibold text-gray-600 hems-wide:text-[9px]">
+              {formatSqm(toSqm(untracked,row.size))} sqm · Existing movement</span> : null}
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-col items-center gap-2 hems-wide:flex-row">
+          <Link href={reportHref} aria-label={`Report for ${searchName} ${row.cabinet_model||""} ${row.size}`}
+            className="inline-flex min-h-7 items-center rounded-lg border border-gray-300 bg-white px-2 text-[8px] font-medium text-gray-700 hover:border-red-200 hover:bg-red-50 hover:text-red-700 hems-wide:text-[9px]">Report</Link>
+          {activeDraftList ? <button type="button" onClick={onAddToList} data-hems-mobile-add="cabinets"
+            aria-label={`Add ${searchName} ${row.size} to ${activeDraftList.reference}`}
+            title={`Add cabinets to ${activeDraftList.reference}`}
+            className="flex h-7 w-7 items-center justify-center rounded-full bg-black text-base font-bold text-white hover:bg-gray-800">+</button> : null}
+          {editable && !activeDraftList ? <button type="button" onClick={onSelect}
+            aria-label={`Open ${searchName} ${row.cabinet_model||row.size} tools`}
+            className="flex h-7 w-7 items-center justify-center rounded-full border border-gray-300 text-base text-gray-700 hover:bg-gray-50 hems-wide:hidden">⋮</button> : null}
+        </div>
       </div>
     </div>
   );

@@ -10,7 +10,7 @@ import InventoryDescriptionEditor from "@/components/InventoryDescriptionEditor"
 
 import { getAppLayout } from "@/lib/appLayout";
 
-import KsaStockLink from "@/components/KsaStockLink";
+import InventoryQuantitySummary from "@/components/InventoryQuantitySummary";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -1413,64 +1413,14 @@ export default function SubcategoryClientLighting({
                     </p>
                   ) : null}
 
-                  <div className="mt-2 hems-wide:hidden">
-                    <div
-                      className={`grid gap-x-2 gap-y-1 text-center ${
-                        stats.maintenance > 0
-                          ? "grid-cols-3"
-                          : "grid-cols-2"
-                      }`}
-                    >
-                      <div className="text-[8px] font-semibold text-gray-500">
-                        Total
-                      </div>
-                      <div className="text-[8px] font-semibold text-gray-500">
-                        Available
-                      </div>
-                      {stats.maintenance > 0 ? (
-                        <div className="text-[8px] font-semibold text-gray-500">
-                          Maintenance
-                        </div>
-                      ) : null}
-
-                      <div className="rounded-md bg-gray-100 px-1 py-0.5 text-[9px] font-semibold">
-                        {stats.total}
-                      </div>
-                      <div className="rounded-md bg-green-100 px-1 py-0.5 text-[9px] font-semibold">
-                        {stats.available}
-                      </div>
-                      {stats.maintenance > 0 ? (
-                        <div className="rounded-md bg-yellow-100 px-1 py-0.5 text-[9px] font-semibold">
-                          {stats.maintenance}
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-
-                  <div className="mt-1 hidden hems-wide:block">
-                    <div className="flex flex-wrap gap-2">
-                      <StatPill label="Total Qty" value={stats.total} />
-                      <StatPill
-                        label="Available Qty"
-                        value={stats.available}
-                        tone="green"
-                      />
-                      {stats.maintenance > 0 ? (
-                        <StatPill
-                          label="Maintenance"
-                          value={stats.maintenance}
-                          tone="yellow"
-                        />
-                      ) : null}
-                    </div>
-                  </div>
+                  <InventoryQuantitySummary total={stats.total} available={stats.available} maintenance={stats.maintenance} inKsa={stats.inKsa} search={it.name}/>
                 </div>
               </div>
             </div>
           </button>
 
           <ReservedForStock type="unit" id={it.id} parent />
-          {allocations.length > 0 || existingMovementQuantity > 0 || stats.inKsa > 0 ? (
+          {allocations.length > 0 || existingMovementQuantity > 0 ? (
             <div
               data-lighting-active-allocations="true"
               className={`px-2 pb-2 hems-wide:pl-[76px] ${
@@ -1496,7 +1446,7 @@ export default function SubcategoryClientLighting({
                   </Link>
                 ))}
 
-                <KsaStockLink quantity={stats.inKsa} search={it.name} />
+                
                 {existingMovementQuantity > 0 ? (
                   <span className="rounded-lg bg-gray-100 px-2 py-1 text-[9px] font-semibold text-gray-600">
                     {existingMovementQuantity} pcs · Existing movement
