@@ -755,7 +755,7 @@ export default function EquipmentListDetailsClient({
   listId: string;
 }) {
   const supabase = useMemo(() => createClient(), []);
-  const reservations = usePendingReservations();
+  const reservations = usePendingReservations(listId);
   const router = useRouter();
   const [isManager, setIsManager] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -3285,7 +3285,7 @@ export default function EquipmentListDetailsClient({
         </div>
       ) : null}
 
-      <ReservationReadStatus />
+      <ReservationReadStatus listId={listId} />
       {message ? (
         <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-[11px] font-medium text-green-800">
           {message}

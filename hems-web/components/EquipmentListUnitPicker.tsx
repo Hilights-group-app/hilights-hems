@@ -53,7 +53,7 @@ export default function EquipmentListUnitPicker({
   onAdded: (count: number) => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
-  const reservations = usePendingReservations();
+  const reservations = usePendingReservations(list.id);
   const [units, setUnits] = useState<UnitRow[]>([]);
   const [existingIds, setExistingIds] = useState<Set<string>>(new Set());
   const [activeRepairIds, setActiveRepairIds] = useState<Set<string>>(
@@ -81,7 +81,7 @@ export default function EquipmentListUnitPicker({
       setLoading(true);
       setError("");
       // Share one live reservation refresh for the opened picker, not per unit.
-      void refreshPendingReservations();
+      void refreshPendingReservations(list.id);
 
       let unitsQuery = supabase
         .from("units")
@@ -318,7 +318,7 @@ export default function EquipmentListUnitPicker({
         </div>
 
         <div data-hems-picker-scroll className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        {list.list_type !== "maintenance" ? <div className="px-4 py-2"><ReservationReadStatus /></div> : null}
+        {list.list_type !== "maintenance" ? <div className="px-4 py-2"><ReservationReadStatus listId={list.id} /></div> : null}
         <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 sm:px-5">
           <div>
             <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">

@@ -201,9 +201,9 @@ export default function EquipmentListMatrixQuantityAction({
   onOpen?: () => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
-  const reservations = usePendingReservations();
   const canBuildLists = canCreateEquipmentLists();
   const [activeList, setActiveList] = useState<EquipmentList | null>(null);
+  const reservations = usePendingReservations(activeList?.id);
   const [open, setOpen] = useState(false);
   const [existingLine, setExistingLine] = useState<ExistingLine | null>(null);
   const [requested, setRequested] = useState(1);
@@ -218,7 +218,7 @@ export default function EquipmentListMatrixQuantityAction({
   const selectionScope = useRef({ listId: activeList?.id, owner: getUserId() });
   selectionScope.current = { listId: activeList?.id, owner: getUserId() };
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  useEffect(()=>{if(open)void refreshPendingReservations();},[open]);
+  useEffect(()=>{if(open)void refreshPendingReservations(activeList?.id);},[open,activeList?.id]);
 
   const maintenanceList = activeList?.list_type === "maintenance";
   const additionalMode = canAppendDispatchedList(activeList, canManageEquipmentLists());
@@ -608,7 +608,7 @@ export default function EquipmentListMatrixQuantityAction({
         </div>
 
         <div className="space-y-4 px-4 py-5 sm:px-5">
-          {!maintenanceList ? <ReservationReadStatus /> : null}
+          {!maintenanceList ? <ReservationReadStatus listId={activeList?.id} /> : null}
           {additionalMode ? <div className="space-y-2 rounded-xl bg-blue-50 p-3 text-xs text-blue-900">
             {existingLine ? <p className="font-semibold">Sent {progress.sent} · Received {progress.received} · {progress.outside} Out</p> : null}
             <p>Add only NEW equipment being dispatched. This does not correct a previous receipt.</p>

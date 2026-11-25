@@ -4,6 +4,7 @@ const fs=require('node:fs'),path=require('node:path');
 const {stripTypeScriptTypes}=require('node:module');
 const crypto=require('node:crypto');
 const {reservationIndex,availableAfterReservations,withReservedStats}=require('../lib/pendingReservations.ts');
+const {reservationLabelIndex}=require('../lib/reservationLabels.ts');
 const {isSerialAvailabilityError}=require('../lib/dispatchAvailability.ts');
 const source=(f)=>fs.readFileSync(path.join(__dirname,'..',f),'utf8');
 const row=(id,quantity=1,type='unit',parent='item')=>({record_type:type,record_id:id,parent_id:parent,quantity});
@@ -47,13 +48,13 @@ test('quantities clamp below zero and cannot add phantom capacity from own reser
 function store(){
  let owner='alice',offline=false,calls=0,authCallback,queue=[],timers=new Map(),sequence=0;
  const win=new EventTarget(),doc=new EventTarget();doc.visibilityState='visible';
- const fakeClient={rpc(name){assert.equal(name,'hems_pending_reservations');calls++;const result=queue.shift()??Promise.resolve({data:[],error:null});return {abortSignal(){return result;}};},auth:{onAuthStateChange(cb){authCallback=cb;return {data:{subscription:{unsubscribe(){}}}};}}};
- const fakeSet=(fn)=>{const id=++sequence;timers.set(id,fn);return id;};
+ const fakeClient={rpc(name){assert.equal(name,'hems_dated_pending_reservations');calls++;const result=queue.shift()??Promise.resolve({data:[],error:null});return {abortSignal(){return result.then(result=>({...result,data:Array.isArray(result.data)?{version:1,rows:result.data,period:{start:'2026-11-25',end:'2026-11-25'}}:result.data}));}};},auth:{onAuthStateChange(cb){authCallback=cb;return {data:{subscription:{unsubscribe(){}}}};}}};
+ const fakeSet=(fn,delay)=>{const id=++sequence;if(delay<1000)timers.set(id,fn);return id;};
  const code=stripTypeScriptTypes(source('lib/usePendingReservations.ts'),{mode:'strip'})
   .replace(/^import .*;\n/gm,'').replace(/\bexport /g,'');
- const api=new Function('useSyncExternalStore','createClient','getUserId','isOffline','reservationIndex','window','document','setTimeout','clearTimeout',
-   `${code};return {subscribe,refreshPendingReservations,invalidatePendingReservations,readVerifiedPendingReservations,state:()=>snapshot};`)
-   ((sub,get)=>get(),()=>fakeClient,()=>owner,()=>offline,reservationIndex,win,doc,fakeSet,id=>timers.delete(id));
+ const api=new Function('useSyncExternalStore','createClient','getUserId','isOffline','reservationIndex','window','document','setTimeout','clearTimeout','ACTIVE_EQUIPMENT_LIST_EVENT','ACTIVE_EQUIPMENT_LIST_KEY','localStorage','reservationLabelIndex',
+   `${code};return {subscribe:listener=>subscribeContext('',listener),refreshPendingReservations,invalidatePendingReservations,readVerifiedPendingReservations,state:()=>entryFor('').snapshot};`)
+   ((sub,get)=>get(),()=>fakeClient,()=>owner,()=>offline,reservationIndex,win,doc,fakeSet,id=>timers.delete(id),'hems:active-equipment-list-change','hems:active-equipment-list-id',{getItem:()=>null},reservationLabelIndex);
  return {...api,events:win,calls:()=>calls,respond:result=>queue.push(Promise.resolve(result)),pending:promise=>queue.push(promise),
   owner(value){owner=value;authCallback?.('SIGNED_IN',{user:{id:value}});},offline(v){offline=v;},
   async timers(){const jobs=[...timers.values()];timers.clear();jobs.forEach(fn=>fn());await flush();}};

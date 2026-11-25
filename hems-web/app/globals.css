@@ -211,8 +211,9 @@ html[data-hems-layout="compact"] {
 
 /*
  * Inventory blocks live inside padded cards. Extend their sticky header across
- * that padding and add an opaque cap above it so rows never show through the
- * small gap while the page is scrolling.
+ * that horizontal padding only. Its white background must stay inside its own
+ * box: an upward cap hides the card's rounded selection border before scrolling
+ * and can cover the preceding block. top: 0 keeps the sticky bar flush instead.
  */
 [data-hems-block-header] {
   isolation: isolate;
@@ -221,17 +222,6 @@ html[data-hems-layout="compact"] {
   padding-left: var(--hems-block-padding, 1.5rem);
   padding-right: var(--hems-block-padding, 1.5rem);
   background: #fff !important;
-}
-[data-hems-block-header]::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  top: -24px;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  background: #fff;
-  pointer-events: none;
 }
 html:not([data-hems-layout="compact"]) {
   [data-hems-block-header] { min-height: 48px; }
@@ -245,7 +235,6 @@ html[data-hems-layout="compact"] {
   }
 }
 @media print {
-  [data-hems-block-header]::before { display: none; }
   [data-hems-block-header] { position: static; }
 }
 

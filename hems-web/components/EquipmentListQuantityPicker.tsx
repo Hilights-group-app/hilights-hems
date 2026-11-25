@@ -100,8 +100,8 @@ export default function EquipmentListQuantityPicker({
   onAdded: (quantity: number) => void;
 }) {
   const supabase = useMemo(() => createClient(), []);
-  const reservations = usePendingReservations();
-  useEffect(()=>{void refreshPendingReservations();},[list.id,row.id]);
+  const reservations = usePendingReservations(list.id);
+  useEffect(()=>{void refreshPendingReservations(list.id);},[list.id,row.id]);
   const [existingLine, setExistingLine] = useState<ExistingLine | null>(null);
   const [squareMetres, setSquareMetres] = useState("");
   const [loading, setLoading] = useState(true);
@@ -339,7 +339,7 @@ export default function EquipmentListQuantityPicker({
         </div>
 
         <div className="space-y-4 px-4 py-5 sm:px-5">
-          {!maintenanceList ? <ReservationReadStatus /> : null}
+          {!maintenanceList ? <ReservationReadStatus listId={list.id} /> : null}
           <div className="grid grid-cols-3 gap-2 text-center">
             <div className="rounded-xl bg-gray-100 px-2 py-2.5">
               <div className="text-[8px] font-bold uppercase text-gray-400">Total</div>
