@@ -77,7 +77,7 @@ export async function refreshPendingReservations(contextId?:string|null){
       if(isOffline()||!data||data.version!==1||!Array.isArray(data.rows))throw new Error("Invalid reservation response.");
       const rows=data.rows as PendingReservation[];
       const labels=reservationLabelIndex(Array.isArray(data.labels?.rows)?data.labels.rows as ReservationLabel[]:[],Array.isArray(data.labels?.hidden)?data.labels.hidden:[]);
-      entry.lastRead=Date.now();entry.snapshot={owner,contextId:id,rows,ready:true,loading:false,error:"",period:data.period,labels,index:reservationIndex(rows)};emit(entry);
+      entry.lastRead=Date.now();entry.snapshot={owner,contextId:id,rows,ready:true,loading:false,error:"",period:data.period,labels,index:reservationIndex(rows,data.planning)};emit(entry);
     }catch(failure:unknown){
       if(owner===entry.snapshot.owner&&version===entry.version){
         const message=(failure as {code?:string;message?:string})?.code==="22007"

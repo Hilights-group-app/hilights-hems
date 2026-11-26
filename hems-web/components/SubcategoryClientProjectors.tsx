@@ -1717,6 +1717,7 @@ export default function SubcategoryClientProjectors({
               maintenance: 0,
               inKsa: 0,
             }, reservations.index.parent("unit",it.id));
+            st.available = Math.max(0,st.available + reservations.index.parentAdjustment("unit",it.id));
 
             return (
               <React.Fragment key={it.id}>

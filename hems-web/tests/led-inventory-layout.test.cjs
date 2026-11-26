@@ -11,7 +11,7 @@ const pure=new Function(['clampQty','rowAvailableFromTotal','existingMovementQua
 const jsx=(type,props)=>({type,props});
 function render(extra={},reserved=0,layout='desktop'){
  const props={row:{id:'cabinet',size:'500mm X 500mm',cabinet_model:'Standard',qty:40,in_use_qty:8,in_ksa_qty:4,maintenance_qty:2},brand:'Absen',modelName:'NT2.6',searchName:'Absen NT2.6',editable:true,selected:false,onSelect:()=>{},reportHref:'/report/cabinet',allocations:[{listId:'event',quantity:8,listType:'local_event',status:'active',label:'Event'}],activeDraftList:null,onAddToList:()=>{},...extra};
- const env={document:{documentElement:{dataset:{hemsLayout:layout}}},...pure,PhotoBox:'PhotoBox',Link:'Link',InventoryQuantitySummary:'InventoryQuantitySummary',ReservedForStock:'ReservedForStock',usePendingReservations:()=>({index:{quantity:()=>reserved}})};
+ const env={document:{documentElement:{dataset:{hemsLayout:layout}}},...pure,PhotoBox:'PhotoBox',Link:'Link',InventoryQuantitySummary:'InventoryQuantitySummary',ReservedForStock:'ReservedForStock',usePendingReservations:()=>({index:{quantity:()=>reserved,available:(_type,_id,fallback)=>fallback}})};
  const fn=new Function('require',...Object.keys(env),compile(rowSource)+'\n;return LedCabinetInventoryItem;')(name=>{assert.equal(name,'react/jsx-runtime');return{jsx,jsxs:jsx};},...Object.values(env));return fn(props);
 }
 function nodes(v){if(!v||typeof v!=='object')return[];return[v,...[v.props?.children].flat(Infinity).flatMap(nodes)];}

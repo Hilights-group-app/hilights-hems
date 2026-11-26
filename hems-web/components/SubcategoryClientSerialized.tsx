@@ -1008,6 +1008,7 @@ export default function SubcategoryClientSerialized({
       maintenance: 0,
       inKsa: 0,
     }, reservations.index.parent("unit",it.id));
+    stats.available = Math.max(0,stats.available + reservations.index.parentAdjustment("unit",it.id));
 
     const detailsHref = `/inventory/${category}/${subcategory}/${it.id}`;
 

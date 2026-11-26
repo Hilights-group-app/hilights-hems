@@ -209,7 +209,7 @@ export default function TopBar() {
     if (!bar) return;
     const updateHeight = () => {
       document.documentElement.style.setProperty(
-        "--hems-topbar-height", `${Math.ceil(bar.getBoundingClientRect().height)}px`,
+        "--hems-topbar-height", `${bar.getBoundingClientRect().height}px`,
       );
     };
     updateHeight();

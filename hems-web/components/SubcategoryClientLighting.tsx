@@ -1340,6 +1340,7 @@ export default function SubcategoryClientLighting({
       maintenance: 0,
       inKsa: 0,
     }, reservations.index.parent("unit",it.id));
+    stats.available = Math.max(0,stats.available + reservations.index.parentAdjustment("unit",it.id));
     const allocations = allocationsByItem[it.id] || [];
     const allocatedQuantity = allocations.reduce(
       (total, allocation) =>

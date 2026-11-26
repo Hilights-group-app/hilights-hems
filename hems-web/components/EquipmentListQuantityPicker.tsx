@@ -109,7 +109,7 @@ export default function EquipmentListQuantityPicker({
   const [error, setError] = useState("");
 
   const maintenanceList = list.list_type === "maintenance";
-  const availableQuantity = (canAppendDispatchedList(list, canManageEquipmentLists()) ? clampQty(existingLine?.requested_quantity) : 0) + (maintenanceList
+  const physicalAvailable = (canAppendDispatchedList(list, canManageEquipmentLists()) ? clampQty(existingLine?.requested_quantity) : 0) + (maintenanceList
     ? Math.max(
         0,
         clampQty(row.maintenance_qty) - clampQty(activeMaintenanceQuantity),
@@ -121,6 +121,8 @@ export default function EquipmentListQuantityPicker({
           clampQty(activeAllocatedQuantity),
       ), reservations.index.quantity("matrix_row",row.id),
         list.status === "pending" ? clampQty(existingLine?.requested_quantity) : 0));
+  const availableQuantity = maintenanceList ? physicalAvailable : reservations.index.available(
+    "matrix_row",row.id,physicalAvailable,list.status === "pending");
   const cabinetArea = cabinetAreaFromSize(row.size);
   const requestedSquareMetres = Math.max(0, Number(squareMetres) || 0);
   const quantity =

@@ -229,9 +229,17 @@ html:not([data-hems-layout="compact"]) {
   [data-hems-block-header] > button:not([draggable]) { font-size: 15px; }
 
 }
+/* Keep the inventory scrollport flush with the bar above it. Scope to pages
+ * with block headers; Home, Settings and equipment-list spacing stay unchanged.
+ * Do not cover the gap with a negative pseudo-element (it clips selection).
+ */
+html[data-hems-layout="desktop"] [data-hems-main]:has([data-hems-block-header]) {
+  padding-top: 0;
+}
 html[data-hems-layout="compact"] {
   &[data-hems-mobile="new"] [data-hems-block-header] {
-    top: var(--hems-topbar-height, calc(116px + env(safe-area-inset-top)));
+    /* Share the topbar's bottom border instead of leaving a fractional seam. */
+    top: calc(var(--hems-topbar-height, calc(116px + env(safe-area-inset-top))) - 1px);
   }
 }
 @media print {

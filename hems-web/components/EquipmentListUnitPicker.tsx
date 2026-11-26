@@ -91,7 +91,10 @@ export default function EquipmentListUnitPicker({
       unitsQuery =
         list.list_type === "maintenance"
           ? unitsQuery.eq("status", "maintenance")
-          : unitsQuery.or("status.eq.available,status.is.null");
+          : unitsQuery.or(
+              ["draft","pending"].includes(list.status) && ["local_event","dry_hire"].includes(list.list_type)
+                ? "status.eq.available,status.is.null,status.eq.in_use"
+                : "status.eq.available,status.is.null");
 
       const [unitsResult, existingResult, activeRepairResult] = await Promise.all([
         unitsQuery.order("unit_no", { ascending: true }),
@@ -160,7 +163,7 @@ export default function EquipmentListUnitPicker({
     return () => {
       cancelled = true;
     };
-  }, [item.id, list.id, list.list_type, supabase]);
+  }, [item.id, list.id, list.list_type, list.status, supabase]);
 
   const selectableIds = useMemo(
     () =>
@@ -168,7 +171,8 @@ export default function EquipmentListUnitPicker({
         .filter(
           (unit) =>
             !existingIds.has(unit.id) && !activeRepairIds.has(unit.id)
-              && (list.list_type === "maintenance" || reservations.index.quantity("unit",unit.id) === 0),
+              && (list.list_type === "maintenance" || reservations.index.available("unit",unit.id,
+                (unit.status === "available" || unit.status == null) && reservations.index.quantity("unit",unit.id) === 0 ? 1 : 0)>0),
         )
         .map((unit) => unit.id),
     [activeRepairIds, existingIds, units, reservations.index, list.list_type],
@@ -391,6 +395,8 @@ export default function EquipmentListUnitPicker({
                 const alreadyAdded = existingIds.has(unit.id);
                 const alreadyAtRepair = activeRepairIds.has(unit.id);
                 const reserved = list.list_type !== "maintenance" && reservations.index.quantity("unit",unit.id) > 0;
+                const unavailable = list.list_type !== "maintenance" && reservations.index.available("unit",unit.id,
+                  (unit.status === "available" || unit.status == null) && !reserved ? 1 : 0) < 1;
                 const selected = selectedIds.has(unit.id);
 
                 return (
@@ -398,7 +404,7 @@ export default function EquipmentListUnitPicker({
                     key={unit.id}
                     type="button"
                     onClick={() => toggleUnit(unit.id)}
-                    disabled={alreadyAdded || alreadyAtRepair || reserved || saving || (list.list_type !== "maintenance" && !reservations.ready)}
+                    disabled={alreadyAdded || alreadyAtRepair || unavailable || saving || (list.list_type !== "maintenance" && !reservations.ready)}
                     className={`flex w-full items-center gap-3 rounded-xl border px-3 py-3 text-left transition ${
                       alreadyAdded || alreadyAtRepair
                         ? "cursor-default border-gray-100 bg-gray-50 opacity-60"
@@ -422,7 +428,7 @@ export default function EquipmentListUnitPicker({
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[11px] font-semibold text-gray-900">
                         {unitLabel(unit)}
-                        {reserved ? <span className="ml-2 text-orange-700">Reserved</span> : null}
+                        {unavailable ? <span className="ml-2 text-orange-700">{reserved ? "Reserved" : "Unavailable for these dates"}</span> : null}
                       </span>
                       <span className="mt-0.5 block text-[9px] text-gray-400">
                         Unit {unit.unit_no ?? "—"}

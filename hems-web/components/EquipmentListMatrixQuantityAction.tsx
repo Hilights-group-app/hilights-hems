@@ -224,7 +224,7 @@ export default function EquipmentListMatrixQuantityAction({
   const additionalMode = canAppendDispatchedList(activeList, canManageEquipmentLists());
   const progress = receiptProgress(existingLine);
   // Active additions use ONLY free extra stock, never the historical Sent total.
-  const available = (maintenanceList
+  const physicalAvailable = (maintenanceList
     ? Math.max(0, qty(target.maintenance) - qty(target.activeMaintenance))
     : availableAfterReservations(Math.max(
         0,
@@ -234,6 +234,8 @@ export default function EquipmentListMatrixQuantityAction({
           qty(target.inKsa),
       ), reservations.index.quantity(target.recordType,target.id),
         activeList?.status === "pending" ? qty(existingLine?.requested_quantity) : 0));
+  const available = maintenanceList ? physicalAvailable : reservations.index.available(
+    target.recordType,target.id,physicalAvailable,activeList?.status === "pending");
   const canUseMaintenanceList =
     !maintenanceList ||
     canManageEquipmentLists() ||

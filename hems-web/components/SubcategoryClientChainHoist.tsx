@@ -1678,6 +1678,7 @@ export default function SubcategoryClientChainHoist({
               inKsa: 0,
               expired: 0,
             }, reservations.index.parent("unit",it.id));
+            st.available = Math.max(0,st.available + reservations.index.parentAdjustment("unit",it.id));
 
             const isLast = index === group.items.length - 1;
             const detailsHref = `/inventory/${category}/${subcategory}/${it.id}`;

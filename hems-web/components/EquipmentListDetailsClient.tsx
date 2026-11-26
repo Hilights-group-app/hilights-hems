@@ -73,6 +73,7 @@ import ReceivedCorrectionAction from "@/components/ReceivedCorrectionAction";
 import ReceivedCorrectionDialog from "@/components/ReceivedCorrectionDialog";
 import MissingEquipmentDialog from "@/components/MissingEquipmentDialog";
 import LocalEventHeaderEdit from "@/components/LocalEventHeaderEdit";
+import DryHireHeaderEdit from "@/components/DryHireHeaderEdit";
 import { canMarkMissing, missingCount, missingOutside } from "@/lib/missingEquipment";
 import { buildSerialReceiptPayload, canBatchReceiveSerials } from "@/lib/serialBatchReceive";
 import CompactListHeading from "@/components/CompactListHeading";
@@ -1539,12 +1540,12 @@ export default function EquipmentListDetailsClient({
     try{await refreshListAndItems(()=>!samePage());}catch{if(samePage())setError("Reopen this list to check the latest Missing / Received totals before another change.");}
   }
 
-  async function refreshAfterEventHeader(saved: boolean,fields?:Pick<EquipmentList,"event_name"|"venue">) {
+  async function refreshAfterEventHeader(saved: boolean,fields?:Partial<Pick<EquipmentList,"event_name"|"venue"|"client_company"|"pickup_date"|"return_date">>) {
     const owner=getUserId(),samePage=()=>dispatchContext.current.listId===listId&&getUserId()===owner;
     setError("");
-    if(fields)setList(current=>current&&current.id===listId?{...current,...fields}:current);
-    if(saved)setMessage("Event details updated.");
-    try{await refreshListAndItems(()=>!samePage());}catch{if(samePage())setError(saved?"Event saved, but the page could not refresh. Reopen the list.":"Could not refresh event details. Reopen the list.");}
+    if(fields){listReadVersion.current++;setList(current=>current&&current.id===listId?{...current,...fields}:current);}
+    if(saved)setMessage(list?.list_type==="dry_hire"?"Dry Hire name and dates updated.":"Event details updated.");
+    try{await refreshListAndItems(()=>!samePage());}catch{if(samePage())setError(saved?"Details saved, but the page could not refresh. Reopen the list.":"Could not refresh list details. Reopen the list.");}
   }
 
   async function receiveSerialBatch(selected: EquipmentListItem[]): Promise<boolean> {
@@ -1696,8 +1697,9 @@ export default function EquipmentListDetailsClient({
         ? sum + Math.max(0,Number(current.requested_quantity) || 0) : sum,0) : 0;
     const available = list.list_type === "transfer_in"
       ? inKsa
-      : availableAfterReservations(Math.max(0, total - occupied),
-          reservations.index.quantity(item.inventory_record_type,item.inventory_record_id),ownPending);
+      : reservations.index.available(item.inventory_record_type,item.inventory_record_id,
+          availableAfterReservations(Math.max(0, total - occupied),
+            reservations.index.quantity(item.inventory_record_type,item.inventory_record_id),ownPending),list.status === "pending");
     const siblingQuantity = items.reduce((sum, current) => {
       if (
         current.id === item.id ||
@@ -2951,6 +2953,8 @@ export default function EquipmentListDetailsClient({
 
           <div className={`flex max-w-full flex-wrap items-center justify-end gap-2 ${headerStyles.actions}`}>
             <LocalEventHeaderEdit key={`${list.id}:${currentUserId}`} list={list} owner={currentUserId} role={currentRole}
+              onSaved={fields=>void refreshAfterEventHeader(true,fields)} onRefresh={()=>void refreshAfterEventHeader(false)}/>
+            <DryHireHeaderEdit key={`dry-hire:${list.id}:${currentUserId}`} list={list} owner={currentUserId} role={currentRole}
               onSaved={fields=>void refreshAfterEventHeader(true,fields)} onRefresh={()=>void refreshAfterEventHeader(false)}/>
             {canShareDraft ? (
               <EquipmentDraftShareButton list={list} onSaved={(userIds) => {

@@ -1750,12 +1750,12 @@ export default function SubcategoryClientLedScreen({
   const selectedCabinetTrackedQty =
     selectedCabinetAllocatedQty + selectedCabinetExistingMovementQty;
   const selectedCabinetAvailableQty = selectedCabinetInfo
-    ? rowAvailableFromTotal(
+    ? reservations.index.available("matrix_row",selectedCabinetInfo.row.id,rowAvailableFromTotal(
         clampQty(selectedCabinetInfo.row.qty),
         selectedCabinetTrackedQty,
         clampQty(selectedCabinetInfo.row.maintenance_qty),
         reservations.index.quantity("matrix_row",selectedCabinetInfo.row.id),
-      )
+      ))
     : 0;
 
   const selectedCabinetPanel = selectedCabinetInfo ? (
@@ -2834,8 +2834,9 @@ function LedCabinetInventoryItem({
   const reservations=usePendingReservations();
   const activeAllocated=movementAllocationQuantity(allocations);
   const legacyMovement=existingMovementQuantity(row,activeAllocated);
-  const available=rowAvailableFromTotal(clampQty(row.qty),activeAllocated+legacyMovement,
-    clampQty(row.maintenance_qty),reservations.index.quantity("matrix_row",row.id));
+  const available=reservations.index.available("matrix_row",row.id,
+    rowAvailableFromTotal(clampQty(row.qty),activeAllocated+legacyMovement,
+      clampQty(row.maintenance_qty),reservations.index.quantity("matrix_row",row.id)));
   const untracked=Math.max(0,legacyMovement-clampQty(row.in_ksa_qty));
   return (
     <div data-led-cabinet-row="true" data-led-inventory-item="true"

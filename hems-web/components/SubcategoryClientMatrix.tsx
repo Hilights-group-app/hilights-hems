@@ -2318,6 +2318,7 @@ export default function SubcategoryClientMatrix({
 
   function renderItemRow(it: MatrixItemRow, isLast: boolean) {
     const stats = withReservedStats(statsByItem[it.id] || statsFromItem(it),reservations.index.quantity("matrix_model",it.id));
+    stats.available = reservations.index.available("matrix_model",it.id,stats.available);
     const modelAllocations =
       allocationsByRecordKey[`matrix_model:${it.id}`] || [];
     const modelMaintenanceAllocation = modelAllocations.reduce(
@@ -2556,6 +2557,7 @@ export default function SubcategoryClientMatrix({
               ) : (
                 cableRows.map((row) => {
                   const s = withReservedStats(cableStats(row),reservations.index.quantity("matrix_row",row.id));
+                  s.available = reservations.index.available("matrix_row",row.id,s.available);
                   const rowAllocations =
                     allocationsByRecordKey[`matrix_row:${row.id}`] || [];
 
