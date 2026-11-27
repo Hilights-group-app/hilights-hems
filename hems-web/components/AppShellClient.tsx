@@ -25,7 +25,7 @@ export default function AppShellClient({
   }
 
   return (
-    <div className="flex w-full items-start border-t border-gray-300 bg-white hems-desktop:h-[calc(100vh-48px)] hems-desktop:items-stretch hems-desktop:overflow-hidden">
+    <div data-hems-workspace className="flex w-full items-start border-t border-gray-300 bg-white hems-desktop:items-stretch hems-desktop:overflow-hidden">
       <aside className="hidden w-[clamp(180px,20vw,280px)] shrink-0 overflow-y-auto border-r border-gray-300 bg-white hems-desktop:block">
         {desktopLayout ? <EquipmentListsSidebar /> : null}
       </aside>

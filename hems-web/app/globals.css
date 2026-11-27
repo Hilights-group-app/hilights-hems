@@ -25,6 +25,32 @@ body {
   min-height: 100%;
 }
 
+/* Desktop has three independent scrollports, never a second document scroll.
+   Measure the actual topbar, including wrapped content and browser zoom.
+   Login, compact/mobile layouts and printing retain normal document scrolling. */
+@media screen {
+  html[data-hems-layout="desktop"]:has([data-hems-workspace]),
+  html[data-hems-layout="desktop"]:has([data-hems-workspace]) body {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+  html[data-hems-layout="desktop"] [data-hems-workspace] {
+    height: calc(100dvh - var(--hems-topbar-height, 48px));
+    min-height: 0;
+    box-sizing: border-box;
+    align-items: stretch;
+    overflow: hidden;
+  }
+  html[data-hems-layout="desktop"] [data-hems-workspace] > main,
+  html[data-hems-layout="desktop"] [data-hems-workspace] > aside {
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+}
+
 @media print {
   body {
     background: white !important;
