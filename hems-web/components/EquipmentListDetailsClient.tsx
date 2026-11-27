@@ -79,6 +79,7 @@ import { buildSerialReceiptPayload, canBatchReceiveSerials } from "@/lib/serialB
 import CompactListHeading from "@/components/CompactListHeading";
 import headerStyles from "./EquipmentListHeader.module.css";
 import { showActiveReturnQuantities } from "@/lib/listReturnQuantities";
+import { activePdfTable, showActivePdfColumns, filterActiveListGroups, ACTIVE_LIST_FILTER_LABELS, type ActiveListFilter, type PdfMaintenanceReceipt } from "@/lib/activeListPdf";
 import { prepareListPdfPhotos, type PhotoCatalogRow, type PhotoCatalogTable } from "@/lib/pdfItemPhotos";
 
 type DetailedEquipmentList = EquipmentList & {
@@ -829,6 +830,8 @@ export default function EquipmentListDetailsClient({
     null,
   );
   const [pdfPhotoWarnings, setPdfPhotoWarnings] = useState<string[]>([]);
+  const [activeListFilter,setActiveListFilter] = useState<ActiveListFilter>("all");
+  useEffect(()=>{setActiveListFilter("all");},[listId]);
   useEffect(() => { setPdfPhotoWarnings([]); }, [listId]);
   const [customItemOpen, setCustomItemOpen] = useState(false);
   const customEditVersion = useRef(0);
@@ -1132,6 +1135,10 @@ export default function EquipmentListDetailsClient({
       }),
     [groups],
   );
+  const visibleGroups = useMemo(()=>list
+    ? filterActiveListGroups(list,sortedGroups,activeListFilter,maintenanceRequests) : sortedGroups,
+    [list,sortedGroups,activeListFilter,maintenanceRequests]);
+  const visibleActiveLineIds = new Set(visibleGroups.flatMap(group=>group.items.map(item=>item.id)));
   const requestedQuantity = useMemo(
     () =>
       items.reduce(
@@ -1964,7 +1971,18 @@ export default function EquipmentListDetailsClient({
     if (!list) throw new Error("Equipment list is unavailable.");
     const exportOwner = getUserId();
     setPdfPhotoWarnings([]);
+    let pdfMaintenanceReceipts: PdfMaintenanceReceipt[] = [];
+    if (showActivePdfColumns(list) && list.list_type === "maintenance") {
+      const result = await supabase.from("maintenance_requests")
+        .select("list_item_id,quantity,received_quantity")
+        .eq("list_id",list.id).eq("source_type","maintenance");
+      if (result.error) throw new Error("Could not verify Maintenance receipts. Retry the PDF export.");
+      pdfMaintenanceReceipts = (result.data || []) as PdfMaintenanceReceipt[];
+    }
 
+    const pdfFilter=showActivePdfColumns(list)?activeListFilter:"all";
+    const pdfGroups=filterActiveListGroups(list,sortedGroups,pdfFilter,pdfMaintenanceReceipts);
+    if(pdfFilter !== "all" && !pdfGroups.length)throw new Error(`No ${ACTIVE_LIST_FILTER_LABELS[pdfFilter]} items match this filter.`);
     const [{ jsPDF }, { autoTable }, logo] = await Promise.all([
       import("jspdf"),
       import("jspdf-autotable"),
@@ -1972,7 +1990,7 @@ export default function EquipmentListDetailsClient({
     ]);
     const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
     const preparedPhotos = await prepareListPdfPhotos({
-      groups: sortedGroups,
+      groups: pdfGroups,
       loadPhoto: loadPdfItemPhoto,
       loadServerPhoto: (source, lineId) => {
         if (isOffline() || getUserId() !== exportOwner || dispatchContext.current.listId !== list.id) return Promise.resolve(null);
@@ -2021,7 +2039,7 @@ export default function EquipmentListDetailsClient({
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8);
     pdf.setTextColor(105, 105, 105);
-    pdf.text(displayedStatusLabel(list), 196, 20, {
+    pdf.text(`${displayedStatusLabel(list)}${pdfFilter === "all" ? "" : ` - ${ACTIVE_LIST_FILTER_LABELS[pdfFilter]} only`}`, 196, 20, {
       align: "right",
     });
 
@@ -2078,7 +2096,7 @@ export default function EquipmentListDetailsClient({
     const body: any[] = [];
     let previousCategory = "";
 
-    for (const group of sortedGroups) {
+    for (const group of pdfGroups) {
       const firstItem = group.items[0];
       const rawCategory = categoryLabel(metadataText(firstItem, "category"));
       const category = rawCategory.toLowerCase() === "rigging" ? "Truss & Rigging" : rawCategory;
@@ -2175,6 +2193,7 @@ export default function EquipmentListDetailsClient({
           content: "",
           colSpan: 5,
           rowKind: "item",
+          quantityItems: group.items,
           photoKey: hasItemPhoto ? photoKey : "",
           brandText: displayParts.brand,
           modelText: displayParts.model,
@@ -2283,6 +2302,7 @@ export default function EquipmentListDetailsClient({
           body.push([
             {
               content: rowLabel,
+              quantityItems: [item],
               colSpan: 5,
               styles: {
                 fillColor: [255, 255, 255],
@@ -2353,9 +2373,11 @@ export default function EquipmentListDetailsClient({
 
     }
 
+    const activePdf = activePdfTable(list,body,pdfMaintenanceReceipts,pdfFilter);
     autoTable(pdf, {
       startY: tableStartY,
-      body,
+      body: activePdf ? activePdf.body : body,
+      head: activePdf?.head,
       theme: "plain",
       styles: {
         font: "helvetica",
@@ -2366,7 +2388,7 @@ export default function EquipmentListDetailsClient({
         lineWidth: { bottom: 0.15 },
         overflow: "linebreak",
       },
-      columnStyles: {
+      columnStyles: activePdf ? activePdf.columnStyles : {
         0: { cellWidth: 50 },
         1: { cellWidth: 3 },
         2: { cellWidth: 50 },
@@ -2375,7 +2397,8 @@ export default function EquipmentListDetailsClient({
         5: { cellWidth: 26, halign: "right" },
       },
       rowPageBreak: "avoid",
-      showHead: "never",
+      showHead: activePdf ? "everyPage" : "never",
+      headStyles: { fillColor:[245,246,248],textColor:[75,80,90],fontSize:7.2,fontStyle:"bold" },
       margin: { left: 14, right: 14, bottom: 12 },
       didDrawCell: (hookData: any) => {
         const raw = hookData.cell.raw as {
@@ -2520,7 +2543,8 @@ export default function EquipmentListDetailsClient({
       });
     }
 
-    const fileName = pdfFileName(list);
+    const fileName = pdfFilter === "all" ? pdfFileName(list)
+      : pdfFileName(list).replace(/\.pdf$/i,` - ${ACTIVE_LIST_FILTER_LABELS[pdfFilter]}.pdf`);
     return { pdf, fileName };
   }
 
@@ -3199,7 +3223,7 @@ export default function EquipmentListDetailsClient({
           </div>
 
           <div className="divide-y divide-gray-100">
-            {maintenanceRequests.map((request) => {
+            {maintenanceRequests.filter(request=>activeListFilter === "all" || visibleActiveLineIds.has(request.list_item_id)).map((request) => {
               const received = Number(request.received_quantity) || 0;
               const tested = Number(request.tested_quantity) || 0;
               const total = Number(request.quantity) || 0;
@@ -3375,15 +3399,25 @@ export default function EquipmentListDetailsClient({
           </div>
         ) : null}
 
-        {groups.length === 0 ? (
+        {showActivePdfColumns(list) ? <div role="group" aria-label="Filter active equipment" className="flex flex-wrap gap-2 border-t border-gray-100 px-4 py-3 sm:px-5">
+          {(["all","out","received","missing"] as const).map(filter=><button key={filter} type="button"
+            aria-pressed={activeListFilter === filter} disabled={Boolean(pdfAction)}
+            onClick={()=>{setActiveListFilter(filter);setError("");setPdfPhotoWarnings([]);}}
+            className={`min-h-8 rounded-lg border px-3 py-1.5 text-[11px] font-semibold transition disabled:opacity-50 ${activeListFilter === filter
+              ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 bg-white text-gray-600 hover:border-gray-400"}`}>
+            {ACTIVE_LIST_FILTER_LABELS[filter]}
+          </button>)}
+          <span className="self-center text-[10px] text-gray-500">PDF follows this filter</span>
+        </div> : null}
+        {visibleGroups.length === 0 ? (
           <div className="m-4 rounded-xl border border-dashed border-gray-300 px-4 py-12 text-center">
-            <div className="text-sm font-semibold text-gray-700">List is empty</div>
+            <div className="text-sm font-semibold text-gray-700">{activeListFilter === "all" ? "List is empty" : `No ${ACTIVE_LIST_FILTER_LABELS[activeListFilter]} items`}</div>
             <div className="mt-1 text-[11px] text-gray-500">
-              Select this Draft in the left sidebar, then add equipment from inventory.
+              {activeListFilter === "all" ? "Select this Draft in the left sidebar, then add equipment from inventory." : "Choose All to see the complete list."}
             </div>
           </div>
         ) : showReturnQuantities ? (
-          <ActiveListEquipmentTable key={`${list.id}:${currentUserId}`} list={list} groups={sortedGroups} manager={isManager}
+          <ActiveListEquipmentTable key={`${list.id}:${currentUserId}`} list={list} groups={visibleGroups} manager={isManager}
             canReceive={canReceiveReturns} busy={Boolean(returningItemId || correctionItem || returnDialog || missingItems || bulkReceiving)} receivingItemId={returningItemId}
             onReceiveSerials={receiveSerialBatch} onRefresh={()=>void refreshSerialReceiptSelection()}
             hiddenSerialPdfKeys={hiddenUnitGroupKeys} onToggleSerialPdf={toggleUnitGroupVisibility}
@@ -3412,7 +3446,7 @@ export default function EquipmentListDetailsClient({
             }} />
         ) : (
           <div className="divide-y divide-gray-100 border-t border-gray-100">
-            {sortedGroups.map((group, groupIndex) => {
+            {visibleGroups.map((group, groupIndex) => {
               const quantity = group.items.reduce(
                 (total, item) => total + (item.requested_quantity || 0),
                 0,
@@ -3472,7 +3506,7 @@ export default function EquipmentListDetailsClient({
                 groupIndex > 0
                   ? categoryLabel(
                       metadataText(
-                        sortedGroups[groupIndex - 1].items[0],
+                        visibleGroups[groupIndex - 1].items[0],
                         "category",
                       ),
                     )

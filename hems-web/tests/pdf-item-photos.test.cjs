@@ -127,6 +127,8 @@ test('actual PDF builder places all 15 recovered group photos, with existing JPE
  function PDF(){return pdf;}
  const deps={list:{id:'list',reference:'EV-fixture',list_type:'local_event',status:'draft',venue:'DWTC',created_by_name:'Test',notes:null},
   getUserId:()=> 'owner',dispatchContext:{current:{listId:'list'}},setPdfPhotoWarnings:value=>states.push(value),
+  showActivePdfColumns:()=>false,activePdfTable:()=>null,
+  activeListFilter:'all',filterActiveListGroups:(_list,groups)=>groups,ACTIVE_LIST_FILTER_LABELS:{all:'All'},
   jspdfModule:{jsPDF:PDF},tableModule:{autoTable(_pdf,options){tableBody=options.body;let y=60;for(const cells of options.body){
    for(const raw of cells)if(raw.rowKind)options.didDrawCell({cell:{raw,x:14,y,width:156,height:raw.styles?.minCellHeight||8}});y+=13;
   }}},loadPdfLogo:async()=>null,prepareListPdfPhotos,sortedGroups:groups,loadPdfItemPhoto:async source=>image(source),

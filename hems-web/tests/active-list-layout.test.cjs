@@ -71,13 +71,14 @@ test('new layout is gated to active/partial Local Event / Dry Hire; other workfl
  assert.match(src,/if \(item.inventory_record_type === "unit"\) void receiveReturn\(item, 1\)/);
  assert.match(src,/else openQuantityReturn\(item\)/);assert.match(src,/onCorrect=\{setCorrectionItem\}/);
 });
-test('existing receive RPC/confirmation and legacy Draft/Pending renderer are byte-for-byte unchanged',()=>{
+test('receive RPC is unchanged; legacy renderer changes only its shared filter input',()=>{
  const src=read('components/EquipmentListDetailsClient.tsx');
  const sha=string=>crypto.createHash('sha256').update(string).digest('hex');
  let start=src.indexOf('  async function receiveReturn('),end=src.indexOf('\n  async function receiveMaintenanceItem(',start);
  assert.equal(sha(src.slice(start,end)),'b5ad41f9683079f1eababca90fd3039a132528c304f988cd1cd66f5030679294');
  start=src.indexOf('          <div className="divide-y divide-gray-100 border-t border-gray-100">');end=src.indexOf('\n        {canSubmitDraft ?',start);
- assert.equal(sha(src.slice(start,end)),'eabbaa107608c6c5973e7b4d9b14ac11f73e2b775902ec29f3da13fca1851c91');
+ // Draft/Pending pass through sortedGroups unchanged; Active uses visibleGroups.
+ assert.equal(sha(src.slice(start,end).replace(/\bvisibleGroups\b/g,'sortedGroups')),'eabbaa107608c6c5973e7b4d9b14ac11f73e2b775902ec29f3da13fca1851c91');
 });
 test('actual new parent callback preserves single-unit confirmation, quantity dialog and offline guard',()=>{
  const src=read('components/EquipmentListDetailsClient.tsx');
